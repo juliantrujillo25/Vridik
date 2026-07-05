@@ -1,0 +1,227 @@
+{
+  "fase1": {
+    "nombre": "Consolidación",
+    "periodo": "Q3-2026",
+    "semanas": {
+      "s1": {
+        "titulo": "Usuarios en PostgreSQL",
+        "tareas": [
+          "Crear esquema: users (UUID, citext), roles, user_credentials (argon2id), refresh_tokens, auth_events",
+          "Implementar access JWT 15min + refresh rotativo con detección de reuso y gracia 10s",
+          "Migración doble lectura con evento legacy_fallback y corte tras 48h limpias",
+          "Unificar clave localStorage entre legacy y Vridik; access token en memoria",
+          "Escribir y ensayar ROLLBACK.md en staging"
+        ],
+        "salida": [
+          "3 roles login contra BD con mismo contrato JSON",
+          "desactivación efectiva ≤15min",
+          "cero legacy_fallback 48h"
+        ]
+      },
+      "s2": {
+        "titulo": "Panel admin de usuarios",
+        "tareas": [
+          "CRUD: crear con temporal única copiable, listar, editar, desactivar (revoca refresh), reset",
+          "Drawer accesible: foco atrapado, teclado completo, confirmaciones proporcionales",
+          "Sección Actividad por usuario desde auth_events",
+          "Tests: email duplicado case-insensitive 409, 403 no-admin, reset revoca refresh"
+        ],
+        "salida": [
+          "Ana Luisa crea usuario <2min sin ayuda",
+          "must_change bloquea todo salvo cambio",
+          "toda acción deja auth_event"
+        ]
+      },
+      "s3": {
+        "titulo": "Suite de tests + CI",
+        "tareas": [
+          "pytest + httpx + PostgreSQL real (service container)",
+          "45 tests: login 8, tokens 12, roles 10, CRUD 10, contrato 5",
+          "5 fixtures centrales + factory make_user",
+          "GitHub Actions <3min, ruff, cov-fail-under=50, branch protection",
+          "CONTRIBUTING.md con 3 reglas; romper CI a propósito una vez"
+        ],
+        "salida": [
+          "≥40 tests verdes",
+          "merge bloqueado sin CI",
+          "test autenticado nuevo en <10 líneas"
+        ]
+      },
+      "s4": {
+        "titulo": "JuliX con Claude real",
+        "tareas": [
+          "Módulo julix/: service, prompts versionados en archivos, client con reintentos, context_builder con presupuesto de tokens, ledger",
+          "Streaming SSE al frontend con cancelar",
+          "Ledger julix_calls con costo USD, prompt_version, estado; límite blando mensual y techo por petición",
+          "Domar 5 modos de fallo: timeout, 429, 529, truncado, formato inválido",
+          "Widget de costos en dashboard; keys separadas staging/prod",
+          "Corrida de humo: 3 casos x 2 modelos con costos"
+        ],
+        "salida": [
+          "documento punta a punta con streaming",
+          "todo fallo es ruidoso, ningún parcial parece completo"
+        ]
+      },
+      "s5": {
+        "titulo": "Banco de evaluación (GATE)",
+        "tareas": [
+          "20 casos reales con patrón oro: 8 UGPP núcleo, 4 borde, 4 laboral, 2 trampa, 2 cliente",
+          "Anonimización por reemplazo (cifras y fechas se conservan), hecha por el despacho",
+          "Rúbrica 4 dimensiones + global 1-4 + flags alucinación/omisión + campo qué-corregirías",
+          "Corrida 1 con script reproducible; calificación a ciegas en 3 sesiones sin el constructor",
+          "Sesión de cierre: peores 5 + flags → lista priorizada"
+        ],
+        "salida": [
+          "GATE: ≥60% global 3-4 para continuar; alucinación = global 1 automático"
+        ]
+      },
+      "s6": {
+        "titulo": "Iteración de prompts",
+        "tareas": [
+          "Triage por causa raíz: contexto / recuperación / instrucción / corpus ausente / juicio",
+          "Máximo 4 versiones de prompt, cada una con hipótesis escrita y probe de 3-5 casos",
+          "Jerarquía: reordenar contexto → instrucciones negativas → razonamiento por etapas → ejemplos → modelo",
+          "Corrida 2 re-aleatorizada; fijar costo promedio por documento",
+          "Publicar PROMPTS.md"
+        ],
+        "salida": [
+          "≥80% → congelar línea base; 60-79% → corrida 3 tras corpus; <60% → freno y revisión"
+        ]
+      },
+      "s7": {
+        "titulo": "Pipeline de ingesta",
+        "tareas": [
+          "Esquema corpus_documents (jerarquia, vigencia, fuente_url, hash) + corpus_chunks (referencia citable)",
+          "Chunking por estructura jurídica con prefijo de contexto autocontenido",
+          "Pipeline con dedup, embedding batch con ledger, test de recuperación por ingesta",
+          "Validador de citas post-generación en JuliX (cita ↔ referencia en contexto)",
+          "Mini-herramienta de 3 pasos con edición de chunks por teclado"
+        ],
+        "salida": [
+          "ingesta <10min sin código",
+          "85 chunks re-ingestados sin degradación",
+          "dedup demostrada"
+        ]
+      },
+      "s8_9": {
+        "titulo": "Carga del corpus 85→400+",
+        "tareas": [
+          "Ola 1: backlog del triage S6 con probe de confirmación",
+          "Ola 2: UGPP/laboral solo artículos del patrón oro + frecuentes",
+          "Ola 3: CPACA/CPT/CGP (prepara motor de términos F2)",
+          "Ola 4: 10-15 sentencias por línea decisional (se recorta primero si falta tiempo)",
+          "Ana Luisa selecciona con 1 semana de ventaja; solo fuentes oficiales; sesiones ≤2h",
+          "3 mallas: recuperación ≥12/15, probes por ola, auditoría de metadatos"
+        ],
+        "salida": [
+          "≥400 chunks con metadatos y fuente oficial",
+          "cero regresiones en probes",
+          "exclusiones publicadas"
+        ]
+      },
+      "s10": {
+        "titulo": "Exportación PDF",
+        "tareas": [
+          "LibreOffice headless en Docker con fuentes instaladas; perfil efímero por conversión",
+          "Worker con cola pdf_jobs en PostgreSQL, timeout 60s con kill, 1-2 concurrentes",
+          "Postproceso: metadatos, pie de trazabilidad opcional, invalidación del derivado al regenerar docx",
+          "UX: estados honestos del botón, previsualización inline, aria-live, nomenclatura automática",
+          "Test de fuentes embebidas en CI + validación visual de Ana Luisa en 3 documentos"
+        ],
+        "salida": [
+          "PDF fiel en todas las plantillas",
+          "conversión colgada muere sin tumbar la cola"
+        ]
+      },
+      "s11": {
+        "titulo": "Mensajería SSE",
+        "tareas": [
+          "Canal genérico /api/events/stream multiplexado (message, pdf, futuro actuacion/termino)",
+          "Patrón notificar-y-buscar; NOTIFY/LISTEN de PostgreSQL; auth sin token en URL",
+          "Last-Event-ID + buffer 24h + resync → reconciliación; backoff con jitter; heartbeat 25s",
+          "No-leídos por cursor temporal; badge accesible + título de pestaña",
+          "Optimistic UI con reintento; scroll sin robo; fallback a polling"
+        ],
+        "salida": [
+          "mensaje visible <10s (real <1s)",
+          "tortura de reconexión sin pérdida ni duplicados",
+          "pdf.ready por el mismo canal"
+        ]
+      },
+      "s12_13": {
+        "titulo": "2FA, hardening y cierre",
+        "tareas": [
+          "TOTP: enrolamiento QR+secreto, códigos de recuperación hasheados, pre-auth token 5min, anti-replay, reset administrativo; obligatorio admin",
+          "Rate limiting email+IP (login 10/15min, TOTP 5), headers HSTS/nosniff/CSP report-only→aplicar, rotación JWT secret ensayada",
+          "Regresión: cov ≥60, guion manual en 2 frontends + móvil físico, corrida final del banco",
+          "Triage de deuda en 3 cubos con destino escrito",
+          "Demo: Ana Luisa opera 5 flujos sin intervención + 2 preguntas registradas"
+        ],
+        "salida": [
+          "Definition of Done completo verificado",
+          "backlog F2 con contenido real"
+        ]
+      }
+    },
+    "metricas": [
+      "JuliX ≥80% global 3-4 en banco de 20 casos, cero alucinaciones sin diagnóstico, 2 trampas detectadas",
+      "0 usuarios fuera de PostgreSQL; 2FA obligatorio en admin",
+      "≥400 chunks con metadatos completos; recuperación ≥12/15 en top-3",
+      "Cobertura ≥60% en auth y generador; CI bloqueante <3min",
+      "Costo promedio por documento conocido y bajo techo comercial",
+      "5 flujos de demo operados por la abogada sin intervención del desarrollador"
+    ],
+    "riesgo_colombia": "Costo de tokens vs tarifa del despacho; calidad del corpus depende del tiempo de la abogada (recurso escaso: agendar S5, S8-9, S13 desde el inicio)"
+  },
+  "fase2": {
+    "nombre": "Copiloto Procesal",
+    "periodo": "Q4-2026",
+    "tareas": [
+      "Ingesta de actuaciones de radicados propios (integrar proveedor primero; scraping propio solo si el volumen lo justifica)",
+      "Clasificador IA de actuaciones (auto admisorio, requerimiento, fallo, traslado) con Haiku",
+      "Motor de términos CPACA/CPT/CGP con calendario judicial y festivos 2026-27",
+      "Borrador automático de respuesta vía JuliX con contexto del expediente",
+      "Semáforo de vencimientos calculados en dashboard, alertas por el canal de eventos de S11"
+    ],
+    "metricas": [
+      "100% de actuaciones de radicados activos clasificadas en <24h",
+      "0 términos vencidos sin alerta en 90 días",
+      "≥50% de borradores usados como punto de partida por los abogados"
+    ],
+    "riesgo_colombia": "Cambios sin aviso en portales de la Rama Judicial; advertencia de uso de datos de SAMAI → limitarse a radicados propios del despacho"
+  },
+  "fase3": {
+    "nombre": "Cobro Inteligente + trazabilidad",
+    "periodo": "Q1-2027",
+    "tareas": [
+      "Valor en disputa por caso (glosa, sanciones, intereses) y esquemas de honorarios (fijo, cuota litis, mixto)",
+      "Liquidación automática del éxito al cierre de etapa (glosa levantada = base de cuota litis)",
+      "Cuenta de cobro / factura vía proveedor tecnológico autorizado DIAN (integrar, no construir)",
+      "Panel de ahorro generado en Portal Cliente Vridik (55% → 90%)",
+      "Bitácora sellada de notificaciones con acuse (hash encadenado sobre auth_events)"
+    ],
+    "metricas": [
+      "Portal Cliente Vridik al 90%",
+      "100% de casos activos con valor en disputa registrado",
+      "Primera cuenta de cobro generada sin Excel"
+    ],
+    "riesgo_colombia": "Facturación electrónica es terreno regulado DIAN; sensibilidad del cliente al ver cifras (gestión de expectativas)"
+  },
+  "fase4": {
+    "nombre": "Escalamiento",
+    "periodo": "Q2-2027",
+    "tareas": [
+      "Multi-tenancy real con aislamiento estricto entre despachos",
+      "Onboarding self-service en menos de 1 semana",
+      "Bóveda de Cumplimiento: bitácora inmutable + SAGRILAFT lite + firma electrónica integrada (proveedor certificado, Ley 527/1999)",
+      "Analítica de línea decisional UGPP sobre corpus propio (no perfilamiento de jueces)",
+      "Pricing por despacho y conversión del piloto externo iniciado en F3"
+    ],
+    "metricas": [
+      "3 despachos pagando",
+      "Churn 0 del piloto",
+      "Tiempo de onboarding <1 semana"
+    ],
+    "riesgo_colombia": "Ley 1581 entre tenants (aislamiento de datos de terceros); la competencia copia features superficiales pero no el corpus propietario"
+  }
+}

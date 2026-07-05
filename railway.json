@@ -1,0 +1,76 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "_nota": "Railway.json oficial es una config POR SERVICIO (build/deploy de un único servicio). No existe un esquema público de Railway para declarar varios servicios en un solo archivo. Este archivo documenta los 3 servicios del proyecto Vridik como referencia de infraestructura-como-código; para aplicarlo de verdad en Railway hay que crear los 3 servicios en el proyecto (dashboard o `railway service create`) y copiar el bloque `build`/`deploy` correspondiente a cada uno (o un `railway.json`/`railway.toml` propio por servicio, si cada uno vive en su propio subdirectorio del repo). No se ejecutó ningún despliegue real para este entregable.",
+  "project": "vridik",
+  "environment": "production",
+  "services": [
+    {
+      "name": "vridik-api",
+      "_nota": "API principal (FastAPI/JuliX). Único servicio con tráfico HTTP público en este archivo.",
+      "build": {
+        "builder": "NIXPACKS",
+        "buildCommand": null,
+        "_nota_build": "Nixpacks lee nixpacks.toml en la raíz del repo (phases.setup/install ya definidos: python311 + requirements.txt + sentence-transformers)."
+      },
+      "deploy": {
+        "startCommand": "uvicorn app.main:app --host 0.0.0.0 --port $PORT",
+        "healthcheckPath": "/health",
+        "healthcheckTimeout": 300,
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 5,
+        "numReplicas": 1,
+        "_nota_deploy_on_green": "Railway solo enruta tráfico al nuevo deployment después de que /health responda 2xx dentro de healthcheckTimeout (deploy-on-green nativo); el deployment anterior sigue sirviendo tráfico hasta ese momento y se retira automáticamente si el nuevo pasa el healthcheck."
+      },
+      "variables": {
+        "ANTHROPIC_API_KEY": "${{secrets.ANTHROPIC_API_KEY}}",
+        "DATABASE_URL": "${{vridik-postgres.DATABASE_URL}}",
+        "USE_POSTGRES": "true"
+      }
+    },
+    {
+      "name": "vridik-postgres",
+      "_nota": "PostgreSQL managed de Railway (plugin oficial, no una imagen custom) — pgvector requerido por rag_chunks (ver rag/sql/rag_chunks_schema.sql).",
+      "source": {
+        "type": "managed-database",
+        "plugin": "postgresql",
+        "version": "16"
+      },
+      "initSql": {
+        "_nota": "Railway no aplica SQL de init automáticamente para el plugin managed de Postgres; el patrón real del repo (ver scripts/railway_setup_rag.sh) es que vridik-api aplique el schema en su propio arranque, con psql apuntando a $DATABASE_URL, de forma idempotente (CREATE TABLE/EXTENSION con manejo de 'ya existe').",
+        "script": "rag/sql/rag_chunks_schema.sql",
+        "aplicadoPor": "scripts/railway_setup_rag.sh (dentro del start command de vridik-api, antes de levantar uvicorn)",
+        "idempotente": true
+      },
+      "variables": {
+        "POSTGRES_DB": "vridik"
+      }
+    },
+    {
+      "name": "vridik-pdf-worker",
+      "_nota": "Worker de conversión de documentos a PDF (LibreOffice headless) — consume la cola de trabajos pendientes desde la tabla `pdf_jobs` en PostgreSQL (ver workers/pdf_worker.py), tal como lo definía el roadmap original de S10. Sin Redis: no hay servicio de cola aparte, el propio Postgres managed es la cola.",
+      "build": {
+        "builder": "DOCKERFILE",
+        "dockerfilePath": "docker/pdf-worker.Dockerfile"
+      },
+      "deploy": {
+        "startCommand": "python workers/pdf_worker.py",
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 10,
+        "numReplicas": 1,
+        "_nota_sin_http": "Este servicio no expone HTTP (es un worker de cola), por eso no tiene healthcheckPath — Railway monitorea salud de workers vía restartPolicy (reinicia si el proceso muere) en vez de un healthcheck HTTP."
+      },
+      "variables": {
+        "DATABASE_URL": "${{vridik-postgres.DATABASE_URL}}",
+        "PDF_JOB_TIMEOUT_SECONDS": "60",
+        "PDF_WORKER_CONCURRENCY": "2",
+        "PDF_WORKER_POLL_SECONDS": "5"
+      }
+    }
+  ],
+  "variables_compartidas": {
+    "_nota": "Variables mencionadas explícitamente en la tarea. ANTHROPIC_API_KEY se referencia desde el vault de secretos de Railway (nunca en texto plano en este archivo); DATABASE_URL se resuelve automáticamente vía la variable de referencia al servicio vridik-postgres; USE_POSTGRES queda fijo en 'true' porque Fase 1 ya completó la migración de S1 (ver backlog_fase1_vridik.md).",
+    "ANTHROPIC_API_KEY": "${{secrets.ANTHROPIC_API_KEY}}",
+    "DATABASE_URL": "${{vridik-postgres.DATABASE_URL}}",
+    "USE_POSTGRES": "true"
+  }
+}

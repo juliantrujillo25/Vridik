@@ -1,0 +1,20 @@
+# Vridik / JuliX — nixpacks.toml
+# Sprint S6/Railway: build config para el despliegue en Railway (Nixpacks).
+#
+# Nota: sentence-transformers ya está en requirements.txt (agregado en el
+# cierre de S6), por eso [phases.install] lo reinstala explícitamente además
+# de -r requirements.txt — es intencional (pedido así por el dev lead) para
+# que la imagen de build deje constancia explícita de esa dependencia pesada
+# incluso si requirements.txt cambia; pip no la reinstala dos veces si ya
+# quedó satisfecha por el primer comando.
+#
+# NO SE EJECUTA (build) EN ESTE ENTREGABLE — validado solo como TOML.
+
+[phases.setup]
+nixPkgs = ["python311"]
+
+[phases.install]
+cmds = ["pip install -r requirements.txt", "pip install sentence-transformers==2.7.0"]
+
+[start]
+cmd = "bash scripts/railway_setup_rag.sh && uvicorn app.main:app --host 0.0.0.0 --port $PORT"

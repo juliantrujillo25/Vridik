@@ -1,0 +1,21 @@
+fuente,tipo,norma,articulos_clave,prioridad
+data/ugpp/ley_1607_2012.pdf,ley,Ley 1607 de 2012,"Arts. 178-180 (sanciones por omisión, inexactitud y reducida)",alta
+data/ugpp/ley_1607_2012.pdf,ley,Ley 1607 de 2012,Art. 156 (creación y funciones de la UGPP),alta
+data/ugpp/ley_1607_2012.pdf,ley,Ley 1607 de 2012,Art. 108 (fiscalización de aportes parafiscales),media
+data/ugpp/ley_2010_2019.pdf,ley,Ley 2010 de 2019,Art. 108 (obligación de contribuir al sistema),alta
+data/ugpp/ley_2010_2019.pdf,ley,Ley 2010 de 2019,Art. 122 (exoneración de aportes parafiscales),media
+data/ugpp/decreto_1625_2016.pdf,decreto,Decreto 1625 de 2016 (DUR Tributario),Arts. 1.2.4.1.1 y ss. (IBC de independientes),alta
+data/ugpp/decreto_1625_2016.pdf,decreto,Decreto 1625 de 2016 (DUR Tributario),Arts. 3.2.1.1 y ss. (procedimiento de determinación UGPP),alta
+data/ugpp/decreto_1625_2016.pdf,decreto,Decreto 1625 de 2016 (DUR Tributario),Arts. 1.6.1.1 y ss. (procedimiento de cobro coactivo),media
+data/ugpp/jurisprudencia/ce_25000-23-37-000-2018-00123-01.pdf,jurisprudencia,Consejo de Estado - Sección Cuarta - Sentencia 25000-23-37-000-2018-00123-01 (2018),Línea decisional: IBC de contratistas independientes,alta
+data/ugpp/jurisprudencia/ce_25000-23-37-000-2019-00456-01.pdf,jurisprudencia,Consejo de Estado - Sección Cuarta - Sentencia 25000-23-37-000-2019-00456-01 (2019),Línea decisional: sanción por inexactitud - graduación,alta
+data/ugpp/jurisprudencia/ce_25000-23-37-000-2020-00789-01.pdf,jurisprudencia,Consejo de Estado - Sección Cuarta - Sentencia 25000-23-37-000-2020-00789-01 (2020),Línea decisional: prescripción de la acción de cobro,media
+data/ugpp/jurisprudencia/ce_25000-23-37-000-2021-00234-01.pdf,jurisprudencia,Consejo de Estado - Sección Cuarta - Sentencia 25000-23-37-000-2021-00234-01 (2021),Línea decisional: exoneración de aportes - requisitos,media
+data/ugpp/jurisprudencia/ce_25000-23-37-000-2022-00567-01.pdf,jurisprudencia,Consejo de Estado - Sección Cuarta - Sentencia 25000-23-37-000-2022-00567-01 (2022),Línea decisional: contratistas independientes - carga probatoria,alta
+data/ugpp/jurisprudencia/ce_25000-23-37-000-2023-00890-01.pdf,jurisprudencia,Consejo de Estado - Sección Cuarta - Sentencia 25000-23-37-000-2023-00890-01 (2023),Línea decisional: procedibilidad del recurso de reconsideración,alta
+data/ugpp/jurisprudencia/ce_25000-23-37-000-2024-00345-01.pdf,jurisprudencia,Consejo de Estado - Sección Cuarta - Sentencia 25000-23-37-000-2024-00345-01 (2024),Línea decisional: cobro coactivo - título ejecutivo,alta
+data/cst/cst_art_64.pdf,ley,Código Sustantivo del Trabajo,Art. 64 (terminación del contrato sin justa causa),alta
+data/cst/cst_art_249.pdf,ley,Código Sustantivo del Trabajo,Art. 249 (auxilio de cesantías),alta
+data/cst/cst_arts_158_179.pdf,ley,Código Sustantivo del Trabajo,Arts. 158-179 (jornada de trabajo y horas extra),alta
+data/cst/cst_arts_239_240.pdf,ley,Código Sustantivo del Trabajo,Arts. 239-240 (fuero de maternidad),alta
+data/cst/cst_art_186.pdf,ley,Código Sustantivo del Trabajo,Art. 186 (vacaciones anuales remuneradas),media

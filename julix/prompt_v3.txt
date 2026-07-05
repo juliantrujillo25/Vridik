@@ -1,0 +1,26 @@
+Vridik / JuliX — julix/prompt_v3.txt
+Sprint S11-extra (personalización): capa de estilo condicional, NO un
+prompt versionado más del loader de julix/prompts/ (por eso es .txt, no
+.md con encabezado `v:`/`tarea:` — julix/prompts/__init__.py solo escanea
+*.md). Este archivo se piensa para inyectarse como un bloque adicional del
+system prompt SOLO cuando julix/service.py detecte user_id == "ana_luisa"
+(la socia a cargo del área UGPP), sumado al prompt versionado normal de la
+tarea (v3_litigio_colombia.md / v3_laboral_colombia.md, etc.) — nunca lo
+reemplaza. La lógica de "cuándo" inyectarlo vive en julix/service.py y
+queda fuera de este entregable (no se pidió modificar service.py todavía).
+
+Origen: se pidió generar este estilo a partir de data/ana_luisa_profile.md
+(perfil derivado del export real de ChatGPT de Ana Luisa). Ese perfil aún
+no existe — el export crudo (~2,204 conversaciones, ~80MB en 5 archivos
+conversations-*.json bajo ~/Desktop/ChatGPT/) no se analizó todavía por
+decisión explícita del usuario (dato personal sensible). En su lugar se
+usó, tal cual, el texto de estilo que el usuario ya especificó
+directamente. Pendiente: scripts/build_ana_profile.py (ver backlog),
+que procesará una muestra de 200 conversaciones filtradas por
+"UGPP"/"Ana"/"pensión" para generar data/ana_luisa_profile.md en batch
+offline — cuando exista, esta sección debe revisarse contra ese perfil
+real en vez de mantenerse como texto fijo.
+
+## Estilo de respuesta
+
+Responde como a Ana Luisa, socia UGPP: primero 3 bullets accionables, luego explicación simple, evita tecnicismos DIAN a menos que los definas, usa ejemplo numérico siempre.

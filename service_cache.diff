@@ -1,0 +1,102 @@
+--- /tmp/service_before.py	2026-07-05 10:01:10.426151822 -0500
++++ "/sessions/serene-upbeat-allen/mnt/Project Vridik/julix/service.py"	2026-07-05 09:26:30.000000000 -0500
+@@ -18,6 +18,15 @@
+ suficiente" cuando no hay contexto que respalde la respuesta — así se cierre
+ la puerta a que JuliX complete de memoria cuando el RAG no encuentra nada.
+ 
++Actualización S11-extra (cache): antes de llamar al modelo (y antes de
++recuperar contexto del RAG), se revisa `rag/cache.py` (SQLite,
++`data/rag_cache.db`) con el hash de la pregunta normalizada. Si hay un hit
++vigente, se devuelve la respuesta cacheada sin gastar ni un token de
++Anthropic — por eso el chequeo va incluso antes del límite blando mensual
++(un hit no debe contar contra ese límite). Si hay miss, el flujo sigue
++igual que antes y, al terminar el streaming con éxito, la respuesta
++completa se guarda en cache con `RAGCache.set()`.
++
+ NO SE EJECUTA EN ESTE ENTREGABLE — esqueleto de referencia.
+ """
+ 
+@@ -30,9 +39,20 @@
+ from .context_builder import ContextBudget, RankedChunk, construir_contexto
+ from .errors import JuliXError
+ from .ledger import requiere_confirmacion
++from rag.cache import RAGCache, hash_query, ttl_horas_para_query
+ from rag.context_builder import a_ranked_chunks as rag_a_ranked_chunks
+ from rag.context_builder import buscar_contexto as rag_buscar_contexto
+ 
++
++def _query_hash(query: str) -> str:
++    """Helper de wiring (S11-extra): query_hash = sha256(normaliza(query)).
++    Delega en rag.cache.hash_query() en vez de reimplementar la
++    normalización aquí, para que el hash que calcula service.py al leer sea
++    IDÉNTICO, byte a byte, al que calculó quien escribió la entrada — dos
++    implementaciones separadas de "normaliza" divergerían con el tiempo y
++    romperían la cache en silencio (todo sería miss)."""
++    return hash_query(query)
++
+ # Directiva obligatoria de fuente (Sprint S6, pedida explícitamente por el
+ # dev lead). Se agrega al final de CUALQUIER prompt de tarea versionado,
+ # como último recurso de seguridad además de las reglas propias de cada
+@@ -80,6 +100,20 @@
+         `expediente_texto` como respaldo) antes de llamar a Sonnet 5.
+         """
+ 
++        # 0. Cache (S11-extra, wiring): antes de llamar a Anthropic (y antes
++        #    de recuperar contexto del RAG), revisa si esta misma pregunta ya
++        #    se resolvió y sigue vigente. Un hit no cuesta ni un token, así
++        #    que se revisa incluso antes del límite blando mensual — un hit
++        #    nunca debe contar contra ese límite.
++        texto_busqueda = pregunta or expediente_texto
++        query_hash = _query_hash(texto_busqueda)
++        cache = RAGCache()
++        cached = cache.get(query_hash, ttl_horas=ttl_horas_para_query(texto_busqueda))
++        if cached:
++            respuesta_cacheada, _fuentes_cacheadas, _tokens_cacheados = cached
++            yield respuesta_cacheada
++            return
++
+         # 1. Límite blando mensual — nunca bloqueo duro, solo aviso/confirmación
+         mostrar_aviso, requiere_confirm = await requiere_confirmacion(self.db)
+         if requiere_confirm:
+@@ -94,7 +128,6 @@
+ 
+         # 3. Recuperar contexto real (RAG, S6) si no vino explícito
+         if chunks_candidatos is None:
+-            texto_busqueda = pregunta or expediente_texto
+             chunks_recuperados = await rag_buscar_contexto(self.db, texto_busqueda)
+             chunks_candidatos = rag_a_ranked_chunks(chunks_recuperados)
+ 
+@@ -109,7 +142,10 @@
+         )
+ 
+         # 5. Streaming con manejo de los 5 modos de fallo domados. El ledger
+-        #    (julix_calls) se registra dentro del propio client.
++        #    (julix_calls) se registra dentro del propio client. Se acumula
++        #    el texto completo (S11-extra) para poder guardarlo en cache al
++        #    finalizar sin alterar el streaming que ve el frontend.
++        respuesta_completa = ""
+         try:
+             async for chunk in self.client.stream_completion(
+                 tarea=tarea,
+@@ -120,11 +156,21 @@
+                 prompt_version=prompt.version,
+                 prompt_hash=prompt.hash,
+             ):
++                respuesta_completa += chunk
+                 yield chunk
+         except JuliXError as exc:
+             if exc.partial_text:
+                 yield f"\n\n[JULIX_PARCIAL_RECUPERABLE: {exc.partial_text}]"
+             yield f"\n\n[JULIX_ERROR:{exc.status}] {exc}"
++            return  # una respuesta con error nunca se cachea
++
++        # 6. Cache (S11-extra): guarda la respuesta real completa. Las
++        #    "fuentes" son las referencias citables ya calculadas por
++        #    construir_contexto() (contexto.chunks_incluidos); los "tokens"
++        #    son el estimado del propio contexto — el conteo real de
++        #    Anthropic se registra aparte en julix_calls (julix/client.py) y
++        #    no llega hasta aquí sin duplicar esa lógica de ledger.
++        cache.set(query_hash, respuesta_completa, contexto.chunks_incluidos, contexto.tokens_estimados)
+ 
+     async def clasificar_actuacion(self, *, texto_actuacion: str) -> dict:
+         """Preparado para Fase 2 (Copiloto Procesal): clasificación con Haiku.

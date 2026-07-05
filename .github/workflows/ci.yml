@@ -1,0 +1,140 @@
+# Vridik — CI (Sprint S3)
+# Dos jobs independientes:
+#   1. test          -> py_compile + pytest -q sobre PostgreSQL real (service container),
+#                        fail-fast si menos del 90% de los tests pasan (scripts/check_pass_ratio.py).
+#   2. validate-sql  -> valida la sintaxis/lógica de los .sql de Vridik/JuliX contra un
+#                        PostgreSQL efímero. psql no tiene un flag --dry-run nativo; el
+#                        "dry-run" aquí es aplicar los scripts en un contenedor de servicio
+#                        que se destruye al terminar el job — nunca toca Railway ni staging.
+name: Vridik CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  test:
+    name: Tests (py_compile + pytest, PostgreSQL real)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: vridik
+          POSTGRES_PASSWORD: vridik_test_password
+          POSTGRES_DB: vridik_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U vridik -d vridik_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      TEST_DATABASE_URL: postgresql://vridik:vridik_test_password@localhost:5432/vridik_test
+      DATABASE_URL: postgresql://vridik:vridik_test_password@localhost:5432/vridik_test
+      JWT_SECRET: ci-test-secret-nunca-produccion
+      ANTHROPIC_API_KEY_STAGING: ci-fake-key-staging
+      ANTHROPIC_API_KEY_PROD: ci-fake-key-prod
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt
+
+      - name: py_compile — todo el código Python debe compilar
+        run: |
+          find . -path ./.git -prune -o -name "*.py" -print | xargs -r python -m py_compile
+
+      - name: ruff (lint)
+        run: ruff check . --output-format=github
+        continue-on-error: true # el gate real de esta corrida es el ratio de tests (ver más abajo); ruff bloquea aparte en S3 ("romper CI a propósito una vez")
+
+      - name: Aplicar esquema base de Vridik (S1) en PostgreSQL del service container
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y postgresql-client
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schema_semana1_vridik.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f julix/sql/ledger_schema.sql
+
+      - name: Cargar seed de staging (db/seed_railway.sql)
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/seed_railway.sql
+
+      - name: pytest -q (JUnit XML para el gate de 90%)
+        run: |
+          mkdir -p reports
+          pytest -q --junitxml=reports/junit.xml
+        continue-on-error: true # no se detiene aquí: el ratio decide si el job falla
+
+      - name: Gate — fail fast si menos del 90% de los tests pasan
+        run: python scripts/check_pass_ratio.py --junit-xml reports/junit.xml --threshold 0.90
+
+      - name: Publicar reporte de tests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-report
+          path: reports/junit.xml
+
+  validate-sql:
+    name: Validar SQL (dry-run sobre PostgreSQL efímero)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: vridik
+          POSTGRES_PASSWORD: vridik_test_password
+          POSTGRES_DB: vridik_sql_dryrun
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U vridik -d vridik_sql_dryrun"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      DATABASE_URL: postgresql://vridik:vridik_test_password@localhost:5432/vridik_sql_dryrun
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar cliente psql
+        run: sudo apt-get update -y && sudo apt-get install -y postgresql-client
+
+      - name: Dry-run — schema_semana1_vridik.sql
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schema_semana1_vridik.sql
+
+      - name: Dry-run — julix/sql/ledger_schema.sql
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f julix/sql/ledger_schema.sql
+
+      - name: Dry-run — db/seed_railway.sql
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/seed_railway.sql
+
+      - name: Verificación de idempotencia — reaplicar seed_railway.sql no debe fallar
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/seed_railway.sql
+
+      - name: Nota
+        run: |
+          echo "El contenedor postgres de este job se destruye al terminar (GitHub Actions"
+          echo "no persiste services entre jobs/runs) — equivalente a un dry-run real:"
+          echo "nada de esto toca Railway ni ninguna base de datos de staging/producción."

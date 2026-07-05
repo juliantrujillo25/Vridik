@@ -1,0 +1,83 @@
+--- /tmp/context_builder_before.py	2026-07-05 09:02:17.468038468 -0500
++++ /tmp/context_builder_after.py	2026-07-05 09:02:42.055039257 -0500
+@@ -4,6 +4,15 @@
+ por parte del documento, priorizando por jerarquía kelseniana y vigencia
+ normativa (ver corpus_documents/corpus_chunks, Sprint S7).
+ 
++Sprint S11-extra (personalización): boost condicional por usuario. Cuando
++`construir_contexto(..., user_id="ana_luisa")`, los chunks etiquetados
++"explicación_simple" (ver `RankedChunk.etiquetas`) se priorizan en el orden
++final — antes del truncado por presupuesto — para que Ana Luisa (socia a
++cargo de UGPP) reciba con más frecuencia el material redactado en términos
++simples en vez de la fuente técnica cruda, cuando ambas están disponibles
++para el mismo punto. Para cualquier otro usuario (o user_id=None) el orden
++no cambia: sigue siendo puramente jerarquía kelseniana + vigencia (S7).
++
+ NO SE EJECUTA EN ESTE ENTREGABLE — esqueleto de referencia para Sprint S4.
+ """
+ 
+@@ -11,6 +20,10 @@
+ 
+ from dataclasses import dataclass, field
+ 
++# --- S11-extra: personalización por usuario -----------------------------
++USER_ID_ANA_LUISA = "ana_luisa"
++ETIQUETA_EXPLICACION_SIMPLE = "explicación_simple"
++
+ 
+ @dataclass
+ class ContextBudget:
+@@ -32,6 +45,10 @@
+     vigente: bool
+     tokens: int
+     contenido: str
++    # S11-extra: etiquetas de contenido (p.ej. "explicación_simple") usadas
++    # por el boost de personalización de aplicar_boost_personalizacion().
++    # Opcional y con default vacío — no rompe construcciones existentes.
++    etiquetas: list[str] = field(default_factory=list)
+ 
+ 
+ def ordenar_por_prioridad_normativa(chunks: list[RankedChunk]) -> list[RankedChunk]:
+@@ -41,6 +58,20 @@
+     return sorted(chunks, key=lambda c: (not c.vigente, c.jerarquia))
+ 
+ 
++def aplicar_boost_personalizacion(
++    chunks: list[RankedChunk], *, user_id: str | None
++) -> list[RankedChunk]:
++    """S11-extra: si `user_id` es Ana Luisa, sube al frente los chunks
++    etiquetados 'explicación_simple' — usa un sort estable, así que dentro de
++    cada grupo (etiquetado / no etiquetado) se conserva el orden que ya trajo
++    `ordenar_por_prioridad_normativa` (jerarquía + vigencia). Para cualquier
++    otro usuario retorna la lista sin tocar; nunca cambia el orden para
++    usuarios distintos a Ana Luisa."""
++    if user_id != USER_ID_ANA_LUISA:
++        return chunks
++    return sorted(chunks, key=lambda c: ETIQUETA_EXPLICACION_SIMPLE not in c.etiquetas)
++
++
+ def truncar_con_criterio(chunks: list[RankedChunk], presupuesto_tokens: int) -> list[RankedChunk]:
+     """Trunca por relevancia jurídica, no por corte ciego de caracteres:
+     se van incluyendo chunks ya ordenados hasta agotar el presupuesto;
+@@ -70,13 +101,20 @@
+     expediente_texto: str,
+     chunks_candidatos: list[RankedChunk],
+     presupuesto: ContextBudget = ContextBudget(),
++    user_id: str | None = None,
+ ) -> BuiltContext:
+     """Punto de entrada único usado por service.py. El resultado alimenta
+     directamente a client.stream_completion(). Las referencias en
+     `chunks_incluidos` son las que el validador de citas post-generación
+     (S7) usa para verificar que toda cita del borrador corresponde a una
+-    referencia realmente presente en el contexto enviado."""
++    referencia realmente presente en el contexto enviado.
++
++    `user_id` (S11-extra, opcional): si es "ana_luisa", aplica el boost de
++    aplicar_boost_personalizacion() antes de truncar por presupuesto — para
++    cualquier otro valor (incluido None, el caso normal) el comportamiento
++    es idéntico al de antes de S11-extra."""
+     chunks_ordenados = ordenar_por_prioridad_normativa(chunks_candidatos)
++    chunks_ordenados = aplicar_boost_personalizacion(chunks_ordenados, user_id=user_id)
+     chunks_finales = truncar_con_criterio(chunks_ordenados, presupuesto.corpus_tokens)
+ 
+     corpus_texto = "\n\n".join(f"[{c.referencia}]\n{c.contenido}" for c in chunks_finales)

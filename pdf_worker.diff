@@ -1,0 +1,293 @@
+--- /tmp/pdf_worker_before.py	2026-07-05 10:30:10.342207646 -0500
++++ workers/pdf_worker.py	2026-07-05 10:34:21.000000000 -0500
+@@ -1,48 +1,50 @@
+ #!/usr/bin/env python3
+ """
+ Vridik / JuliX — workers/pdf_worker.py
+-Sprint S10 (roadmap): worker de conversión a PDF. Corrige la inconsistencia
+-detectada entre el roadmap original ("Worker con cola `pdf_jobs` en
+-PostgreSQL") y el `railway.json` de una entrega anterior, que había
+-declarado Redis como backend de cola — este worker usa exclusivamente la
+-tabla `pdf_jobs` en PostgreSQL, sin Redis ni ninguna otra dependencia de cola.
++Sprint S10 (roadmap): worker de conversión a PDF. Usa exclusivamente la
++tabla `pdf_jobs` en PostgreSQL (sin Redis) como cola de trabajos.
+ 
+-Qué hace, en loop cada 5 segundos (`PDF_WORKER_POLL_SECONDS`):
+-  1. Lee de `pdf_jobs` las filas con `status = 'pending'` (hasta
+-     `PDF_WORKER_CONCURRENCY` a la vez), tomándolas con
+-     `FOR UPDATE SKIP LOCKED` para que, si en el futuro corre más de una
+-     réplica de este worker (Railway `numReplicas`), dos réplicas nunca
+-     procesen el mismo trabajo dos veces.
+-  2. Para cada trabajo, genera el PDF con `julix/pdf_export.py:generar_pdf`
+-     usando la respuesta y las fuentes ya guardadas en la fila.
+-  3. Actualiza `status = 'done'` y `pdf_url` (ruta del PDF generado) si todo
+-     sale bien; si falla, `status = 'error'` con el mensaje en
+-     `error_mensaje` — nunca deja un trabajo en 'processing' colgado sin
+-     motivo ni lo re-encola en silencio.
+-  4. Cada trabajo tiene un timeout duro de `PDF_JOB_TIMEOUT_SECONDS`
+-     (60s por defecto, ver roadmap S10) — si se excede, se mata esa
+-     conversión puntual (no todo el worker) y el trabajo queda en 'error'.
++Actualización (alineación con migrations/003_pdf_jobs.sql — decisión: el
++esquema de la migración es el correcto para S10): este worker YA NO asume
++que `pdf_jobs` trae la respuesta y las fuentes precalculadas (columnas
++`tarea`/`caso_id`/`respuesta`/`fuentes` de una versión anterior de este
++archivo, que nunca llegaron a tener una migración real). Ahora cada fila
++solo trae `query` (la pregunta del usuario) y `user_id`; este worker genera
++la respuesta de JuliX en el momento, llamando a `julix.service` (que ya
++revisa `rag/cache.py` antes de tocar Anthropic — ver `generate_pdf()`).
+ 
+-Esquema esperado de `pdf_jobs` (migración SQL pendiente — no incluida en
+-este entregable, ver backlog_fase1_vridik.md):
++Esquema real de `pdf_jobs` (ver migrations/003_pdf_jobs.sql, NO se tocó en
++esta entrega):
+ 
+     CREATE TABLE pdf_jobs (
+-        id            BIGSERIAL PRIMARY KEY,
+-        tarea         TEXT NOT NULL,
+-        caso_id       TEXT NOT NULL,
+-        respuesta     TEXT NOT NULL,       -- texto ya generado por JuliX
+-        fuentes       JSONB NOT NULL DEFAULT '[]',  -- lista de {norma, articulo, parrafo}
+-        status        TEXT NOT NULL DEFAULT 'pending',  -- pending|processing|done|error
+-        pdf_url       TEXT,
+-        error_mensaje TEXT,
+-        created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+-        updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
++        id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
++        query      TEXT NOT NULL,
++        user_id    TEXT,
++        status     TEXT DEFAULT 'pending',
++        pdf_url    TEXT,
++        created_at TIMESTAMP DEFAULT now(),
++        updated_at TIMESTAMP
+     );
+ 
+-NO SE EJECUTA CONTRA POSTGRESQL REAL EN ESTE ENTREGABLE — el loop principal
+-solo arranca si se invoca `python workers/pdf_worker.py` con `DATABASE_URL`
+-configurado; queda verificado con `py_compile` y con pruebas unitarias de
+-`_construir_fuentes`/`_ruta_pdf_para_job` de forma aislada.
++Qué hace, en loop cada 5 segundos (`PDF_WORKER_POLL_SECONDS`):
++  1. `SELECT id, query, user_id FROM pdf_jobs WHERE status='pending' ...
++     FOR UPDATE SKIP LOCKED` (hasta `PDF_WORKER_CONCURRENCY` a la vez) — si
++     en el futuro corre más de una réplica de este worker (Railway
++     `numReplicas`), dos réplicas nunca procesan el mismo trabajo dos veces.
++  2. Para cada trabajo, `generate_pdf(query, user_id)` genera la respuesta
++     de JuliX (con cache) y arma el PDF con `julix/pdf_export.py`.
++  3. `UPDATE pdf_jobs SET status='done', pdf_url=?, updated_at=now() WHERE
++     id=?` si todo sale bien; si falla, `status='error'` (columna
++     `error_mensaje` de una versión anterior ya no existe en este esquema —
++     el motivo del error solo queda en el log, no en la fila).
++  4. Cada trabajo tiene un timeout duro de `PDF_JOB_TIMEOUT_SECONDS` (60s
++     por defecto, roadmap S10) — si se excede, se mata esa conversión
++     puntual (no todo el worker) y el trabajo queda en 'error'.
++
++NO SE EJECUTA CONTRA POSTGRESQL NI ANTHROPIC REALES EN ESTE ENTREGABLE —
++el loop principal solo arranca si se invoca `python workers/pdf_worker.py`
++con `DATABASE_URL` configurado; queda verificado con `py_compile` y con
++pruebas unitarias de `_ruta_pdf_para_job` de forma aislada.
+ """
+ 
+ from __future__ import annotations
+@@ -62,7 +64,11 @@
+ if str(REPO_ROOT) not in sys.path:
+     sys.path.insert(0, str(REPO_ROOT))
+ 
++from julix.client import JuliXClient  # noqa: E402
+ from julix.pdf_export import FuenteCitada, generar_pdf  # noqa: E402
++from julix.router import TAREA_POR_AREA, route_by_area  # noqa: E402
++from julix.service import JuliXService  # noqa: E402
++from rag.context_builder import buscar_contexto as rag_buscar_contexto  # noqa: E402
+ 
+ logger = logging.getLogger("vridik.workers.pdf_worker")
+ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+@@ -71,35 +77,74 @@
+ CONCURRENCIA_MAXIMA = int(os.environ.get("PDF_WORKER_CONCURRENCY", "2"))
+ TIMEOUT_DURO_SEGUNDOS = int(os.environ.get("PDF_JOB_TIMEOUT_SECONDS", "60"))
+ DIRECTORIO_SALIDA_PDF = Path(os.environ.get("PDF_WORKER_OUTPUT_DIR", "/tmp/vridik-pdf-jobs"))
++ENVIRONMENT = os.environ.get("VRIDIK_ENVIRONMENT", "staging")
+ 
+ 
+-def _construir_fuentes(fuentes_json: list[dict]) -> list[FuenteCitada]:
+-    """Convierte la columna JSONB `fuentes` (lista de {norma, articulo,
+-    parrafo}) en objetos FuenteCitada para julix/pdf_export.py. Nunca lanza
+-    una excepción por una fuente mal formada — una fuente sin 'norma' se
+-    descarta en vez de tumbar la conversión completa del PDF."""
+-    fuentes: list[FuenteCitada] = []
+-    for fuente in fuentes_json or []:
+-        norma = fuente.get("norma")
+-        if not norma:
+-            continue
+-        fuentes.append(
+-            FuenteCitada(norma=norma, articulo=fuente.get("articulo", ""), parrafo=fuente.get("parrafo"))
+-        )
+-    return fuentes
+-
+-
+-def _ruta_pdf_para_job(job_id: int, caso_id: str) -> Path:
++def _ruta_pdf_para_job(job_id, user_id: str | None) -> Path:
+     """Ruta local del PDF generado para este trabajo. En producción esto
+     normalmente se subiría a almacenamiento de objetos (S3, Railway
+     volume) y `pdf_url` guardaría esa URL pública/firmada — este worker
+     guarda el PDF en `PDF_WORKER_OUTPUT_DIR` y usa la ruta local como
+     `pdf_url` hasta que exista esa integración (fuera de alcance de esta
+     entrega, no se pidió explícitamente)."""
+-    nombre = f"pdf_job_{job_id}_{caso_id}.pdf".replace("/", "_")
++    sufijo_usuario = f"_{user_id}" if user_id else ""
++    nombre = f"pdf_job_{job_id}{sufijo_usuario}.pdf".replace("/", "_")
+     return DIRECTORIO_SALIDA_PDF / nombre
+ 
+ 
++async def generate_pdf(query: str, user_id: str | None, *, db_connection, job_id) -> Path:
++    """Punto de entrada pedido explícitamente: genera el PDF completo para
++    una `query` de `pdf_jobs`, llamando a `julix.service.JuliXService` (que
++    ya revisa `rag/cache.py` ANTES de llamar a Anthropic — ver
++    `julix/service.py`, wiring de cache) para obtener la respuesta.
++
++    Como `pdf_jobs` ya no trae `tarea` (columna eliminada en la alineación
++    con migrations/003_pdf_jobs.sql), la tarea/prompt se decide en el
++    momento con `julix.router.route_by_area(query)` — misma heurística que
++    usaría cualquier otro punto de entrada de Vridik sin tarea explícita.
++
++    Retorna la ruta del PDF generado en disco."""
++    area = route_by_area(query)
++    tarea = TAREA_POR_AREA[area]
++
++    client = JuliXClient(environment=ENVIRONMENT, db_connection=db_connection)
++    service = JuliXService(client=client, db_connection=db_connection)
++
++    respuesta = ""
++    async for fragmento in service.generar_documento(
++        user_id=user_id or "usuario_desconocido",
++        caso_id=str(job_id),
++        tarea=tarea,
++        expediente_texto=query,
++        pregunta=query,
++    ):
++        respuesta += fragmento
++
++    # Mismas fuentes que vería el endpoint HTTP para el PDF (S10): se
++    # reproduce la búsqueda RAG con la misma query, ya que el service no
++    # devuelve los chunks que usó internamente (ver api/julix_endpoint.py:
++    # _fuentes_citadas_para_pdf, mismo patrón).
++    chunks_recuperados = await rag_buscar_contexto(db_connection, query)
++    fuentes = [FuenteCitada.desde_chunk_recuperado(chunk) for chunk in chunks_recuperados]
++
++    ruta_pdf = _ruta_pdf_para_job(job_id, user_id)
++
++    # generar_pdf() es síncrona (ReportLab no es async) — se corre en un
++    # executor aparte para no bloquear el event loop mientras se arma el PDF.
++    loop = asyncio.get_running_loop()
++    await loop.run_in_executor(
++        None,
++        lambda: generar_pdf(
++            respuesta=respuesta,
++            fuentes=fuentes,
++            ruta_salida=ruta_pdf,
++            tarea=tarea,
++            caso_id=str(job_id),
++        ),
++    )
++    return ruta_pdf
++
++
+ async def _obtener_trabajos_pendientes(conn, limite: int) -> list:
+     """SELECT ... FOR UPDATE SKIP LOCKED: si en el futuro corre más de una
+     réplica de este worker, cada una toma trabajos distintos sin pisarse —
+@@ -108,7 +153,7 @@
+     esperando una fila que otra réplica ya está procesando."""
+     return await conn.fetch(
+         """
+-        SELECT id, tarea, caso_id, respuesta, fuentes
++        SELECT id, query, user_id
+         FROM pdf_jobs
+         WHERE status = 'pending'
+         ORDER BY created_at
+@@ -119,65 +164,54 @@
+     )
+ 
+ 
+-async def _marcar_processing(conn, job_id: int) -> None:
++async def _marcar_processing(conn, job_id) -> None:
+     await conn.execute(
+         "UPDATE pdf_jobs SET status = 'processing', updated_at = now() WHERE id = $1",
+         job_id,
+     )
+ 
+ 
+-async def _marcar_done(conn, job_id: int, pdf_url: str) -> None:
++async def _marcar_done(conn, job_id, pdf_url: str) -> None:
+     await conn.execute(
+         "UPDATE pdf_jobs SET status = 'done', pdf_url = $2, updated_at = now() WHERE id = $1",
+         job_id, pdf_url,
+     )
+ 
+ 
+-async def _marcar_error(conn, job_id: int, mensaje: str) -> None:
++async def _marcar_error(conn, job_id) -> None:
++    # El esquema de migrations/003_pdf_jobs.sql no tiene columna de mensaje
++    # de error (a diferencia de una versión anterior de este worker); el
++    # motivo queda solo en el log (logger.exception/error más abajo), nunca
++    # se inventa una columna que la migración no tiene.
+     await conn.execute(
+-        "UPDATE pdf_jobs SET status = 'error', error_mensaje = $2, updated_at = now() WHERE id = $1",
+-        job_id, mensaje,
++        "UPDATE pdf_jobs SET status = 'error', updated_at = now() WHERE id = $1",
++        job_id,
+     )
+ 
+ 
+ async def _procesar_trabajo(conn, job) -> None:
+     """Procesa un único trabajo con timeout duro (roadmap S10: 60s). Si el
+     timeout se cumple, se mata SOLO esta conversión (no el worker) y el
+-    trabajo queda en 'error' con el motivo — nunca se reintenta en
+-    silencio ni se deja 'processing' colgado."""
++    trabajo queda en 'error' — nunca se reintenta en silencio ni se deja
++    'processing' colgado."""
+     job_id = job["id"]
+     try:
+         await _marcar_processing(conn, job_id)
+-        await asyncio.wait_for(_generar_pdf_del_trabajo(conn, job), timeout=TIMEOUT_DURO_SEGUNDOS)
++        ruta_pdf = await asyncio.wait_for(
++            generate_pdf(job["query"], job["user_id"], db_connection=conn, job_id=job_id),
++            timeout=TIMEOUT_DURO_SEGUNDOS,
++        )
++        await _marcar_done(conn, job_id, str(ruta_pdf))
++        logger.info("Vridik/pdf_worker: job_id=%s completado -> %s", job_id, ruta_pdf)
+     except asyncio.TimeoutError:
+-        mensaje = f"Timeout duro de {TIMEOUT_DURO_SEGUNDOS}s excedido generando el PDF"
+-        logger.error("Vridik/pdf_worker: job_id=%s %s", job_id, mensaje)
+-        await _marcar_error(conn, job_id, mensaje)
+-    except Exception as exc:  # noqa: BLE001 — un trabajo con error nunca debe tumbar el loop
++        logger.error(
++            "Vridik/pdf_worker: job_id=%s timeout duro de %ss excedido generando el PDF",
++            job_id, TIMEOUT_DURO_SEGUNDOS,
++        )
++        await _marcar_error(conn, job_id)
++    except Exception:  # noqa: BLE001 — un trabajo con error nunca debe tumbar el loop
+         logger.exception("Vridik/pdf_worker: job_id=%s falló generando el PDF", job_id)
+-        await _marcar_error(conn, job_id, str(exc))
+-
+-
+-async def _generar_pdf_del_trabajo(conn, job) -> None:
+-    fuentes = _construir_fuentes(job["fuentes"])
+-    ruta_pdf = _ruta_pdf_para_job(job["id"], job["caso_id"])
+-
+-    # generar_pdf() es síncrona (ReportLab no es async) — se corre en un
+-    # executor aparte para no bloquear el event loop mientras se arma el PDF.
+-    loop = asyncio.get_running_loop()
+-    await loop.run_in_executor(
+-        None,
+-        lambda: generar_pdf(
+-            respuesta=job["respuesta"],
+-            fuentes=fuentes,
+-            ruta_salida=ruta_pdf,
+-            tarea=job["tarea"],
+-            caso_id=job["caso_id"],
+-        ),
+-    )
+-
+-    await _marcar_done(conn, job["id"], str(ruta_pdf))
+-    logger.info("Vridik/pdf_worker: job_id=%s completado -> %s", job["id"], ruta_pdf)
++        await _marcar_error(conn, job_id)
+ 
+ 
+ async def _ciclo_una_vez(pool) -> int:

@@ -1,0 +1,90 @@
+--- /tmp/context_builder_after.py	2026-07-05 09:02:42.055039257 -0500
++++ "/sessions/serene-upbeat-allen/mnt/Project Vridik/julix/context_builder.py"	2026-07-05 09:16:46.000000000 -0500
+@@ -13,17 +13,43 @@
+ para el mismo punto. Para cualquier otro usuario (o user_id=None) el orden
+ no cambia: sigue siendo puramente jerarquía kelseniana + vigencia (S7).
+ 
++Sprint S11-extra (cache): `obtener_respuesta_con_cache()` es el punto de
++entrada que revisa rag/cache.py (SQLite, data/rag_cache.db) ANTES de que el
++caller invoque a Anthropic. Recibe la generación real como un callback
++(`generar_respuesta`) en vez de importar julix/client.py directamente —
++evita acoplar este módulo (que hoy no depende de red) a una llamada real, y
++hace trivial testear hit/miss/expiración con un callback falso. Si hay hit
++vigente, no se llama `generar_respuesta` y se suma 1 a
++`METRICAS["cache_hits"]`; si hay miss (o la entrada expiró según el TTL de
++la pregunta — 24h UGPP / 7 días definiciones, ver
++`rag.cache.ttl_horas_para_query`), se llama `generar_respuesta()` una vez y
++el resultado se guarda en cache antes de retornarlo.
++
+ NO SE EJECUTA EN ESTE ENTREGABLE — esqueleto de referencia para Sprint S4.
+ """
+ 
+ from __future__ import annotations
+ 
++import sys
+ from dataclasses import dataclass, field
++from pathlib import Path
++from typing import Callable
++
++# Repo layout: julix/ y rag/ son hermanos en la raíz (mismo patrón de
++# sys.path que eval/evaluador.py usa para importar julix.* desde eval/).
++_REPO_ROOT = Path(__file__).resolve().parent.parent
++if str(_REPO_ROOT) not in sys.path:
++    sys.path.insert(0, str(_REPO_ROOT))
++
++from rag.cache import RAGCache, ttl_horas_para_query  # noqa: E402
+ 
+ # --- S11-extra: personalización por usuario -----------------------------
+ USER_ID_ANA_LUISA = "ana_luisa"
+ ETIQUETA_EXPLICACION_SIMPLE = "explicación_simple"
+ 
++# --- S11-extra: métricas de cache (contador en memoria del proceso) ------
++METRICAS: dict[str, int] = {"cache_hits": 0, "cache_misses": 0}
++
+ 
+ @dataclass
+ class ContextBudget:
+@@ -130,3 +156,43 @@
+         tokens_estimados=presupuesto.instrucciones_tokens + presupuesto.expediente_tokens
+         + sum(c.tokens for c in chunks_finales),
+     )
++
++
++def obtener_respuesta_con_cache(
++    *,
++    query: str,
++    generar_respuesta: Callable[[], tuple[str, list, int]],
++    cache: RAGCache | None = None,
++) -> tuple[str, list, int, bool]:
++    """S11-extra: punto de entrada que el caller (julix/service.py) usa
++    ANTES de invocar a Anthropic. `generar_respuesta` es un callback sin
++    argumentos que, al ejecutarse, hace la llamada real (vía
++    julix/client.py) y retorna (respuesta, fuentes, tokens) — se ejecuta
++    como máximo una vez, solo en caso de miss.
++
++    Retorna (respuesta, fuentes, tokens, from_cache):
++      - Hit vigente: NO se llama `generar_respuesta`; se suma 1 a
++        METRICAS["cache_hits"]; from_cache=True.
++      - Miss (o entrada expirada): se llama `generar_respuesta()`, se
++        guarda en cache con `rag.cache.RAGCache.set()`, se suma 1 a
++        METRICAS["cache_misses"]; from_cache=False.
++
++    El TTL aplicado (24h o 7 días) se decide con
++    `rag.cache.ttl_horas_para_query(query)` y se usa tanto para el chequeo
++    de vigencia en `get()` como, implícitamente, para la próxima lectura de
++    esta misma pregunta — la tabla no guarda el TTL por fila (ver
++    rag/cache.py), así que ambas puntas deben clasificar la misma query."""
++    cache = cache or RAGCache()
++    query_hash = RAGCache.hash_query(query)
++    ttl_horas = ttl_horas_para_query(query)
++
++    resultado_cacheado = cache.get(query_hash, ttl_horas=ttl_horas)
++    if resultado_cacheado is not None:
++        METRICAS["cache_hits"] += 1
++        respuesta, fuentes, tokens = resultado_cacheado
++        return respuesta, fuentes, tokens, True
++
++    METRICAS["cache_misses"] += 1
++    respuesta, fuentes, tokens = generar_respuesta()
++    cache.set(query_hash, respuesta, fuentes, tokens)
++    return respuesta, fuentes, tokens, False

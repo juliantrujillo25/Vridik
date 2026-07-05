@@ -1,0 +1,23 @@
+# Vridik — dependencias de runtime (aplicación, no solo tests)
+# Sprint S4: julix/client.py y api/julix_endpoint.py requieren estos paquetes
+# en el servicio desplegado en Railway. Instalar con: pip install -r requirements.txt
+
+fastapi==0.139.0
+uvicorn[standard]==0.32.0
+pydantic==2.13.4
+anthropic==0.116.0
+asyncpg==0.29.0
+bcrypt==4.2.0
+PyJWT==2.9.0
+
+# Añadidos en S6 (cierre RAG, semana de instalación en producción)
+# sentence-transformers pesa ~90MB + torch (~600MB-2GB según plataforma):
+# confirmar que el plan de Railway soporta esa imagen antes de --commit.
+sentence-transformers==2.7.0
+pgvector==0.3.6
+psycopg2-binary==2.9.10
+pypdf==5.1.0
+
+# Añadido en S10 (julix/pdf_export.py): exportación de respuestas de JuliX
+# a PDF con citas vía api/julix_endpoint.py?format=pdf
+reportlab==4.2.5
