@@ -72,6 +72,8 @@ jobs:
           sudo apt-get update -y && sudo apt-get install -y postgresql-client
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schema_semana1_vridik.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f julix/sql/ledger_schema.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/003_pdf_jobs.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/004_totp_2fa.sql
 
       - name: Cargar seed de staging (db/seed_railway.sql)
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/seed_railway.sql
@@ -127,11 +129,22 @@ jobs:
       - name: Dry-run — julix/sql/ledger_schema.sql
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f julix/sql/ledger_schema.sql
 
+      - name: Dry-run — migrations/003_pdf_jobs.sql (S10/S11-extra, tabla pdf_jobs)
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/003_pdf_jobs.sql
+
+      - name: Dry-run — migrations/004_totp_2fa.sql (S12, columnas 2FA en users)
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/004_totp_2fa.sql
+
       - name: Dry-run — db/seed_railway.sql
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/seed_railway.sql
 
       - name: Verificación de idempotencia — reaplicar seed_railway.sql no debe fallar
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/seed_railway.sql
+
+      - name: Verificación de idempotencia — reaplicar 003/004 no debe fallar
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/003_pdf_jobs.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/004_totp_2fa.sql
 
       - name: Nota
         run: |

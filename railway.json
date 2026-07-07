@@ -24,7 +24,10 @@
       "variables": {
         "ANTHROPIC_API_KEY": "${{secrets.ANTHROPIC_API_KEY}}",
         "DATABASE_URL": "${{vridik-postgres.DATABASE_URL}}",
-        "USE_POSTGRES": "true"
+        "USE_POSTGRES": "true",
+        "JWT_SECRET": "${{secrets.JWT_SECRET}}",
+        "VRIDIK_ALLOWED_ORIGINS": "",
+        "_nota_hardening_s13": "JWT_SECRET debe venir SIEMPRE del vault de secretos de Railway (nunca vacío en producción — ver api/julix_endpoint.py, que ahora loggea CRITICAL si arranca vacío). VRIDIK_ALLOWED_ORIGINS es la lista de orígenes CORS autorizados del frontend de Vridik, separados por comas (p.ej. 'https://app.vridik.com'); vacío por defecto = CORS rechaza cualquier origen cross-origin (falla cerrado, no abierto) hasta que se configure explícitamente."
       }
     },
     {
@@ -63,7 +66,9 @@
         "DATABASE_URL": "${{vridik-postgres.DATABASE_URL}}",
         "PDF_JOB_TIMEOUT_SECONDS": "60",
         "PDF_WORKER_CONCURRENCY": "2",
-        "PDF_WORKER_POLL_SECONDS": "5"
+        "PDF_WORKER_POLL_SECONDS": "5",
+        "OBJECT_STORAGE_BACKEND": "local",
+        "_nota_object_storage": "S11-extra-9: 'local' es el backend por defecto, sin cambio de comportamiento (el worker guarda el PDF en PDF_WORKER_OUTPUT_DIR y usa esa ruta local como pdf_url, igual que en entregas anteriores). Cambiar 'local' -> 's3' aquí (más OBJECT_STORAGE_S3_BUCKET/OBJECT_STORAGE_S3_REGION/credenciales AWS reales) activa storage/object_storage.py:S3StorageBackend sin tocar código — no se activó en este entregable."
       }
     }
   ],

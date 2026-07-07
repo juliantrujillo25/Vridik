@@ -21,3 +21,16 @@ pypdf==5.1.0
 # Añadido en S10 (julix/pdf_export.py): exportación de respuestas de JuliX
 # a PDF con citas vía api/julix_endpoint.py?format=pdf
 reportlab==4.2.5
+
+# Añadido en S12 (core/totp_2fa.py): 2FA opcional (TOTP, RFC 6238) para
+# roles admin/abogado. boto3 NO se agrega aquí — storage/object_storage.py
+# S3StorageBackend queda como stub opcional hasta que se active
+# explícitamente OBJECT_STORAGE_BACKEND=s3 (ver railway.json, S11-extra-9).
+pyotp==2.9.0
+
+# Añadido en S1 (core/auth.py, api/auth_endpoint.py): POST /auth/register y
+# POST /auth/login sobre PostgreSQL real. python-jose para el JWT (HS256),
+# passlib[bcrypt] para hash/verify de contraseña — PyJWT/bcrypt de arriba
+# siguen usándose sin cambios en admin_users_endpoint.py/julix_endpoint.py.
+passlib[bcrypt]==1.7.4
+python-jose==3.3.0

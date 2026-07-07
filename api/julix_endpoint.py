@@ -24,6 +24,27 @@ POST /julix/query
     trajo automáticamente — S6) — nunca se vuelve a consultar el RAG por
     separado solo para el PDF.
 
+GET /julix/stream (Sprint S11 — mensajería en tiempo real)
+  - Mismo `JuliXService.generar_documento(...)` que `POST /julix/query`,
+    pero transmitido fragmento a fragmento vía Server-Sent Events en vez de
+    esperar el documento completo — el frontend puede mostrar el texto
+    apareciendo en vivo, con un botón "Cancelar" visible (roadmap S4) que
+    simplemente cierra la conexión EventSource/fetch; el servidor detecta
+    esa desconexión en cada iteración (`request.is_disconnected()`) y deja
+    de generar de inmediato, sin seguir gastando tokens de Anthropic por
+    una respuesta que ya nadie va a leer.
+  - Eventos emitidos: `chunk` (uno por fragmento de texto), `done` (al
+    terminar con éxito) o `error` (si `generar_documento` propaga una
+    excepción) — nunca se cierra el stream en silencio sin uno de estos
+    tres eventos.
+  - Autenticación: mismo JWT que el resto de Vridik. Como `EventSource` del
+    navegador no permite fijar headers propios, este endpoint acepta el
+    token también como query param `?token=...` (además del header
+    `Authorization: Bearer ...`, que sigue siendo la opción preferida si el
+    frontend usa `fetch`/`ReadableStream` en vez de `EventSource` — un
+    token en la URL queda más expuesto en logs de acceso/proxies).
+  - Reutiliza el mismo rate limit (20 req/min) que `POST /julix/query`.
+
 Autenticación: reutiliza el mismo JWT_SECRET y el mismo patrón de doble
 lectura (`core.feature_flag_legacy.use_postgres`) que el resto de Vridik —
 este endpoint no reimplementa autenticación, solo decodifica el JWT ya
@@ -35,6 +56,7 @@ se define la app, pero no se levanta ningún servidor ni se llama a Anthropic.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import tempfile
@@ -48,7 +70,8 @@ except ImportError:  # pragma: no cover
     pyjwt = None  # type: ignore
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from core.feature_flag_legacy import use_postgres
@@ -64,6 +87,50 @@ logger = logging.getLogger("vridik.julix.api")
 app = FastAPI(title="Vridik — JuliX API", version="s4")
 
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
+if not JWT_SECRET:
+    # S13 (hardening): un JWT_SECRET vacío significa que CUALQUIER token
+    # firmado con secreto vacío validaría contra este servidor — esto es
+    # aceptable en tests (que sobreescriben JWT_SECRET explícitamente),
+    # pero nunca en un despliegue real. Se deja como warning en vez de
+    # `raise` para no tumbar el import en CI/tests que todavía no
+    # configuran la variable; Railway SÍ debe tenerla configurada siempre
+    # (ver railway.json, variables_compartidas — falta agregarla ahí
+    # explícitamente si aún no está).
+    logging.getLogger("vridik.julix.api").critical(
+        "Vridik/JuliX: JWT_SECRET vacío al arrancar — cualquier token firmado "
+        "con secreto vacío validaría contra este servidor. Nunca desplegar así "
+        "en producción."
+    )
+
+# S13 (hardening): CORS explícito, nunca "*". VRIDIK_ALLOWED_ORIGINS es una
+# lista separada por comas de orígenes del frontend de Vridik autorizados
+# (p.ej. "https://app.vridik.com,https://staging.vridik.com"). Sin esta
+# variable configurada, la lista queda vacía y CORSMiddleware rechaza
+# cualquier origen cross-origin — falla cerrado, no abierto.
+_ALLOWED_ORIGINS = [
+    origen.strip() for origen in os.environ.get("VRIDIK_ALLOWED_ORIGINS", "").split(",") if origen.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+
+
+@app.middleware("http")
+async def _agregar_headers_seguridad(request: Request, call_next):
+    """S13 (hardening): headers de seguridad mínimos en cada respuesta.
+    No reemplaza un WAF/proxy real (Railway ya termina TLS en el borde),
+    pero cierra los gaps más baratos: MIME sniffing, framing (clickjacking)
+    y fuga de Referer hacia otros orígenes."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
 
 RATE_LIMIT_MAX_REQUESTS = 20
 RATE_LIMIT_WINDOW_SECONDS = 60
@@ -253,6 +320,106 @@ async def julix_query(
         latency_ms=ultima_llamada["latency_ms"] if ultima_llamada else None,
         status=ultima_llamada["status"] if ultima_llamada else "sin_ledger",
         model=ultima_llamada["model"] if ultima_llamada else None,
+    )
+
+
+async def _formatear_evento_sse(evento: str, data: dict) -> str:
+    return f"event: {evento}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def _generar_stream_sse(
+    request: Request,
+    service: JuliXService,
+    *,
+    user_id: str,
+    caso_id: str,
+    tarea: str,
+    expediente_texto: str,
+    pregunta: str | None,
+    prompt_version: int | None,
+):
+    """Generador de eventos SSE (S11): traduce cada fragmento que produce
+    JuliXService.generar_documento() a un evento `chunk`, y cierra con
+    `done` (éxito) o `error` (excepción) — nunca se cierra el stream en
+    silencio sin uno de esos dos eventos finales.
+
+    Revisa `request.is_disconnected()` en cada iteración para que un
+    cliente que cierra la conexión (botón "Cancelar" del frontend, roadmap
+    S4) detenga el streaming de inmediato: sin este chequeo, el servidor
+    seguiría consumiendo tokens de Anthropic para una respuesta que ya
+    nadie va a leer."""
+    try:
+        async for fragmento in service.generar_documento(
+            user_id=user_id,
+            caso_id=caso_id,
+            tarea=tarea,
+            expediente_texto=expediente_texto,
+            pregunta=pregunta,
+            prompt_version=prompt_version,
+        ):
+            if await request.is_disconnected():
+                logger.info(
+                    "Vridik/JuliX SSE: cliente desconectado, deteniendo stream — caso_id=%s",
+                    caso_id,
+                )
+                return
+            yield await _formatear_evento_sse("chunk", {"texto": fragmento})
+    except Exception as exc:  # noqa: BLE001 — un error de streaming nunca debe tumbar el servidor
+        logger.exception("Vridik/JuliX SSE: error generando el stream — caso_id=%s", caso_id)
+        yield await _formatear_evento_sse("error", {"detalle": str(exc)})
+        return
+    yield await _formatear_evento_sse("done", {})
+
+
+@app.get("/julix/stream")
+async def julix_stream(
+    request: Request,
+    tarea: str,
+    caso_id: str,
+    expediente_texto: str,
+    pregunta: str | None = Query(default=None),
+    prompt_version: int | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    """S11: mensajería en tiempo real vía Server-Sent Events. Ver docstring
+    del módulo para el contrato completo de eventos y autenticación."""
+    auth_header = authorization or (f"Bearer {token}" if token else None)
+    claims = _decodificar_jwt(auth_header)
+    user_id = claims.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Token sin 'sub'")
+
+    _verificar_rate_limit(user_id)
+
+    logger.info(
+        "Vridik/JuliX SSE: stream iniciado — user_id=%s tarea=%s caso_id=%s",
+        user_id, tarea, caso_id,
+    )
+
+    service = get_service(request)
+    generador = _generar_stream_sse(
+        request,
+        service,
+        user_id=user_id,
+        caso_id=caso_id,
+        tarea=tarea,
+        expediente_texto=expediente_texto,
+        pregunta=pregunta,
+        prompt_version=prompt_version,
+    )
+    return StreamingResponse(
+        generador,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # Evita que un proxy intermedio (Railway/Nginx) bufferee la
+            # respuesta SSE completa antes de entregarla — si no, el
+            # frontend vería todo el documento de golpe al final, no
+            # fragmento a fragmento.
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

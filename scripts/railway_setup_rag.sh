@@ -12,9 +12,12 @@
 #   3. Aplica migrations/003_pdf_jobs.sql (S10/S11-extra: tabla `pdf_jobs`
 #      que consume workers/pdf_worker.py) — DESPUÉS de rag_chunks_schema.sql,
 #      mismo manejo idempotente/no-fatal que el paso anterior.
-#   4. Corre rag/ingest_ugpp.py --check: valida que /data/ugpp/ tiene PDFs,
+#   4. Aplica migrations/004_totp_2fa.sql (S12: columnas totp_secret/
+#      totp_enabled/totp_activado_en en users, ver core/totp_2fa.py) —
+#      mismo manejo idempotente/no-fatal.
+#   5. Corre rag/ingest_ugpp.py --check: valida que /data/ugpp/ tiene PDFs,
 #      SIN cargar el modelo de embeddings ni tocar la base de datos.
-#   5. Imprime el mensaje de que el RAG queda listo para --commit (la
+#   6. Imprime el mensaje de que el RAG queda listo para --commit (la
 #      ingesta real de los 30 PDFs se dispara aparte, manualmente, nunca
 #      como parte automática del arranque del servicio).
 #
@@ -44,6 +47,11 @@ psql "$DATABASE_URL" -f rag/sql/rag_chunks_schema.sql || {
 echo "--- Aplicando migrations/003_pdf_jobs.sql (tabla pdf_jobs) ---"
 psql "$DATABASE_URL" -f migrations/003_pdf_jobs.sql || {
   echo "AVISO: 003_pdf_jobs.sql devolvió un error (probablemente ya estaba aplicado). Continuando." >&2
+}
+
+echo "--- Aplicando migrations/004_totp_2fa.sql (columnas 2FA en users) ---"
+psql "$DATABASE_URL" -f migrations/004_totp_2fa.sql || {
+  echo "AVISO: 004_totp_2fa.sql devolvió un error (probablemente ya estaba aplicado). Continuando." >&2
 }
 
 echo "--- Validando /data/ugpp/ (rag/ingest_ugpp.py --check) ---"

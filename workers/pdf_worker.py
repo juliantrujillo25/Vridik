@@ -69,6 +69,7 @@ from julix.pdf_export import FuenteCitada, generar_pdf  # noqa: E402
 from julix.router import TAREA_POR_AREA, route_by_area  # noqa: E402
 from julix.service import JuliXService  # noqa: E402
 from rag.context_builder import buscar_contexto as rag_buscar_contexto  # noqa: E402
+from storage.object_storage import get_storage_backend  # noqa: E402
 
 logger = logging.getLogger("vridik.workers.pdf_worker")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -81,18 +82,19 @@ ENVIRONMENT = os.environ.get("VRIDIK_ENVIRONMENT", "staging")
 
 
 def _ruta_pdf_para_job(job_id, user_id: str | None) -> Path:
-    """Ruta local del PDF generado para este trabajo. En producción esto
-    normalmente se subiría a almacenamiento de objetos (S3, Railway
-    volume) y `pdf_url` guardaría esa URL pública/firmada — este worker
-    guarda el PDF en `PDF_WORKER_OUTPUT_DIR` y usa la ruta local como
-    `pdf_url` hasta que exista esa integración (fuera de alcance de esta
-    entrega, no se pidió explícitamente)."""
+    """Ruta LOCAL de trabajo del PDF generado para este trabajo — siempre
+    se escribe primero aquí (ReportLab escribe a disco), sin importar el
+    backend de almacenamiento configurado. `generate_pdf()` sube este
+    archivo con `storage.object_storage.get_storage_backend()` para
+    obtener el `pdf_url` final (S11-extra-9: antes esta ruta local se
+    guardaba tal cual como `pdf_url`; ahora es solo el paso intermedio del
+    backend local, o el archivo de origen para subir al backend S3)."""
     sufijo_usuario = f"_{user_id}" if user_id else ""
     nombre = f"pdf_job_{job_id}{sufijo_usuario}.pdf".replace("/", "_")
     return DIRECTORIO_SALIDA_PDF / nombre
 
 
-async def generate_pdf(query: str, user_id: str | None, *, db_connection, job_id) -> Path:
+async def generate_pdf(query: str, user_id: str | None, *, db_connection, job_id) -> str:
     """Punto de entrada pedido explícitamente: genera el PDF completo para
     una `query` de `pdf_jobs`, llamando a `julix.service.JuliXService` (que
     ya revisa `rag/cache.py` ANTES de llamar a Anthropic — ver
@@ -103,7 +105,10 @@ async def generate_pdf(query: str, user_id: str | None, *, db_connection, job_id
     momento con `julix.router.route_by_area(query)` — misma heurística que
     usaría cualquier otro punto de entrada de Vridik sin tarea explícita.
 
-    Retorna la ruta del PDF generado en disco."""
+    Retorna la URL final (`pdf_url`) que debe guardarse en `pdf_jobs`: la
+    ruta local si `OBJECT_STORAGE_BACKEND=local` (por defecto, sin cambio
+    de comportamiento), o la URL pública/firmada del backend real
+    (`OBJECT_STORAGE_BACKEND=s3`, ver storage/object_storage.py, S11-extra-9)."""
     area = route_by_area(query)
     tarea = TAREA_POR_AREA[area]
 
@@ -142,7 +147,15 @@ async def generate_pdf(query: str, user_id: str | None, *, db_connection, job_id
             caso_id=str(job_id),
         ),
     )
-    return ruta_pdf
+
+    # S11-extra-9: sube el PDF con el backend configurado
+    # (OBJECT_STORAGE_BACKEND, ver storage/object_storage.py). Con el
+    # backend "local" (por defecto) esto es un no-op que retorna la misma
+    # ruta local de siempre — cero cambio de comportamiento hasta que se
+    # configure explícitamente OBJECT_STORAGE_BACKEND=s3 en Railway.
+    storage = get_storage_backend()
+    pdf_url = await storage.upload_pdf(ruta_pdf, key=ruta_pdf.name)
+    return pdf_url
 
 
 async def _obtener_trabajos_pendientes(conn, limite: int) -> list:
@@ -197,12 +210,12 @@ async def _procesar_trabajo(conn, job) -> None:
     job_id = job["id"]
     try:
         await _marcar_processing(conn, job_id)
-        ruta_pdf = await asyncio.wait_for(
+        pdf_url = await asyncio.wait_for(
             generate_pdf(job["query"], job["user_id"], db_connection=conn, job_id=job_id),
             timeout=TIMEOUT_DURO_SEGUNDOS,
         )
-        await _marcar_done(conn, job_id, str(ruta_pdf))
-        logger.info("Vridik/pdf_worker: job_id=%s completado -> %s", job_id, ruta_pdf)
+        await _marcar_done(conn, job_id, pdf_url)
+        logger.info("Vridik/pdf_worker: job_id=%s completado -> %s", job_id, pdf_url)
     except asyncio.TimeoutError:
         logger.error(
             "Vridik/pdf_worker: job_id=%s timeout duro de %ss excedido generando el PDF",
