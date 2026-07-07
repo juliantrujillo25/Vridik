@@ -24,6 +24,16 @@ DELETE /admin/products/{id}         solo admin, soft delete (is_active=false)
 `get_current_seller()` es como get_current_admin() pero sin exigir
 role=='admin' — cualquier usuario autenticado (seller o admin) pasa; el
 chequeo de ownership para PATCH se hace en el propio endpoint.
+
+Sprint S4: gestión de órdenes (core/order.py) — el checkout/consulta propia
+vive en api/orders_endpoint.py, esto es solo lo que requiere rol admin:
+GET   /admin/orders                 solo admin, lista todas (?status=&skip=&limit=)
+PATCH /admin/orders/{id}/status     solo admin, cambia status; si pasa a
+                                     'cancelled' restaura el stock reservado.
+
+`get_current_user` es un alias de get_current_seller() — api/orders_endpoint.py
+lo importa bajo ese nombre porque ahí "cualquier usuario autenticado" es
+justamente lo que se necesita (no solo sellers).
 """
 
 from __future__ import annotations
@@ -36,6 +46,7 @@ from pydantic import BaseModel, Field
 from api.auth_endpoint import _claims_de_bearer, _get_db
 from core.admin import change_role, create_user, ensure_role_column, list_users
 from core.auth import hash_password
+from core.order import ensure_order_tables, list_all_orders, update_status
 from core.product import create_product, ensure_product_table, get_product, soft_delete, update_product
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -68,6 +79,10 @@ class UpdateProductRequest(BaseModel):
     is_active: bool | None = None
 
 
+class UpdateOrderStatusRequest(BaseModel):
+    status: Literal["pending", "paid", "shipped", "cancelled"]
+
+
 async def _resolver_usuario(request: Request, authorization: str | None) -> dict:
     claims = _claims_de_bearer(authorization)
     user_id = claims.get("sub")
@@ -93,6 +108,11 @@ async def get_current_seller(request: Request, authorization: str | None = Heade
     """Cualquier usuario autenticado (seller o admin) — no exige un rol
     específico, a diferencia de get_current_admin()."""
     return await _resolver_usuario(request, authorization)
+
+
+# S4: mismo dependency, nombre más claro para api/orders_endpoint.py (ahí no
+# hay nada "seller-específico" — cualquier usuario autenticado hace checkout).
+get_current_user = get_current_seller
 
 
 @router.get("/users")
@@ -173,3 +193,26 @@ async def delete_product(product_id: str, request: Request, admin: dict = Depend
     if eliminado is None:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     return None
+
+
+@router.get("/orders")
+async def get_orders(
+    request: Request, status: str | None = None, skip: int = 0, limit: int = 20,
+    admin: dict = Depends(get_current_admin),
+):
+    conn = _get_db(request)
+    await ensure_order_tables(conn)
+    return await list_all_orders(conn, skip=skip, limit=limit, status=status)
+
+
+@router.patch("/orders/{order_id}/status")
+async def patch_order_status(
+    order_id: str, payload: UpdateOrderStatusRequest, request: Request,
+    admin: dict = Depends(get_current_admin),
+):
+    conn = _get_db(request)
+    await ensure_order_tables(conn)
+    actualizada = await update_status(conn, order_id, payload.status)
+    if actualizada is None:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+    return actualizada
