@@ -23,16 +23,21 @@ Diseño:
     `refresh_tokens.token_hash` en schema_semana1_vridik.sql: el valor
     real nunca se persiste en claro.
 
-NO SE EJECUTA CONTRA POSTGRESQL REAL EN ESTE ENTREGABLE — las funciones que
-reciben `db_connection` asumen una conexión asyncpg real (mismo contrato
-que el resto de Vridik); verificado con pruebas unitarias usando un fake de
-conexión (ver tests/test_totp_2fa.py) y con pyotp real generando/validando
-códigos TOTP de verdad (sin red, sin BD).
+`totp_secret` se cifra en reposo con Fernet (clave derivada de JWT_SECRET,
+ver `_fernet()`) antes de cualquier escritura en `users.totp_secret` — nunca
+se persiste en texto plano. `ensure_totp_columns()` agrega las columnas de
+forma idempotente (mismo patrón que `core.auth.ensure_users_table`), ya
+que `migrations/004_totp_2fa.sql` nunca se corrió contra Postgres real.
+
+Expuesto vía HTTP en api/auth_endpoint.py (Sprint S12):
+POST /auth/2fa/setup, POST /auth/2fa/verify, POST /auth/2fa/login.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import os
 import secrets
 from dataclasses import dataclass, field
 
@@ -40,6 +45,11 @@ try:
     import pyotp
 except ImportError:  # pragma: no cover
     pyotp = None  # type: ignore
+
+try:
+    from cryptography.fernet import Fernet
+except ImportError:  # pragma: no cover
+    Fernet = None  # type: ignore
 
 ISSUER_NAME = "Vridik"
 VENTANA_VALIDEZ_PASOS = 1  # tolera +-1 paso de 30s (drift de reloj del celular)
@@ -73,6 +83,45 @@ def verificar_codigo(secreto: str, codigo: str, *, ventana: int = VENTANA_VALIDE
     if not codigo or not codigo.isdigit():
         return False
     return pyotp.totp.TOTP(secreto).verify(codigo, valid_window=ventana)
+
+
+def _fernet() -> "Fernet":
+    """Clave Fernet derivada de JWT_SECRET (SHA-256 -> base64 urlsafe) —
+    ningún secreto nuevo que administrar por separado; si JWT_SECRET rota,
+    los `totp_secret` cifrados con la clave anterior dejan de poder
+    descifrarse (mismo trade-off que invalidar todos los JWT existentes)."""
+    if Fernet is None:
+        raise RuntimeError("core.totp_2fa requiere 'cryptography' instalado (pip install cryptography)")
+    jwt_secret = os.environ.get("JWT_SECRET", "")
+    if not jwt_secret:
+        raise RuntimeError("JWT_SECRET no configurado: requerido para cifrar/descifrar totp_secret")
+    clave = base64.urlsafe_b64encode(hashlib.sha256(jwt_secret.encode("utf-8")).digest())
+    return Fernet(clave)
+
+
+def _encriptar_secreto(secreto: str) -> str:
+    """`totp_secret` nunca se persiste en texto plano — se cifra en reposo
+    con Fernet antes de cualquier `UPDATE users SET totp_secret = ...`."""
+    return _fernet().encrypt(secreto.encode("utf-8")).decode("utf-8")
+
+
+def _desencriptar_secreto(secreto_cifrado: str) -> str:
+    return _fernet().decrypt(secreto_cifrado.encode("utf-8")).decode("utf-8")
+
+
+async def ensure_totp_columns(db_connection) -> None:
+    """Idempotente (mismo patrón que core.auth.ensure_users_table): agrega
+    las columnas de 2FA a `users` si todavía no existen — la migración
+    migrations/004_totp_2fa.sql documenta el mismo cambio pero nunca se
+    corrió contra el Postgres real de Railway."""
+    await db_connection.execute(
+        """
+        ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS totp_secret TEXT,
+            ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false,
+            ADD COLUMN IF NOT EXISTS totp_activado_en TIMESTAMPTZ
+        """
+    )
 
 
 def _hash_codigo_respaldo(codigo: str) -> str:
@@ -120,7 +169,7 @@ async def iniciar_activacion(db_connection, *, user_id: str, email: str) -> tupl
     secreto = generar_secreto()
     await db_connection.execute(
         "UPDATE users SET totp_secret = $2, totp_enabled = false, totp_activado_en = NULL WHERE id = $1",
-        user_id, secreto,
+        user_id, _encriptar_secreto(secreto),
     )
     return secreto, provisioning_uri(secreto, email=email)
 
@@ -132,7 +181,7 @@ async def confirmar_activacion(db_connection, *, user_id: str, codigo: str) -> b
     fila = await db_connection.fetchrow("SELECT totp_secret FROM users WHERE id = $1", user_id)
     if fila is None or not fila["totp_secret"]:
         return False
-    if not verificar_codigo(fila["totp_secret"], codigo):
+    if not verificar_codigo(_desencriptar_secreto(fila["totp_secret"]), codigo):
         return False
     await db_connection.execute(
         "UPDATE users SET totp_enabled = true, totp_activado_en = now() WHERE id = $1",
@@ -156,7 +205,7 @@ async def verificar_login_totp(db_connection, *, user_id: str, codigo: str) -> b
     )
     if fila is None or not fila["totp_secret"]:
         return False
-    return verificar_codigo(fila["totp_secret"], codigo)
+    return verificar_codigo(_desencriptar_secreto(fila["totp_secret"]), codigo)
 
 
 async def desactivar_totp(db_connection, *, user_id: str) -> None:

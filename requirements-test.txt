@@ -16,3 +16,7 @@ pydantic==2.13.4
 
 # Añadido en S12 (core/totp_2fa.py)
 pyotp==2.9.0
+
+# Añadido en S12 (conexión HTTP del 2FA, api/auth_endpoint.py)
+cryptography==42.0.5
+qrcode[pil]==7.4.2

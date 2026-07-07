@@ -8,10 +8,25 @@ de core/feature_flag_legacy.py.
 
 from __future__ import annotations
 
+import base64
+import os
 import time
+import uuid
+from urllib.parse import parse_qsl, urlsplit
 
+# S12: core.auth lee JWT_SECRET como constante de módulo en el momento del
+# import — debe quedar fijado ANTES de `from api.auth_endpoint import router`
+# más abajo (el autouse `_env_base` de conftest.py llega demasiado tarde,
+# recién al ejecutar cada test, no durante la colección de este archivo).
+os.environ.setdefault("JWT_SECRET", "vridik-test-secret-nunca-usar-en-produccion")
+
+import jwt as pyjwt
+import pyotp
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+from api.auth_endpoint import router as auth_router
 from core.feature_flag_legacy import (
     autenticar,
     autenticar_legacy,
@@ -161,3 +176,131 @@ def test_rate_limit_placeholder_contrato_login():
     VENTANA_MINUTOS = 15
     assert MAX_FALLOS_LOGIN == 10
     assert VENTANA_MINUTOS == 15
+
+
+# ---------------------------------------------------------------------------
+# 11-13. 2FA TOTP (S12) sobre api/auth_endpoint.py — HTTP end-to-end con un
+# fake mínimo de conexión asyncpg (nunca PostgreSQL real), mismo estilo que
+# tests/test_admin_users.py::FakeAdminDB.
+# ---------------------------------------------------------------------------
+class _FakeAuth2FADB:
+    """Fake de la tabla `users` tal como la usan api/auth_endpoint.py y
+    core/totp_2fa.py: email/hashed_password/is_active + columnas TOTP."""
+
+    def __init__(self):
+        self.users: dict[str, dict] = {}
+
+    async def execute(self, query: str, *args):
+        if "totp_secret = $2" in query and "totp_enabled = false" in query:
+            user_id, secreto_cifrado = args
+            self.users[user_id]["totp_secret"] = secreto_cifrado
+            self.users[user_id]["totp_enabled"] = False
+            self.users[user_id]["totp_activado_en"] = None
+        elif "totp_enabled = true" in query:
+            (user_id,) = args
+            self.users[user_id]["totp_enabled"] = True
+            self.users[user_id]["totp_activado_en"] = "now"
+        return "OK"
+
+    async def fetchrow(self, query: str, *args):
+        if "INSERT INTO users" in query and "RETURNING id" in query:
+            email, password_hash = args
+            user_id = str(uuid.uuid4())
+            self.users[user_id] = {
+                "id": user_id, "email": email, "hashed_password": password_hash,
+                "is_active": True, "totp_secret": None, "totp_enabled": False, "totp_activado_en": None,
+            }
+            return {"id": user_id}
+        if "SELECT id FROM users WHERE email" in query:
+            (email,) = args
+            return next(({"id": u["id"]} for u in self.users.values() if u["email"] == email), None)
+        if "SELECT id, hashed_password, is_active, totp_enabled FROM users WHERE email" in query:
+            (email,) = args
+            return next((dict(u) for u in self.users.values() if u["email"] == email), None)
+        if "SELECT totp_secret FROM users WHERE id" in query:
+            user_id = args[0]
+            u = self.users.get(user_id)
+            if u is None:
+                return None
+            if "totp_enabled = true" in query and not u["totp_enabled"]:
+                return None
+            return {"totp_secret": u["totp_secret"]}
+        return None
+
+
+@pytest.fixture
+def auth_client():
+    app = FastAPI()
+    app.include_router(auth_router)
+    app.state.db_connection = _FakeAuth2FADB()
+    return TestClient(app)
+
+
+def _registrar(auth_client, email: str, password: str = "Clave#Segura123") -> str:
+    r = auth_client.post("/auth/register", json={"email": email, "password": password})
+    assert r.status_code == 201, r.text
+    return r.json()["access_token"]
+
+
+def _secreto_de_uri(otpauth_uri: str) -> str:
+    return dict(parse_qsl(urlsplit(otpauth_uri).query))["secret"]
+
+
+def test_setup_2fa(auth_client):
+    token = _registrar(auth_client, "dos_fa_setup@vridik.local")
+
+    r = auth_client.post("/auth/2fa/setup", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["otpauth_uri"].startswith("otpauth://totp/")
+    assert "dos_fa_setup%40vridik.local" in body["otpauth_uri"] or "dos_fa_setup@vridik.local" in body["otpauth_uri"]
+    assert len(base64.b64decode(body["qr_code_base64"])) > 0  # PNG válido decodifica sin lanzar
+
+
+def test_login_requiere_2fa(auth_client):
+    email = "dos_fa_login@vridik.local"
+    password = "Clave#Segura123"
+    token = _registrar(auth_client, email, password)
+
+    setup = auth_client.post("/auth/2fa/setup", headers={"Authorization": f"Bearer {token}"}).json()
+    secreto = _secreto_de_uri(setup["otpauth_uri"])
+    codigo = pyotp.totp.TOTP(secreto).now()
+
+    r = auth_client.post("/auth/2fa/verify", json={"code": codigo}, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    assert r.json() == {"two_factor_enabled": True}
+
+    r = auth_client.post("/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["requires_2fa"] is True
+    assert "temp_token" in body
+    assert "access_token" not in body
+
+
+def test_login_con_2fa_ok(auth_client):
+    email = "dos_fa_ok@vridik.local"
+    password = "Clave#Segura123"
+    token = _registrar(auth_client, email, password)
+
+    setup = auth_client.post("/auth/2fa/setup", headers={"Authorization": f"Bearer {token}"}).json()
+    secreto = _secreto_de_uri(setup["otpauth_uri"])
+    auth_client.post(
+        "/auth/2fa/verify", json={"code": pyotp.totp.TOTP(secreto).now()},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    temp_token = auth_client.post("/auth/login", json={"email": email, "password": password}).json()["temp_token"]
+
+    r = auth_client.post("/auth/2fa/login", json={"temp_token": temp_token, "code": pyotp.totp.TOTP(secreto).now()})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["token_type"] == "bearer"
+    claims = pyjwt.decode(body["access_token"], options={"verify_signature": False})
+    assert claims["email"] == email
+
+    # El temp_token queda inválido para /auth/2fa/login si se reintenta con
+    # un código viejo distinto y, sobre todo, nunca sirve como access token
+    # (firmado con una clave derivada de JWT_SECRET, no JWT_SECRET mismo).
+    with pytest.raises(Exception):
+        pyjwt.decode(temp_token, os.environ["JWT_SECRET"], algorithms=["HS256"])

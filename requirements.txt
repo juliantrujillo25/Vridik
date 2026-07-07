@@ -28,6 +28,12 @@ reportlab==4.2.5
 # explícitamente OBJECT_STORAGE_BACKEND=s3 (ver railway.json, S11-extra-9).
 pyotp==2.9.0
 
+# Añadido en S12 (conexión HTTP del 2FA, api/auth_endpoint.py): cryptography
+# (Fernet) cifra totp_secret en reposo; qrcode genera el QR en base64 del
+# otpauth:// URI para POST /auth/2fa/setup (usa Pillow, ya instalado arriba).
+cryptography==42.0.5
+qrcode[pil]==7.4.2
+
 # Añadido en S1 (core/auth.py, api/auth_endpoint.py): POST /auth/register y
 # POST /auth/login sobre PostgreSQL real. python-jose para el JWT (HS256),
 # passlib[bcrypt] para hash/verify de contraseña — PyJWT/bcrypt de arriba

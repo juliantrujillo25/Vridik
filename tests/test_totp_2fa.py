@@ -11,6 +11,7 @@ import pyotp
 import pytest
 
 from core.totp_2fa import (
+    _desencriptar_secreto,
     confirmar_activacion,
     desactivar_totp,
     generar_codigos_respaldo,
@@ -101,7 +102,10 @@ async def test_flujo_completo_activacion_en_dos_pasos():
     # Paso 1: iniciar_activacion genera secreto pero NO activa el 2FA todavía
     secreto, uri = await iniciar_activacion(db, user_id="user-1", email="ana@vridik.local")
     assert db.filas["user-1"]["totp_enabled"] is False
-    assert db.filas["user-1"]["totp_secret"] == secreto
+    # Cifrado en reposo (Fernet, S12): nunca se guarda en texto plano, pero
+    # descifra exactamente al secreto devuelto para el QR.
+    assert db.filas["user-1"]["totp_secret"] != secreto
+    assert _desencriptar_secreto(db.filas["user-1"]["totp_secret"]) == secreto
     assert uri.startswith("otpauth://")
 
     # requiere_totp sigue False mientras no se confirme con un código válido
