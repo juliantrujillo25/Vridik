@@ -42,6 +42,12 @@ from core.totp_2fa import confirmar_activacion, ensure_totp_columns, iniciar_act
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# BYPASS_2FA_DEV: desactiva temporalmente la exigencia de 2FA en POST /auth/login
+# para desarrollo (login siempre devuelve el JWT normal, como en S1) sin tocar
+# core/totp_2fa.py ni los endpoints /auth/2fa/*. Poner en False para restaurar
+# el comportamiento de S12.
+BYPASS_2FA_DEV = True
+
 
 class RegisterRequest(BaseModel):
     email: str = Field(..., min_length=3)
@@ -123,7 +129,7 @@ async def login(payload: LoginRequest, request: Request):
         raise HTTPException(status_code=403, detail="Usuario inactivo")
 
     user_id = str(fila["id"])
-    if fila["totp_enabled"]:
+    if fila["totp_enabled"] and not BYPASS_2FA_DEV:
         temp_token = create_temp_2fa_token(sub=user_id, email=payload.email)
         return {"requires_2fa": True, "temp_token": temp_token}
 
