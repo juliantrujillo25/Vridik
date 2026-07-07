@@ -11,10 +11,10 @@
 # NO SE EJECUTA (build) EN ESTE ENTREGABLE — validado solo como TOML.
 
 [phases.setup]
-nixPkgs = ["python311"]
+nixPkgs = ["python311", "python311Packages.pip"]
 
 [phases.install]
-cmds = ["pip install -r requirements.txt", "pip install sentence-transformers==2.7.0"]
+cmds = ["pip install --break-system-packages -r requirements.txt"]
 
 [start]
 cmd = "bash scripts/railway_setup_rag.sh && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
