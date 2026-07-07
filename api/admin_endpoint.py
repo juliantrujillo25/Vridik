@@ -14,6 +14,16 @@ PATCH /admin/users/{id}/role    cambia el rol (un admin no puede cambiarse a sí
 `get_current_admin()` reutiliza el JWT de S1 (core.auth.decode_jwt vía
 api.auth_endpoint._claims_de_bearer): 401 si el token falta/es inválido,
 403 si es válido pero `role` (columna `users.role`, no el JWT) no es 'admin'.
+
+Sprint S3: gestión de productos (core/product.py) — el catálogo público vive
+en api/products_endpoint.py, esto es solo lo que requiere JWT:
+POST   /admin/products              solo admin
+PATCH  /admin/products/{id}         admin, o el seller dueño (seller_id)
+DELETE /admin/products/{id}         solo admin, soft delete (is_active=false)
+
+`get_current_seller()` es como get_current_admin() pero sin exigir
+role=='admin' — cualquier usuario autenticado (seller o admin) pasa; el
+chequeo de ownership para PATCH se hace en el propio endpoint.
 """
 
 from __future__ import annotations
@@ -26,6 +36,7 @@ from pydantic import BaseModel, Field
 from api.auth_endpoint import _claims_de_bearer, _get_db
 from core.admin import change_role, create_user, ensure_role_column, list_users
 from core.auth import hash_password
+from core.product import create_product, ensure_product_table, get_product, soft_delete, update_product
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -40,7 +51,24 @@ class ChangeRoleRequest(BaseModel):
     role: Literal["seller", "admin"]
 
 
-async def get_current_admin(request: Request, authorization: str | None = Header(default=None)) -> dict:
+class CreateProductRequest(BaseModel):
+    sku: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1)
+    description: str | None = None
+    price_cents: int = Field(..., ge=0)
+    stock: int = Field(0, ge=0)
+    seller_id: str
+
+
+class UpdateProductRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    price_cents: int | None = Field(default=None, ge=0)
+    stock: int | None = Field(default=None, ge=0)
+    is_active: bool | None = None
+
+
+async def _resolver_usuario(request: Request, authorization: str | None) -> dict:
     claims = _claims_de_bearer(authorization)
     user_id = claims.get("sub")
     if not user_id:
@@ -51,9 +79,20 @@ async def get_current_admin(request: Request, authorization: str | None = Header
     fila = await conn.fetchrow("SELECT id, email, role FROM users WHERE id = $1", user_id)
     if fila is None:
         raise HTTPException(status_code=401, detail="Usuario del token no existe")
-    if fila["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Requiere rol admin")
     return dict(fila)
+
+
+async def get_current_admin(request: Request, authorization: str | None = Header(default=None)) -> dict:
+    usuario = await _resolver_usuario(request, authorization)
+    if usuario["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Requiere rol admin")
+    return usuario
+
+
+async def get_current_seller(request: Request, authorization: str | None = Header(default=None)) -> dict:
+    """Cualquier usuario autenticado (seller o admin) — no exige un rol
+    específico, a diferencia de get_current_admin()."""
+    return await _resolver_usuario(request, authorization)
 
 
 @router.get("/users")
@@ -89,3 +128,48 @@ async def patch_user_role(
     if actualizado is None:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return actualizado
+
+
+@router.post("/products", status_code=201)
+async def post_products(
+    payload: CreateProductRequest, request: Request, admin: dict = Depends(get_current_admin),
+):
+    conn = _get_db(request)
+    await ensure_product_table(conn)
+    existente = await conn.fetchrow("SELECT id FROM products WHERE sku = $1", payload.sku)
+    if existente is not None:
+        raise HTTPException(status_code=409, detail=f"Ya existe un producto con sku {payload.sku!r}")
+
+    return await create_product(
+        conn, sku=payload.sku, name=payload.name, description=payload.description,
+        price_cents=payload.price_cents, stock=payload.stock, seller_id=payload.seller_id,
+    )
+
+
+@router.patch("/products/{product_id}")
+async def patch_product(
+    product_id: str, payload: UpdateProductRequest, request: Request,
+    seller: dict = Depends(get_current_seller),
+):
+    conn = _get_db(request)
+    await ensure_product_table(conn)
+    producto = await get_product(conn, product_id)
+    if producto is None:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    es_dueño = str(producto["seller_id"]) == str(seller["id"])
+    if seller["role"] != "admin" and not es_dueño:
+        raise HTTPException(status_code=403, detail="Solo el admin o el seller dueño pueden editar este producto")
+
+    cambios = payload.model_dump(exclude_unset=True)
+    return await update_product(conn, product_id, cambios)
+
+
+@router.delete("/products/{product_id}", status_code=204)
+async def delete_product(product_id: str, request: Request, admin: dict = Depends(get_current_admin)):
+    conn = _get_db(request)
+    await ensure_product_table(conn)
+    eliminado = await soft_delete(conn, product_id)
+    if eliminado is None:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    return None

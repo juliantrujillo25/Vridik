@@ -4,7 +4,8 @@ Sprint S6/Railway: punto de entrada ASGI que nixpacks.toml apunta con
 `uvicorn app.main:app`. Re-exporta el API de JuliX (api/julix_endpoint.py)
 y monta el resto de routers de Vridik a medida que existen como
 apps/routers FastAPI propios (S2: panel de administración de usuarios vía
-api/admin_endpoint.py; mensajes/S11 y generador quedan pendientes, ver
+api/admin_endpoint.py; S3: catálogo público de productos vía
+api/products_endpoint.py; mensajes/S11 y generador quedan pendientes, ver
 backlog).
 """
 
@@ -15,6 +16,7 @@ import asyncpg
 from api.julix_endpoint import app
 from api.admin_endpoint import router as admin_router
 from api.auth_endpoint import router as auth_router
+from api.products_endpoint import router as products_router
 
 # S1: registro/login sobre PostgreSQL real (ver api/auth_endpoint.py).
 app.include_router(auth_router)
@@ -27,6 +29,11 @@ app.include_router(auth_router)
 # repo (y sus tests siguen pasando, arman su propia app FastAPI aislada) pero
 # ya no se montan aquí.
 app.include_router(admin_router)
+
+# S3: catálogo de productos, endpoints públicos (ver core/product.py). La
+# gestión (crear/editar/soft-delete) vive en api/admin_endpoint.py, ya
+# montado arriba.
+app.include_router(products_router)
 
 
 @app.on_event("startup")
