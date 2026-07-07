@@ -3,8 +3,9 @@ Vridik — app/main.py
 Sprint S6/Railway: punto de entrada ASGI que nixpacks.toml apunta con
 `uvicorn app.main:app`. Re-exporta el API de JuliX (api/julix_endpoint.py)
 y monta el resto de routers de Vridik a medida que existen como
-apps/routers FastAPI propios (S2: panel de administración de usuarios;
-mensajes/S11 y generador quedan pendientes, ver backlog).
+apps/routers FastAPI propios (S2: panel de administración de usuarios vía
+api/admin_endpoint.py; mensajes/S11 y generador quedan pendientes, ver
+backlog).
 """
 
 import os
@@ -12,15 +13,20 @@ import os
 import asyncpg
 
 from api.julix_endpoint import app
-from api.admin_users_endpoint import router as admin_users_router
+from api.admin_endpoint import router as admin_router
 from api.auth_endpoint import router as auth_router
 
 # S1: registro/login sobre PostgreSQL real (ver api/auth_endpoint.py).
 app.include_router(auth_router)
 
 # S2: panel de administración de usuarios (solo rol admin, ver
-# api/admin_users_endpoint.py:_decodificar_jwt_admin).
-app.include_router(admin_users_router)
+# api/admin_endpoint.py:get_current_admin). Reemplaza a
+# api/admin_users_endpoint.py, que esperaba `role` dentro del JWT — S1 nunca
+# lo emite, así que ese router nunca respondía nada distinto de 401 con un
+# token real. api/admin_users_endpoint.py y core/admin_users.py quedan en el
+# repo (y sus tests siguen pasando, arman su propia app FastAPI aislada) pero
+# ya no se montan aquí.
+app.include_router(admin_router)
 
 
 @app.on_event("startup")
