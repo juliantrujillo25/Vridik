@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import io
+import os
 
 import qrcode
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -43,11 +44,14 @@ from core.totp_2fa import confirmar_activacion, ensure_totp_columns, iniciar_act
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# BYPASS_2FA_DEV: desactiva temporalmente la exigencia de 2FA en POST /auth/login
-# para desarrollo (login siempre devuelve el JWT normal, como en S1) sin tocar
-# core/totp_2fa.py ni los endpoints /auth/2fa/*. Poner en False para restaurar
-# el comportamiento de S12.
-BYPASS_2FA_DEV = True
+# BYPASS_2FA_DEV: desactiva la exigencia de 2FA en POST /auth/login (login
+# siempre devuelve el JWT normal, como en S1, incluso si el usuario tiene
+# totp_enabled) sin tocar core/totp_2fa.py ni los endpoints /auth/2fa/*.
+# Prod-ready (fix de seguridad post-S6): default False — SOLO se activa si
+# la variable de entorno BYPASS_2FA_DEV está explícitamente en 'true'/'1'.
+# Si la variable no existe (como en cualquier deploy que no la configure a
+# propósito), el 2FA real queda exigido; nunca al revés.
+BYPASS_2FA_DEV = os.environ.get("BYPASS_2FA_DEV", "false").strip().lower() in ("true", "1", "yes")
 
 
 class RegisterRequest(BaseModel):
