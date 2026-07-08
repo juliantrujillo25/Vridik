@@ -19,11 +19,31 @@ ninguna escritura ("rollback completo" gratis por construcción).
 `update_status()` restaura el stock de cada order_item cuando el nuevo
 status es 'cancelled' (y la orden no estaba ya cancelada) — dentro de la
 misma transacción que el cambio de estado.
+
+`_transaccion()`: en producción `db_connection` es un asyncpg.Pool (ver
+app/main.py) — un Pool NO tiene `.transaction()` propio, hay que
+`.acquire()` una Connection real primero (y usar ESA conexión para todos
+los statements de la transacción, nunca volver a llamar al Pool adentro,
+o cada statement tomaría una conexión distinta y el `FOR UPDATE`/atomicidad
+se pierde). Los fakes de tests exponen `.transaction()` directamente (no
+tienen `.acquire()`), así que ahí se usa tal cual.
 """
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from core.product import ensure_product_table
+
+
+@asynccontextmanager
+async def _transaccion(db_connection):
+    if hasattr(db_connection, "acquire"):
+        async with db_connection.acquire() as conn, conn.transaction():
+            yield conn
+    else:
+        async with db_connection.transaction():
+            yield db_connection
 
 ESTADOS_VALIDOS = ("pending", "paid", "shipped", "cancelled")
 
@@ -81,11 +101,11 @@ async def ensure_order_tables(db_connection) -> None:
 
 async def create_order(db_connection, *, user_id: str, items: list[dict]) -> dict:
     """`items`: [{"product_id": str, "quantity": int}, ...]."""
-    async with db_connection.transaction():
+    async with _transaccion(db_connection) as conn:
         total_cents = 0
         lineas: list[dict] = []
         for item in items:
-            producto = await db_connection.fetchrow(
+            producto = await conn.fetchrow(
                 "SELECT id, price_cents, stock, is_active FROM products WHERE id = $1 FOR UPDATE",
                 item["product_id"],
             )
@@ -103,7 +123,7 @@ async def create_order(db_connection, *, user_id: str, items: list[dict]) -> dic
                 "price_cents": producto["price_cents"],  # snapshot: nunca el precio futuro del producto
             })
 
-        orden = await db_connection.fetchrow(
+        orden = await conn.fetchrow(
             f"""
             INSERT INTO orders (user_id, status, total_cents)
             VALUES ($1, 'pending', $2)
@@ -112,11 +132,11 @@ async def create_order(db_connection, *, user_id: str, items: list[dict]) -> dic
             user_id, total_cents,
         )
         for linea in lineas:
-            await db_connection.execute(
+            await conn.execute(
                 "UPDATE products SET stock = stock - $2, updated_at = now() WHERE id = $1",
                 linea["product_id"], linea["quantity"],
             )
-            await db_connection.execute(
+            await conn.execute(
                 f"""
                 INSERT INTO order_items (order_id, product_id, quantity, price_cents)
                 VALUES ($1, $2, $3, $4)
@@ -166,22 +186,22 @@ async def update_status(db_connection, order_id: str, new_status: str) -> dict |
     """Si `new_status == 'cancelled'` (y la orden no estaba ya cancelada),
     restaura el stock de cada order_item antes de marcar la orden — todo en
     la misma transacción que el cambio de estado."""
-    async with db_connection.transaction():
-        orden = await db_connection.fetchrow(
+    async with _transaccion(db_connection) as conn:
+        orden = await conn.fetchrow(
             f"SELECT {_ORDER_COLUMNAS} FROM orders WHERE id = $1 FOR UPDATE", order_id,
         )
         if orden is None:
             return None
 
         if new_status == "cancelled" and orden["status"] != "cancelled":
-            items = await get_order_items(db_connection, order_id)
+            items = await get_order_items(conn, order_id)
             for item in items:
-                await db_connection.execute(
+                await conn.execute(
                     "UPDATE products SET stock = stock + $2, updated_at = now() WHERE id = $1",
                     item["product_id"], item["quantity"],
                 )
 
-        actualizada = await db_connection.fetchrow(
+        actualizada = await conn.fetchrow(
             f"""
             UPDATE orders SET status = $2, updated_at = now()
             WHERE id = $1
