@@ -40,3 +40,10 @@ qrcode[pil]==7.4.2
 # siguen usándose sin cambios en admin_users_endpoint.py/julix_endpoint.py.
 passlib[bcrypt]==1.7.4
 python-jose==3.3.0
+
+# Añadido en S5 (api/admin_endpoint.py: POST /admin/products/{id}/images):
+# Starlette exige python-multipart para poder parsear `await request.form()`
+# en uploads multipart/form-data — sin esto, cualquier upload de archivo da
+# 500 (AssertionError interna de Starlette, nunca se probó contra un server
+# real hasta el deploy).
+python-multipart==0.0.9
