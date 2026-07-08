@@ -34,22 +34,53 @@ PATCH /admin/orders/{id}/status     solo admin, cambia status; si pasa a
 `get_current_user` es un alias de get_current_seller() — api/orders_endpoint.py
 lo importa bajo ese nombre porque ahí "cualquier usuario autenticado" es
 justamente lo que se necesita (no solo sellers).
+
+Sprint S5: imágenes de producto (core/product.py: product_images) — el
+catálogo público las expone en api/products_endpoint.py, esto es solo lo
+que requiere rol admin:
+POST   /admin/products/{id}/images                sube una imagen: multipart
+                                                    (campo 'file') o JSON
+                                                    {"url": ...}. Máx 5MB,
+                                                    solo jpg/png/webp si es
+                                                    archivo.
+DELETE /admin/products/{id}/images/{image_id}      borra el registro y,
+                                                    si es un archivo local
+                                                    (/uploads/...), el
+                                                    archivo también.
+POST   /admin/products/{id}/images/{image_id}/primary  la marca como principal.
 """
 
 from __future__ import annotations
 
+import uuid
+from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from api.auth_endpoint import _claims_de_bearer, _get_db
 from core.admin import change_role, create_user, ensure_role_column, list_users
 from core.auth import hash_password
 from core.order import ensure_order_tables, list_all_orders, update_status
-from core.product import create_product, ensure_product_table, get_product, soft_delete, update_product
+from core.product import (
+    PRODUCT_IMAGES_DIR,
+    add_image,
+    create_product,
+    delete_image,
+    ensure_product_images_table,
+    ensure_product_table,
+    get_image,
+    get_product,
+    set_primary,
+    soft_delete,
+    update_product,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+EXTENSIONES_IMAGEN_PERMITIDAS = {"jpg", "jpeg", "png", "webp"}
+TAMANO_MAXIMO_IMAGEN_BYTES = 5 * 1024 * 1024  # 5MB
 
 
 class CreateUserRequest(BaseModel):
@@ -216,3 +247,85 @@ async def patch_order_status(
     if actualizada is None:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
     return actualizada
+
+
+async def _guardar_archivo_imagen(product_id: str, archivo: UploadFile) -> str:
+    nombre_original = archivo.filename or ""
+    ext = nombre_original.rsplit(".", 1)[-1].lower() if "." in nombre_original else ""
+    if ext not in EXTENSIONES_IMAGEN_PERMITIDAS:
+        raise HTTPException(
+            status_code=400, detail=f"Extensión no permitida: {ext!r} (solo jpg/png/webp)",
+        )
+
+    contenido = await archivo.read()
+    if len(contenido) > TAMANO_MAXIMO_IMAGEN_BYTES:
+        raise HTTPException(status_code=400, detail="El archivo supera el máximo de 5MB")
+
+    destino_dir = PRODUCT_IMAGES_DIR / product_id
+    destino_dir.mkdir(parents=True, exist_ok=True)
+    nombre_archivo = f"{uuid.uuid4()}.{ext}"
+    (destino_dir / nombre_archivo).write_bytes(contenido)
+    return f"/uploads/products/{product_id}/{nombre_archivo}"
+
+
+@router.post("/products/{product_id}/images", status_code=201)
+async def post_product_image(
+    product_id: str, request: Request, admin: dict = Depends(get_current_admin),
+):
+    conn = _get_db(request)
+    await ensure_product_images_table(conn)
+    producto = await get_product(conn, product_id)
+    if producto is None:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("multipart/form-data"):
+        form = await request.form()
+        archivo = form.get("file")
+        if not isinstance(archivo, UploadFile):
+            raise HTTPException(status_code=400, detail="Falta el campo 'file'")
+        url = await _guardar_archivo_imagen(product_id, archivo)
+        is_primary = str(form.get("is_primary", "")).lower() in ("true", "1", "yes")
+    else:
+        payload = await request.json()
+        url = payload.get("url")
+        if not url:
+            raise HTTPException(status_code=400, detail="Falta 'url' (o envía un archivo multipart en 'file')")
+        is_primary = bool(payload.get("is_primary", False))
+
+    return await add_image(conn, product_id=product_id, url=url, is_primary=is_primary)
+
+
+@router.delete("/products/{product_id}/images/{image_id}", status_code=204)
+async def delete_product_image(
+    product_id: str, image_id: str, request: Request, admin: dict = Depends(get_current_admin),
+):
+    conn = _get_db(request)
+    await ensure_product_images_table(conn)
+    imagen = await get_image(conn, image_id)
+    if imagen is None or str(imagen["product_id"]) != product_id:
+        raise HTTPException(status_code=404, detail="Imagen no encontrada")
+
+    await delete_image(conn, image_id)
+
+    # Solo borra el archivo si es una subida local nuestra — nunca confía
+    # ciegamente en la url guardada (podría venir del modo {"url": ...} con
+    # cualquier ruta): reconstruye la ruta a partir del nombre de archivo,
+    # nunca la usa tal cual, para no salir de PRODUCT_IMAGES_DIR.
+    if imagen["url"].startswith(f"/uploads/products/{product_id}/"):
+        nombre_archivo = Path(imagen["url"]).name
+        (PRODUCT_IMAGES_DIR / product_id / nombre_archivo).unlink(missing_ok=True)
+    return None
+
+
+@router.post("/products/{product_id}/images/{image_id}/primary")
+async def post_product_image_primary(
+    product_id: str, image_id: str, request: Request, admin: dict = Depends(get_current_admin),
+):
+    conn = _get_db(request)
+    await ensure_product_images_table(conn)
+    imagen = await get_image(conn, image_id)
+    if imagen is None or str(imagen["product_id"]) != product_id:
+        raise HTTPException(status_code=404, detail="Imagen no encontrada")
+
+    return await set_primary(conn, image_id)

@@ -5,11 +5,15 @@ sobre core/product.py.
 
 GET /products             lista paginada (?skip=0&limit=20&q=texto), solo
                            is_active=true, campos resumidos (id/sku/name/
-                           price_cents/stock).
-GET /products/{id}        detalle completo. Si el producto está inactivo,
-                           404 — salvo que el JWT (opcional: Authorization
-                           Bearer, si viene) pertenezca al admin o al seller
-                           dueño, mismo criterio que api/admin_endpoint.py.
+                           price_cents/stock) + images[].
+GET /products/{id}        detalle completo + images[]. Si el producto está
+                           inactivo, 404 — salvo que el JWT (opcional:
+                           Authorization Bearer, si viene) pertenezca al
+                           admin o al seller dueño, mismo criterio que
+                           api/admin_endpoint.py.
+
+Sprint S5: `images` sale de core.product.list_images(), ya ordenada
+is_primary desc / position asc — nunca se reordena acá.
 """
 
 from __future__ import annotations
@@ -18,9 +22,13 @@ from fastapi import APIRouter, Header, HTTPException, Request
 
 from api.auth_endpoint import _get_db
 from core.auth import decode_jwt
-from core.product import ensure_product_table, get_product, list_products
+from core.product import ensure_product_images_table, ensure_product_table, get_product, list_images, list_products
 
 router = APIRouter(prefix="/products", tags=["products"])
+
+
+def _resumen_imagen(imagen: dict) -> dict:
+    return {"id": imagen["id"], "url": imagen["url"], "is_primary": imagen["is_primary"], "position": imagen["position"]}
 
 
 async def _claims_opcionales(authorization: str | None) -> dict | None:
@@ -39,11 +47,16 @@ async def _claims_opcionales(authorization: str | None) -> dict | None:
 async def get_products(request: Request, skip: int = 0, limit: int = 20, q: str | None = None):
     conn = _get_db(request)
     await ensure_product_table(conn)
+    await ensure_product_images_table(conn)
     productos = await list_products(conn, skip=skip, limit=limit, q=q, active_only=True)
-    return [
-        {"id": p["id"], "sku": p["sku"], "name": p["name"], "price_cents": p["price_cents"], "stock": p["stock"]}
-        for p in productos
-    ]
+    resultado = []
+    for p in productos:
+        imagenes = await list_images(conn, p["id"])
+        resultado.append({
+            "id": p["id"], "sku": p["sku"], "name": p["name"], "price_cents": p["price_cents"], "stock": p["stock"],
+            "images": [_resumen_imagen(img) for img in imagenes],
+        })
+    return resultado
 
 
 @router.get("/{product_id}")
@@ -52,6 +65,7 @@ async def get_product_detail(
 ):
     conn = _get_db(request)
     await ensure_product_table(conn)
+    await ensure_product_images_table(conn)
     producto = await get_product(conn, product_id)
     if producto is None:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
@@ -67,4 +81,5 @@ async def get_product_detail(
         if not (es_dueño or es_admin):
             raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-    return producto
+    imagenes = await list_images(conn, product_id)
+    return {**producto, "images": [_resumen_imagen(img) for img in imagenes]}

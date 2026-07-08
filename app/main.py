@@ -7,17 +7,29 @@ apps/routers FastAPI propios (S2: panel de administración de usuarios vía
 api/admin_endpoint.py; S3: catálogo público de productos vía
 api/products_endpoint.py; S4: checkout/órdenes vía api/orders_endpoint.py;
 mensajes/S11 y generador quedan pendientes, ver backlog).
+
+Sprint S5: /uploads sirve archivos estáticos desde ./uploads (imágenes de
+producto subidas vía api/admin_endpoint.py) — ./uploads/products se crea al
+importar este módulo si no existe. Nota: en Railway el filesystem del
+contenedor es efímero (sin volumen montado), así que lo subido localmente
+no sobrevive un redeploy; el modo `{"url": ...}` de
+POST /admin/products/{id}/images es el que persiste de verdad.
 """
 
 import os
 
 import asyncpg
+from fastapi.staticfiles import StaticFiles
 
 from api.julix_endpoint import app
 from api.admin_endpoint import router as admin_router
 from api.auth_endpoint import router as auth_router
 from api.orders_endpoint import router as orders_router
 from api.products_endpoint import router as products_router
+from core.product import PRODUCT_IMAGES_DIR, UPLOADS_DIR
+
+PRODUCT_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 # S1: registro/login sobre PostgreSQL real (ver api/auth_endpoint.py).
 app.include_router(auth_router)

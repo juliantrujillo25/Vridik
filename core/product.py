@@ -9,15 +9,30 @@ core.auth.ensure_users_table / core.totp_2fa.ensure_totp_columns /
 core.admin.ensure_role_column): crea `products` si no existe. Llama primero
 a `ensure_users_table()` porque `seller_id UUID REFERENCES users(id)` exige
 que `users` ya exista.
+
+Sprint S5: imágenes de producto (`product_images`, `ON DELETE CASCADE` desde
+`products` — borrar un producto nunca deja imágenes huérfanas). Un producto
+puede tener como máximo una imagen `is_primary=true` a la vez: `add_image()`
+y `set_primary()` desmarcan cualquier otra antes de marcar la nueva.
+`UPLOADS_DIR`/`PRODUCT_IMAGES_DIR` centralizan la ruta local de subida —
+la usan tanto app/main.py (mount de StaticFiles + creación del directorio)
+como api/admin_endpoint.py (guardar/borrar el archivo), para que ambos
+apunten siempre al mismo lugar.
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 from core.auth import ensure_users_table
 
 CAMPOS_ACTUALIZABLES = ("name", "description", "price_cents", "stock", "is_active")
 
 _COLUMNAS = "id, sku, name, description, price_cents, stock, is_active, seller_id, created_at, updated_at"
+_IMAGE_COLUMNAS = "id, product_id, url, is_primary, position, created_at"
+
+UPLOADS_DIR = Path("uploads")
+PRODUCT_IMAGES_DIR = UPLOADS_DIR / "products"
 
 
 async def ensure_product_table(db_connection) -> None:
@@ -109,3 +124,76 @@ async def soft_delete(db_connection, product_id: str) -> dict | None:
         product_id,
     )
     return dict(fila) if fila is not None else None
+
+
+async def ensure_product_images_table(db_connection) -> None:
+    await ensure_product_table(db_connection)
+    await db_connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS product_images (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+            url TEXT NOT NULL,
+            is_primary BOOLEAN NOT NULL DEFAULT false,
+            position INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
+
+
+async def add_image(db_connection, *, product_id: str, url: str, is_primary: bool = False) -> dict:
+    """Si `is_primary=True`, primero desmarca cualquier otra imagen principal
+    del mismo producto — nunca puede haber dos principales a la vez."""
+    if is_primary:
+        await db_connection.execute(
+            "UPDATE product_images SET is_primary = false WHERE product_id = $1", product_id,
+        )
+    fila = await db_connection.fetchrow(
+        f"""
+        INSERT INTO product_images (product_id, url, is_primary)
+        VALUES ($1, $2, $3)
+        RETURNING {_IMAGE_COLUMNAS}
+        """,
+        product_id, url, is_primary,
+    )
+    return dict(fila)
+
+
+async def list_images(db_connection, product_id: str) -> list[dict]:
+    filas = await db_connection.fetch(
+        f"""
+        SELECT {_IMAGE_COLUMNAS} FROM product_images
+        WHERE product_id = $1
+        ORDER BY is_primary DESC, position ASC
+        """,
+        product_id,
+    )
+    return [dict(f) for f in filas]
+
+
+async def get_image(db_connection, image_id: str) -> dict | None:
+    fila = await db_connection.fetchrow(f"SELECT {_IMAGE_COLUMNAS} FROM product_images WHERE id = $1", image_id)
+    return dict(fila) if fila is not None else None
+
+
+async def delete_image(db_connection, image_id: str) -> dict | None:
+    fila = await db_connection.fetchrow(
+        f"DELETE FROM product_images WHERE id = $1 RETURNING {_IMAGE_COLUMNAS}", image_id,
+    )
+    return dict(fila) if fila is not None else None
+
+
+async def set_primary(db_connection, image_id: str) -> dict | None:
+    """Desmarca cualquier otra imagen principal del mismo producto y marca
+    `image_id` como la única principal."""
+    imagen = await get_image(db_connection, image_id)
+    if imagen is None:
+        return None
+    await db_connection.execute(
+        "UPDATE product_images SET is_primary = false WHERE product_id = $1", imagen["product_id"],
+    )
+    fila = await db_connection.fetchrow(
+        f"UPDATE product_images SET is_primary = true WHERE id = $1 RETURNING {_IMAGE_COLUMNAS}", image_id,
+    )
+    return dict(fila)
