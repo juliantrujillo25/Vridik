@@ -29,6 +29,7 @@ import qrcode
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from core.admin import ensure_role_column
 from core.auth import (
     create_jwt,
     create_temp_2fa_token,
@@ -95,6 +96,11 @@ def _qr_base64(otpauth_uri: str) -> str:
 async def register(payload: RegisterRequest, request: Request):
     conn = _get_db(request)
     await ensure_users_table(conn)
+    # S6: sin esto, un self-registro nuevo nace con el default viejo de
+    # `role` ('seller', S2) en vez de 'customer' — ensure_role_column()
+    # solo se disparaba antes desde los endpoints de admin/seller, nunca
+    # desde /auth/register (el primer lugar donde en realidad se necesita).
+    await ensure_role_column(conn)
 
     existente = await conn.fetchrow("SELECT id FROM users WHERE email = $1", payload.email)
     if existente is not None:
