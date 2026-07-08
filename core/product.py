@@ -84,7 +84,7 @@ async def list_products(
         FROM products
         WHERE (NOT $1 OR is_active = true)
           AND ($2::text IS NULL OR name ILIKE '%' || $2 || '%' OR sku ILIKE '%' || $2 || '%')
-          AND ($3::text IS NULL OR seller_id = $3)
+          AND ($3::uuid IS NULL OR seller_id = $3::uuid)
           AND ($4::text IS NULL OR category = $4)
           AND ($5::text IS NULL OR city ILIKE $5)
           AND ($6::integer IS NULL OR price_cents >= $6)
