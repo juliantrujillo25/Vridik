@@ -23,3 +23,6 @@ qrcode[pil]==7.4.2
 
 # Añadido en S5 (uploads multipart de imágenes, api/admin_endpoint.py)
 python-multipart==0.0.9
+
+# Añadido en S7 (core/storage.py backend r2, core/wompi.py)
+boto3==1.35.36

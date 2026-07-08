@@ -55,20 +55,26 @@ customer, ver ROLES). Dos cambios importantes acá:
     auto-asigna su propio id sin importar qué venga en el body (nunca
     puede crear "para" otro seller); si lo llama un admin, puede usar el
     `seller_id` del body o, si no viene, su propio id.
-  - `_procesar_imagen_request()`/`_borrar_archivo_local_si_aplica()` quedan
-    factorizados acá (mismo comportamiento exacto de S5, sin cambios) para
-    que api/seller_endpoint.py los reutilice en vez de reimplementar el
-    manejo de upload — evita dos copias del mismo código divergiendo.
+  - `_procesar_imagen_request()`/`_borrar_archivo_si_aplica()` quedan
+    factorizados acá para que api/seller_endpoint.py los reutilice en vez
+    de reimplementar el manejo de upload — evita dos copias del mismo
+    código divergiendo.
+
+Sprint S7 (core/storage.py): `_guardar_archivo_imagen()`/
+`_borrar_archivo_si_aplica()` ya no tocan el filesystem directamente —
+usan `save_file`/`delete_file`/`key_from_url`, así que el backend
+(local o R2) es transparente para este archivo. `CreateProductRequest`/
+`UpdateProductRequest` suman `category` (especialidad legal) y `city`
+(búsqueda, api/products_endpoint.py).
 """
 
 from __future__ import annotations
 
 import uuid
-from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from api.auth_endpoint import _claims_de_bearer, _get_db
@@ -77,18 +83,19 @@ from core.auth import hash_password
 from core.order import ensure_order_tables, list_all_orders, update_status
 from core.permissions import check_owner
 from core.product import (
-    PRODUCT_IMAGES_DIR,
+    CATEGORIAS_VALIDAS,
     add_image,
     create_product,
     delete_image,
     ensure_product_images_table,
-    ensure_product_table,
+    ensure_product_search_columns,
     get_image,
     get_product,
     set_primary,
     soft_delete,
     update_product,
 )
+from core.storage import delete_file, key_from_url, save_file
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -113,6 +120,15 @@ class CreateProductRequest(BaseModel):
     price_cents: int = Field(..., ge=0)
     stock: int = Field(0, ge=0)
     seller_id: str | None = None
+    category: str | None = None
+    city: str | None = None
+
+    @field_validator("category")
+    @classmethod
+    def _category_valida(cls, v: str | None) -> str | None:
+        if v is not None and v not in CATEGORIAS_VALIDAS:
+            raise ValueError(f"category debe ser una de {CATEGORIAS_VALIDAS}")
+        return v
 
 
 class UpdateProductRequest(BaseModel):
@@ -121,6 +137,15 @@ class UpdateProductRequest(BaseModel):
     price_cents: int | None = Field(default=None, ge=0)
     stock: int | None = Field(default=None, ge=0)
     is_active: bool | None = None
+    category: str | None = None
+    city: str | None = None
+
+    @field_validator("category")
+    @classmethod
+    def _category_valida(cls, v: str | None) -> str | None:
+        if v is not None and v not in CATEGORIAS_VALIDAS:
+            raise ValueError(f"category debe ser una de {CATEGORIAS_VALIDAS}")
+        return v
 
 
 class UpdateOrderStatusRequest(BaseModel):
@@ -206,7 +231,7 @@ async def post_products(
     payload: CreateProductRequest, request: Request, current: dict = Depends(get_current_seller),
 ):
     conn = _get_db(request)
-    await ensure_product_table(conn)
+    await ensure_product_search_columns(conn)
 
     if current["role"] == "admin":
         seller_id = payload.seller_id or str(current["id"])
@@ -222,6 +247,7 @@ async def post_products(
     return await create_product(
         conn, sku=payload.sku, name=payload.name, description=payload.description,
         price_cents=payload.price_cents, stock=payload.stock, seller_id=seller_id,
+        category=payload.category, city=payload.city,
     )
 
 
@@ -231,7 +257,7 @@ async def patch_product(
     seller: dict = Depends(get_current_seller),
 ):
     conn = _get_db(request)
-    await ensure_product_table(conn)
+    await ensure_product_search_columns(conn)
     producto = await get_product(conn, product_id)
     if producto is None:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
@@ -246,7 +272,7 @@ async def patch_product(
 @router.delete("/products/{product_id}", status_code=204)
 async def delete_product(product_id: str, request: Request, admin: dict = Depends(get_current_admin)):
     conn = _get_db(request)
-    await ensure_product_table(conn)
+    await ensure_product_search_columns(conn)
     eliminado = await soft_delete(conn, product_id)
     if eliminado is None:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
@@ -288,11 +314,9 @@ async def _guardar_archivo_imagen(product_id: str, archivo: StarletteUploadFile)
     if len(contenido) > TAMANO_MAXIMO_IMAGEN_BYTES:
         raise HTTPException(status_code=400, detail="El archivo supera el máximo de 5MB")
 
-    destino_dir = PRODUCT_IMAGES_DIR / product_id
-    destino_dir.mkdir(parents=True, exist_ok=True)
-    nombre_archivo = f"{uuid.uuid4()}.{ext}"
-    (destino_dir / nombre_archivo).write_bytes(contenido)
-    return f"/uploads/products/{product_id}/{nombre_archivo}"
+    content_type = f"image/{'jpeg' if ext == 'jpg' else ext}"
+    key = f"products/{product_id}/{uuid.uuid4()}.{ext}"
+    return await save_file(key, contenido, content_type=content_type)
 
 
 async def _procesar_imagen_request(request: Request, product_id: str) -> tuple[str, bool]:
@@ -321,14 +345,14 @@ async def _procesar_imagen_request(request: Request, product_id: str) -> tuple[s
     return url, is_primary
 
 
-def _borrar_archivo_local_si_aplica(product_id: str, imagen: dict) -> None:
-    # Solo borra el archivo si es una subida local nuestra — nunca confía
-    # ciegamente en la url guardada (podría venir del modo {"url": ...} con
-    # cualquier ruta): reconstruye la ruta a partir del nombre de archivo,
-    # nunca la usa tal cual, para no salir de PRODUCT_IMAGES_DIR.
-    if imagen["url"].startswith(f"/uploads/products/{product_id}/"):
-        nombre_archivo = Path(imagen["url"]).name
-        (PRODUCT_IMAGES_DIR / product_id / nombre_archivo).unlink(missing_ok=True)
+async def _borrar_archivo_si_aplica(imagen: dict) -> None:
+    # Solo borra el archivo si es una subida nuestra (local o R2, sin
+    # importar el BACKEND activo ahora — key_from_url() lo detecta por el
+    # prefijo de la url) — nunca borra un archivo externo (modo
+    # {"url": ...} con un link de terceros).
+    key = key_from_url(imagen["url"])
+    if key is not None:
+        await delete_file(key)
 
 
 @router.post("/products/{product_id}/images", status_code=201)
@@ -356,7 +380,7 @@ async def delete_product_image(
         raise HTTPException(status_code=404, detail="Imagen no encontrada")
 
     await delete_image(conn, image_id)
-    _borrar_archivo_local_si_aplica(product_id, imagen)
+    await _borrar_archivo_si_aplica(imagen)
     return None
 
 

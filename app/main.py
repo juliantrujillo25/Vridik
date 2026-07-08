@@ -9,14 +9,16 @@ api/products_endpoint.py; S4: checkout/órdenes vía api/orders_endpoint.py;
 mensajes/S11 y generador quedan pendientes, ver backlog).
 
 Sprint S5: /uploads sirve archivos estáticos desde ./uploads (imágenes de
-producto subidas vía api/admin_endpoint.py) — ./uploads/products se crea al
-importar este módulo si no existe. Nota: en Railway el filesystem del
-contenedor es efímero (sin volumen montado), así que lo subido localmente
-no sobrevive un redeploy; el modo `{"url": ...}` de
-POST /admin/products/{id}/images es el que persiste de verdad.
+producto). Nota: en Railway el filesystem del contenedor es efímero (sin
+volumen montado), así que lo subido con BACKEND=local no sobrevive un
+redeploy — BACKEND=r2 (S7, core/storage.py) es lo que persiste de verdad.
 
 Sprint S6 (core/permissions.py): RBAC más fino admin/seller/customer — vista
 "propia" de un seller sobre sus productos/órdenes vía api/seller_endpoint.py.
+
+Sprint S7 (Vridik Abogados): `ensure_storage()` (core/storage.py) reemplaza
+la creación inline de ./uploads/products — con BACKEND=r2 es un no-op, no
+hace falta directorio local. Pagos con Wompi vía api/payments_endpoint.py.
 """
 
 import os
@@ -28,11 +30,12 @@ from api.julix_endpoint import app
 from api.admin_endpoint import router as admin_router
 from api.auth_endpoint import router as auth_router
 from api.orders_endpoint import router as orders_router
+from api.payments_endpoint import router as payments_router
 from api.products_endpoint import router as products_router
 from api.seller_endpoint import router as seller_router
-from core.product import PRODUCT_IMAGES_DIR, UPLOADS_DIR
+from core.storage import UPLOADS_DIR, ensure_storage
 
-PRODUCT_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+ensure_storage()
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 # S1: registro/login sobre PostgreSQL real (ver api/auth_endpoint.py).
@@ -60,6 +63,11 @@ app.include_router(orders_router)
 # S6: vista "propia" de un seller sobre sus productos/órdenes (ver
 # core/permissions.py). Requiere role in ('seller', 'admin').
 app.include_router(seller_router)
+
+# S7: pagos con Wompi (ver core/payment.py, core/wompi.py). POST
+# /webhooks/wompi es público (lo llama Wompi directo, sin JWT) — se
+# autentica con la firma HMAC del evento, no con Authorization.
+app.include_router(payments_router)
 
 
 @app.on_event("startup")

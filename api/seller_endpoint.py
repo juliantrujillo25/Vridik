@@ -25,16 +25,21 @@ GET    /seller/orders/{id}                  detalle, mismo filtro; 403 si
 
 Todas las rutas requieren get_current_seller() de api/admin_endpoint.py
 (S6: exige role in ('seller', 'admin') — un customer nunca las alcanza).
+
+Sprint S7: `CreateOwnProductRequest` suma `category`/`city` (mismo
+validador de api.admin_endpoint.CreateProductRequest); el borrado de
+imágenes usa core.storage (vía api.admin_endpoint._borrar_archivo_si_aplica,
+ya async).
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from api.admin_endpoint import (
     UpdateProductRequest,
-    _borrar_archivo_local_si_aplica,
+    _borrar_archivo_si_aplica,
     _procesar_imagen_request,
     get_current_seller,
 )
@@ -48,11 +53,12 @@ from core.order import (
 )
 from core.permissions import check_owner
 from core.product import (
+    CATEGORIAS_VALIDAS,
     add_image,
     create_product,
     delete_image,
     ensure_product_images_table,
-    ensure_product_table,
+    ensure_product_search_columns,
     get_image,
     get_product,
     list_products,
@@ -68,6 +74,15 @@ class CreateOwnProductRequest(BaseModel):
     description: str | None = None
     price_cents: int = Field(..., ge=0)
     stock: int = Field(0, ge=0)
+    category: str | None = None
+    city: str | None = None
+
+    @field_validator("category")
+    @classmethod
+    def _category_valida(cls, v: str | None) -> str | None:
+        if v is not None and v not in CATEGORIAS_VALIDAS:
+            raise ValueError(f"category debe ser una de {CATEGORIAS_VALIDAS}")
+        return v
 
 
 @router.get("/products")
@@ -76,7 +91,7 @@ async def get_my_products(
     current: dict = Depends(get_current_seller),
 ):
     conn = _get_db(request)
-    await ensure_product_table(conn)
+    await ensure_product_search_columns(conn)
     filtro_seller_id = None if (all and current["role"] == "admin") else str(current["id"])
     return await list_products(conn, skip=skip, limit=limit, active_only=False, seller_id=filtro_seller_id)
 
@@ -86,7 +101,7 @@ async def post_my_product(
     payload: CreateOwnProductRequest, request: Request, current: dict = Depends(get_current_seller),
 ):
     conn = _get_db(request)
-    await ensure_product_table(conn)
+    await ensure_product_search_columns(conn)
     existente = await conn.fetchrow("SELECT id FROM products WHERE sku = $1", payload.sku)
     if existente is not None:
         raise HTTPException(status_code=409, detail=f"Ya existe un producto con sku {payload.sku!r}")
@@ -94,6 +109,7 @@ async def post_my_product(
     return await create_product(
         conn, sku=payload.sku, name=payload.name, description=payload.description,
         price_cents=payload.price_cents, stock=payload.stock, seller_id=str(current["id"]),
+        category=payload.category, city=payload.city,
     )
 
 
@@ -103,7 +119,7 @@ async def patch_my_product(
     current: dict = Depends(get_current_seller),
 ):
     conn = _get_db(request)
-    await ensure_product_table(conn)
+    await ensure_product_search_columns(conn)
     producto = await get_product(conn, product_id)
     if producto is None:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
@@ -151,7 +167,7 @@ async def delete_my_product_image(
         raise HTTPException(status_code=404, detail="Imagen no encontrada")
 
     await delete_image(conn, image_id)
-    _borrar_archivo_local_si_aplica(product_id, imagen)
+    await _borrar_archivo_si_aplica(imagen)
     return None
 
 

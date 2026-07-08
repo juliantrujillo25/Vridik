@@ -39,12 +39,13 @@ class _FakeProductsDB:
     def seed_product(
         self, *, seller_id: str, sku: str, name: str = "Producto de prueba",
         price_cents: int = 1000, stock: int = 5, is_active: bool = True,
+        category: str | None = None, city: str | None = None,
     ) -> dict:
         product_id = str(uuid.uuid4())
         self.products[product_id] = {
             "id": product_id, "sku": sku, "name": name, "description": "desc",
             "price_cents": price_cents, "stock": stock, "is_active": is_active,
-            "seller_id": seller_id,
+            "seller_id": seller_id, "category": category, "city": city,
             "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00",
         }
         return self.products[product_id]
@@ -65,8 +66,11 @@ class _FakeProductsDB:
             (sku,) = args
             return next(({"id": p["id"]} for p in self.products.values() if p["sku"] == sku), None)
         if "INSERT INTO products" in query and "RETURNING" in query:
-            sku, name, description, price_cents, stock, seller_id = args
-            nuevo = self.seed_product(seller_id=seller_id, sku=sku, name=name, price_cents=price_cents, stock=stock)
+            sku, name, description, price_cents, stock, seller_id, category, city = args
+            nuevo = self.seed_product(
+                seller_id=seller_id, sku=sku, name=name, price_cents=price_cents, stock=stock,
+                category=category, city=city,
+            )
             nuevo["description"] = description
             return dict(nuevo)
         if "UPDATE products SET is_active = false" in query:
@@ -94,7 +98,7 @@ class _FakeProductsDB:
 
     async def fetch(self, query: str, *args):
         if "FROM products" in query:
-            active_only, q, seller_id, skip, limit = args
+            active_only, q, seller_id, category, city, min_price, max_price, skip, limit = args
             productos = list(self.products.values())
             if active_only:
                 productos = [p for p in productos if p["is_active"]]
@@ -103,6 +107,14 @@ class _FakeProductsDB:
                 productos = [p for p in productos if q_lower in p["name"].lower() or q_lower in p["sku"].lower()]
             if seller_id:
                 productos = [p for p in productos if p["seller_id"] == seller_id]
+            if category:
+                productos = [p for p in productos if p.get("category") == category]
+            if city:
+                productos = [p for p in productos if (p.get("city") or "").lower() == city.lower()]
+            if min_price is not None:
+                productos = [p for p in productos if p["price_cents"] >= min_price]
+            if max_price is not None:
+                productos = [p for p in productos if p["price_cents"] <= max_price]
             productos = sorted(productos, key=lambda p: p["created_at"], reverse=True)
             return [dict(p) for p in productos[skip:skip + limit]]
         return []

@@ -23,9 +23,7 @@ pypdf==5.1.0
 reportlab==4.2.5
 
 # Añadido en S12 (core/totp_2fa.py): 2FA opcional (TOTP, RFC 6238) para
-# roles admin/abogado. boto3 NO se agrega aquí — storage/object_storage.py
-# S3StorageBackend queda como stub opcional hasta que se active
-# explícitamente OBJECT_STORAGE_BACKEND=s3 (ver railway.json, S11-extra-9).
+# roles admin/abogado.
 pyotp==2.9.0
 
 # Añadido en S12 (conexión HTTP del 2FA, api/auth_endpoint.py): cryptography
@@ -47,3 +45,13 @@ python-jose==3.3.0
 # 500 (AssertionError interna de Starlette, nunca se probó contra un server
 # real hasta el deploy).
 python-multipart==0.0.9
+
+# Añadido en S7 (Vridik Abogados): core/storage.py usa boto3 para el
+# backend BACKEND=r2 (Cloudflare R2, API compatible con S3) — con
+# BACKEND=local (default) nunca se importa de verdad, pero tiene que estar
+# instalado para que el import condicional no reviente en producción si
+# alguien activa r2. core/wompi.py usa httpx para llamar a la API de
+# Wompi — ya era una dependencia transitiva de `anthropic`, pero se fija acá
+# explícito para no depender de que anthropic la siga trayendo.
+boto3==1.35.36
+httpx==0.27.2
