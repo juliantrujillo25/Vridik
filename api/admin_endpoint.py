@@ -56,8 +56,9 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from api.auth_endpoint import _claims_de_bearer, _get_db
 from core.admin import change_role, create_user, ensure_role_column, list_users
@@ -249,7 +250,7 @@ async def patch_order_status(
     return actualizada
 
 
-async def _guardar_archivo_imagen(product_id: str, archivo: UploadFile) -> str:
+async def _guardar_archivo_imagen(product_id: str, archivo: StarletteUploadFile) -> str:
     nombre_original = archivo.filename or ""
     ext = nombre_original.rsplit(".", 1)[-1].lower() if "." in nombre_original else ""
     if ext not in EXTENSIONES_IMAGEN_PERMITIDAS:
@@ -282,7 +283,12 @@ async def post_product_image(
     if content_type.startswith("multipart/form-data"):
         form = await request.form()
         archivo = form.get("file")
-        if not isinstance(archivo, UploadFile):
+        # request.form() (Starlette puro, sin pasar por la inyección de
+        # parámetros de FastAPI) devuelve starlette.datastructures.UploadFile
+        # — fastapi.UploadFile es una SUBclase de esa, así que un isinstance
+        # contra fastapi.UploadFile nunca matchea acá; hay que comparar
+        # contra la clase base de Starlette.
+        if not isinstance(archivo, StarletteUploadFile):
             raise HTTPException(status_code=400, detail="Falta el campo 'file'")
         url = await _guardar_archivo_imagen(product_id, archivo)
         is_primary = str(form.get("is_primary", "")).lower() in ("true", "1", "yes")
