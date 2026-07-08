@@ -182,6 +182,41 @@ async def get_order_items(db_connection, order_id: str) -> list[dict]:
     return [dict(f) for f in filas]
 
 
+async def list_orders_for_seller(db_connection, *, seller_id: str, skip: int = 0, limit: int = 20) -> list[dict]:
+    """S6 (api/seller_endpoint.py): órdenes que contienen AL MENOS un
+    producto de `seller_id` — join manual order_items -> products, nunca
+    expone una orden ajena que no tenga ningún producto del seller."""
+    filas = await db_connection.fetch(
+        """
+        SELECT DISTINCT o.id, o.user_id, o.status, o.total_cents, o.created_at, o.updated_at
+        FROM orders o
+        JOIN order_items oi ON oi.order_id = o.id
+        JOIN products p ON p.id = oi.product_id
+        WHERE p.seller_id = $1
+        ORDER BY o.created_at DESC
+        OFFSET $2 LIMIT $3
+        """,
+        seller_id, skip, limit,
+    )
+    return [dict(f) for f in filas]
+
+
+async def order_has_seller_product(db_connection, order_id: str, seller_id: str) -> bool:
+    """S6: True si al menos un order_item de `order_id` es de un producto
+    de `seller_id` — usado por GET /seller/orders/{id} para decidir 403."""
+    fila = await db_connection.fetchrow(
+        """
+        SELECT EXISTS(
+            SELECT 1 FROM order_items oi
+            JOIN products p ON p.id = oi.product_id
+            WHERE oi.order_id = $1 AND p.seller_id = $2
+        ) AS existe
+        """,
+        order_id, seller_id,
+    )
+    return bool(fila["existe"]) if fila is not None else False
+
+
 async def update_status(db_connection, order_id: str, new_status: str) -> dict | None:
     """Si `new_status == 'cancelled'` (y la orden no estaba ya cancelada),
     restaura el stock de cada order_item antes de marcar la orden — todo en

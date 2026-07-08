@@ -8,7 +8,7 @@ S1 nunca emite). Ese archivo y core/admin_users.py quedan intactos en el
 repo pero dejan de montarse en app/main.py.
 
 GET   /admin/users              lista paginada (skip/limit)
-POST  /admin/users              crea usuario (role: seller|admin)
+POST  /admin/users              crea usuario (role: customer|seller|admin)
 PATCH /admin/users/{id}/role    cambia el rol (un admin no puede cambiarse a sí mismo)
 
 `get_current_admin()` reutiliza el JWT de S1 (core.auth.decode_jwt vía
@@ -17,23 +17,15 @@ api.auth_endpoint._claims_de_bearer): 401 si el token falta/es inválido,
 
 Sprint S3: gestión de productos (core/product.py) — el catálogo público vive
 en api/products_endpoint.py, esto es solo lo que requiere JWT:
-POST   /admin/products              solo admin
+POST   /admin/products              admin o seller (S6: ver más abajo)
 PATCH  /admin/products/{id}         admin, o el seller dueño (seller_id)
 DELETE /admin/products/{id}         solo admin, soft delete (is_active=false)
-
-`get_current_seller()` es como get_current_admin() pero sin exigir
-role=='admin' — cualquier usuario autenticado (seller o admin) pasa; el
-chequeo de ownership para PATCH se hace en el propio endpoint.
 
 Sprint S4: gestión de órdenes (core/order.py) — el checkout/consulta propia
 vive en api/orders_endpoint.py, esto es solo lo que requiere rol admin:
 GET   /admin/orders                 solo admin, lista todas (?status=&skip=&limit=)
 PATCH /admin/orders/{id}/status     solo admin, cambia status; si pasa a
                                      'cancelled' restaura el stock reservado.
-
-`get_current_user` es un alias de get_current_seller() — api/orders_endpoint.py
-lo importa bajo ese nombre porque ahí "cualquier usuario autenticado" es
-justamente lo que se necesita (no solo sellers).
 
 Sprint S5: imágenes de producto (core/product.py: product_images) — el
 catálogo público las expone en api/products_endpoint.py, esto es solo lo
@@ -48,6 +40,25 @@ DELETE /admin/products/{id}/images/{image_id}      borra el registro y,
                                                     (/uploads/...), el
                                                     archivo también.
 POST   /admin/products/{id}/images/{image_id}/primary  la marca como principal.
+
+Sprint S6 (core/permissions.py): RBAC más fino — tres roles (admin/seller/
+customer, ver ROLES). Dos cambios importantes acá:
+  - `get_current_seller()` YA NO significa "cualquier usuario autenticado"
+    (eso ahora es `get_current_user()`, separado): pasa a exigir
+    role in ('seller', 'admin') — un customer nunca la pasa. Antes de S6
+    `get_current_user = get_current_seller` era un alias literal; dejaron
+    de poder serlo porque customer necesita `get_current_user` sin
+    restricción (checkout, api/orders_endpoint.py) pero nunca debe pasar
+    `get_current_seller`.
+  - POST /admin/products ahora también acepta sellers (antes solo admin):
+    `seller_id` en el body queda opcional — si lo llama un seller, se
+    auto-asigna su propio id sin importar qué venga en el body (nunca
+    puede crear "para" otro seller); si lo llama un admin, puede usar el
+    `seller_id` del body o, si no viene, su propio id.
+  - `_procesar_imagen_request()`/`_borrar_archivo_local_si_aplica()` quedan
+    factorizados acá (mismo comportamiento exacto de S5, sin cambios) para
+    que api/seller_endpoint.py los reutilice en vez de reimplementar el
+    manejo de upload — evita dos copias del mismo código divergiendo.
 """
 
 from __future__ import annotations
@@ -64,6 +75,7 @@ from api.auth_endpoint import _claims_de_bearer, _get_db
 from core.admin import change_role, create_user, ensure_role_column, list_users
 from core.auth import hash_password
 from core.order import ensure_order_tables, list_all_orders, update_status
+from core.permissions import check_owner
 from core.product import (
     PRODUCT_IMAGES_DIR,
     add_image,
@@ -87,11 +99,11 @@ TAMANO_MAXIMO_IMAGEN_BYTES = 5 * 1024 * 1024  # 5MB
 class CreateUserRequest(BaseModel):
     email: str = Field(..., min_length=3)
     password: str = Field(..., min_length=8)
-    role: Literal["seller", "admin"] = "seller"
+    role: Literal["customer", "seller", "admin"] = "customer"
 
 
 class ChangeRoleRequest(BaseModel):
-    role: Literal["seller", "admin"]
+    role: Literal["customer", "seller", "admin"]
 
 
 class CreateProductRequest(BaseModel):
@@ -100,7 +112,7 @@ class CreateProductRequest(BaseModel):
     description: str | None = None
     price_cents: int = Field(..., ge=0)
     stock: int = Field(0, ge=0)
-    seller_id: str
+    seller_id: str | None = None
 
 
 class UpdateProductRequest(BaseModel):
@@ -137,14 +149,21 @@ async def get_current_admin(request: Request, authorization: str | None = Header
 
 
 async def get_current_seller(request: Request, authorization: str | None = Header(default=None)) -> dict:
-    """Cualquier usuario autenticado (seller o admin) — no exige un rol
-    específico, a diferencia de get_current_admin()."""
+    """S6: exige role in ('seller', 'admin') — un customer nunca la pasa.
+    Antes de S6 esto era "cualquier usuario autenticado"; ese contrato
+    ahora lo cubre get_current_user()."""
+    usuario = await _resolver_usuario(request, authorization)
+    if usuario["role"] not in ("seller", "admin"):
+        raise HTTPException(status_code=403, detail="Requiere rol seller o admin")
+    return usuario
+
+
+async def get_current_user(request: Request, authorization: str | None = Header(default=None)) -> dict:
+    """Cualquier usuario autenticado, sin importar el rol — customer
+    incluido (S6: necesario para checkout/orders, api/orders_endpoint.py).
+    Antes de S6 era un alias de get_current_seller(); dejaron de poder
+    serlo porque esa ahora SÍ exige seller/admin."""
     return await _resolver_usuario(request, authorization)
-
-
-# S4: mismo dependency, nombre más claro para api/orders_endpoint.py (ahí no
-# hay nada "seller-específico" — cualquier usuario autenticado hace checkout).
-get_current_user = get_current_seller
 
 
 @router.get("/users")
@@ -184,17 +203,25 @@ async def patch_user_role(
 
 @router.post("/products", status_code=201)
 async def post_products(
-    payload: CreateProductRequest, request: Request, admin: dict = Depends(get_current_admin),
+    payload: CreateProductRequest, request: Request, current: dict = Depends(get_current_seller),
 ):
     conn = _get_db(request)
     await ensure_product_table(conn)
+
+    if current["role"] == "admin":
+        seller_id = payload.seller_id or str(current["id"])
+    else:
+        # Un seller siempre crea para sí mismo — cualquier seller_id ajeno
+        # que venga en el body se ignora, nunca puede crear "para" otro.
+        seller_id = str(current["id"])
+
     existente = await conn.fetchrow("SELECT id FROM products WHERE sku = $1", payload.sku)
     if existente is not None:
         raise HTTPException(status_code=409, detail=f"Ya existe un producto con sku {payload.sku!r}")
 
     return await create_product(
         conn, sku=payload.sku, name=payload.name, description=payload.description,
-        price_cents=payload.price_cents, stock=payload.stock, seller_id=payload.seller_id,
+        price_cents=payload.price_cents, stock=payload.stock, seller_id=seller_id,
     )
 
 
@@ -209,8 +236,7 @@ async def patch_product(
     if producto is None:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-    es_dueño = str(producto["seller_id"]) == str(seller["id"])
-    if seller["role"] != "admin" and not es_dueño:
+    if not check_owner(producto["seller_id"], seller):
         raise HTTPException(status_code=403, detail="Solo el admin o el seller dueño pueden editar este producto")
 
     cambios = payload.model_dump(exclude_unset=True)
@@ -269,16 +295,10 @@ async def _guardar_archivo_imagen(product_id: str, archivo: StarletteUploadFile)
     return f"/uploads/products/{product_id}/{nombre_archivo}"
 
 
-@router.post("/products/{product_id}/images", status_code=201)
-async def post_product_image(
-    product_id: str, request: Request, admin: dict = Depends(get_current_admin),
-):
-    conn = _get_db(request)
-    await ensure_product_images_table(conn)
-    producto = await get_product(conn, product_id)
-    if producto is None:
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
-
+async def _procesar_imagen_request(request: Request, product_id: str) -> tuple[str, bool]:
+    """(url, is_primary) a partir del body — multipart con campo 'file' o
+    JSON {"url": ...}. Factorizado de S5 sin cambios de comportamiento para
+    que api/seller_endpoint.py (S6) lo reutilice en vez de reimplementarlo."""
     content_type = request.headers.get("content-type", "")
     if content_type.startswith("multipart/form-data"):
         form = await request.form()
@@ -298,7 +318,30 @@ async def post_product_image(
         if not url:
             raise HTTPException(status_code=400, detail="Falta 'url' (o envía un archivo multipart en 'file')")
         is_primary = bool(payload.get("is_primary", False))
+    return url, is_primary
 
+
+def _borrar_archivo_local_si_aplica(product_id: str, imagen: dict) -> None:
+    # Solo borra el archivo si es una subida local nuestra — nunca confía
+    # ciegamente en la url guardada (podría venir del modo {"url": ...} con
+    # cualquier ruta): reconstruye la ruta a partir del nombre de archivo,
+    # nunca la usa tal cual, para no salir de PRODUCT_IMAGES_DIR.
+    if imagen["url"].startswith(f"/uploads/products/{product_id}/"):
+        nombre_archivo = Path(imagen["url"]).name
+        (PRODUCT_IMAGES_DIR / product_id / nombre_archivo).unlink(missing_ok=True)
+
+
+@router.post("/products/{product_id}/images", status_code=201)
+async def post_product_image(
+    product_id: str, request: Request, admin: dict = Depends(get_current_admin),
+):
+    conn = _get_db(request)
+    await ensure_product_images_table(conn)
+    producto = await get_product(conn, product_id)
+    if producto is None:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    url, is_primary = await _procesar_imagen_request(request, product_id)
     return await add_image(conn, product_id=product_id, url=url, is_primary=is_primary)
 
 
@@ -313,14 +356,7 @@ async def delete_product_image(
         raise HTTPException(status_code=404, detail="Imagen no encontrada")
 
     await delete_image(conn, image_id)
-
-    # Solo borra el archivo si es una subida local nuestra — nunca confía
-    # ciegamente en la url guardada (podría venir del modo {"url": ...} con
-    # cualquier ruta): reconstruye la ruta a partir del nombre de archivo,
-    # nunca la usa tal cual, para no salir de PRODUCT_IMAGES_DIR.
-    if imagen["url"].startswith(f"/uploads/products/{product_id}/"):
-        nombre_archivo = Path(imagen["url"]).name
-        (PRODUCT_IMAGES_DIR / product_id / nombre_archivo).unlink(missing_ok=True)
+    _borrar_archivo_local_si_aplica(product_id, imagen)
     return None
 
 

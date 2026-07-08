@@ -11,9 +11,10 @@ GET  /orders/me          requiere JWT, lista las órdenes del usuario (paginado)
 GET  /orders/{id}        requiere JWT, detalle con items — 403 si no eres el
                           dueño ni admin.
 
-`get_current_user` es api.admin_endpoint.get_current_user (alias de
-get_current_seller, S2/S3: "cualquier usuario autenticado", sin exigir rol)
-— mismo JWT de S1, reutilizado tal cual.
+`get_current_user` es api.admin_endpoint.get_current_user: cualquier
+usuario autenticado, customer incluido (S6: necesario para que un customer
+pueda hacer checkout — get_current_seller, en cambio, ya exige rol
+seller/admin desde S6 y NO sirve acá).
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from core.order import (
     get_order_items,
     list_orders_by_user,
 )
+from core.permissions import check_owner
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -81,8 +83,7 @@ async def get_order_detail(order_id: str, request: Request, user: dict = Depends
     if orden is None:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
 
-    es_dueño = str(orden["user_id"]) == str(user["id"])
-    if not es_dueño and user["role"] != "admin":
+    if not check_owner(orden["user_id"], user):
         raise HTTPException(status_code=403, detail="No puedes ver esta orden")
 
     items = await get_order_items(conn, order_id)

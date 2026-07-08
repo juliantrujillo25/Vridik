@@ -94,13 +94,15 @@ class _FakeProductsDB:
 
     async def fetch(self, query: str, *args):
         if "FROM products" in query:
-            active_only, q, skip, limit = args
+            active_only, q, seller_id, skip, limit = args
             productos = list(self.products.values())
             if active_only:
                 productos = [p for p in productos if p["is_active"]]
             if q:
                 q_lower = q.lower()
                 productos = [p for p in productos if q_lower in p["name"].lower() or q_lower in p["sku"].lower()]
+            if seller_id:
+                productos = [p for p in productos if p["seller_id"] == seller_id]
             productos = sorted(productos, key=lambda p: p["created_at"], reverse=True)
             return [dict(p) for p in productos[skip:skip + limit]]
         return []

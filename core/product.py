@@ -58,17 +58,22 @@ async def ensure_product_table(db_connection) -> None:
 
 async def list_products(
     db_connection, *, skip: int, limit: int, q: str | None = None, active_only: bool = True,
+    seller_id: str | None = None,
 ) -> list[dict]:
+    """`seller_id` (S6, api/seller_endpoint.py): filtra a "mis productos"
+    cuando viene; `None` (default, todos los llamadores de S3) no filtra —
+    no rompe el catálogo público existente."""
     filas = await db_connection.fetch(
         f"""
         SELECT {_COLUMNAS}
         FROM products
         WHERE (NOT $1 OR is_active = true)
           AND ($2::text IS NULL OR name ILIKE '%' || $2 || '%' OR sku ILIKE '%' || $2 || '%')
+          AND ($3::text IS NULL OR seller_id = $3)
         ORDER BY created_at DESC
-        OFFSET $3 LIMIT $4
+        OFFSET $4 LIMIT $5
         """,
-        active_only, q, skip, limit,
+        active_only, q, seller_id, skip, limit,
     )
     return [dict(f) for f in filas]
 

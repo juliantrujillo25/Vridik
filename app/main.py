@@ -14,6 +14,9 @@ importar este módulo si no existe. Nota: en Railway el filesystem del
 contenedor es efímero (sin volumen montado), así que lo subido localmente
 no sobrevive un redeploy; el modo `{"url": ...}` de
 POST /admin/products/{id}/images es el que persiste de verdad.
+
+Sprint S6 (core/permissions.py): RBAC más fino admin/seller/customer — vista
+"propia" de un seller sobre sus productos/órdenes vía api/seller_endpoint.py.
 """
 
 import os
@@ -26,6 +29,7 @@ from api.admin_endpoint import router as admin_router
 from api.auth_endpoint import router as auth_router
 from api.orders_endpoint import router as orders_router
 from api.products_endpoint import router as products_router
+from api.seller_endpoint import router as seller_router
 from core.product import PRODUCT_IMAGES_DIR, UPLOADS_DIR
 
 PRODUCT_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
@@ -52,6 +56,10 @@ app.include_router(products_router)
 # admin (listar todas/cambiar status) vive en api/admin_endpoint.py, ya
 # montado arriba.
 app.include_router(orders_router)
+
+# S6: vista "propia" de un seller sobre sus productos/órdenes (ver
+# core/permissions.py). Requiere role in ('seller', 'admin').
+app.include_router(seller_router)
 
 
 @app.on_event("startup")

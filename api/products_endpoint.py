@@ -14,6 +14,10 @@ GET /products/{id}        detalle completo + images[]. Si el producto está
 
 Sprint S5: `images` sale de core.product.list_images(), ya ordenada
 is_primary desc / position asc — nunca se reordena acá.
+
+Sprint S6: el chequeo de ownership para mostrar un producto inactivo usa
+core.permissions.check_owner() (mismo criterio de siempre: dueño o admin),
+en vez de la comparación inline que había antes.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 
 from api.auth_endpoint import _get_db
 from core.auth import decode_jwt
+from core.permissions import check_owner
 from core.product import ensure_product_images_table, ensure_product_table, get_product, list_images, list_products
 
 router = APIRouter(prefix="/products", tags=["products"])
@@ -73,12 +78,12 @@ async def get_product_detail(
     if not producto["is_active"]:
         claims = await _claims_opcionales(authorization)
         user_id = claims.get("sub") if claims else None
-        es_dueño = user_id is not None and user_id == str(producto["seller_id"])
-        es_admin = False
-        if user_id is not None and not es_dueño:
+        autorizado = False
+        if user_id is not None:
             fila = await conn.fetchrow("SELECT role FROM users WHERE id = $1", user_id)
-            es_admin = fila is not None and fila["role"] == "admin"
-        if not (es_dueño or es_admin):
+            role = fila["role"] if fila is not None else None
+            autorizado = check_owner(producto["seller_id"], {"id": user_id, "role": role})
+        if not autorizado:
             raise HTTPException(status_code=404, detail="Producto no encontrado")
 
     imagenes = await list_images(conn, product_id)
