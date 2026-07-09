@@ -71,7 +71,16 @@ class _FakeSearchDB:
                 productos = [p for p in productos if p["price_cents"] >= min_price]
             if max_price is not None:
                 productos = [p for p in productos if p["price_cents"] <= max_price]
-            productos = sorted(productos, key=lambda p: p["created_at"], reverse=True)
+            # sort_by no viaja como parámetro $N -- core.product.list_products lo
+            # resuelve a un fragmento SQL fijo e interpola el ORDER BY en el texto
+            # de la query (ver _ORDEN_PERMITIDO); el fake debe inspeccionar ese
+            # texto para simular el mismo comportamiento.
+            if "ORDER BY price_cents ASC" in query:
+                productos = sorted(productos, key=lambda p: p["price_cents"])
+            elif "ORDER BY price_cents DESC" in query:
+                productos = sorted(productos, key=lambda p: p["price_cents"], reverse=True)
+            else:
+                productos = sorted(productos, key=lambda p: p["created_at"], reverse=True)
             return [dict(p) for p in productos[skip:skip + limit]]
         if "FROM product_images WHERE product_id" in query:
             return []

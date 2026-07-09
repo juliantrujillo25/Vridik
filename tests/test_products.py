@@ -147,7 +147,7 @@ def test_public_list_products_ok(products_db, products_client):
     assert r.status_code == 200, r.text
     body = r.json()
     assert len(body) == 1  # el inactivo no aparece
-    assert set(body[0].keys()) == {"id", "sku", "name", "price_cents", "stock"}
+    assert set(body[0].keys()) == {"id", "sku", "name", "price_cents", "stock", "category", "city", "images"}
 
 
 def test_public_get_product_ok(products_db, products_client):

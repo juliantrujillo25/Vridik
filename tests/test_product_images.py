@@ -96,7 +96,7 @@ class _FakeImagesDB:
         return None
 
     async def fetch(self, query: str, *args):
-        if "FROM product_images WHERE product_id" in query:
+        if "FROM product_images" in query and "WHERE product_id" in query:
             (product_id,) = args
             imgs = [i for i in self.images.values() if i["product_id"] == product_id]
             imgs.sort(key=lambda i: (not i["is_primary"], i["position"]))
