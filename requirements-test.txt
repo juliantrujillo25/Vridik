@@ -26,3 +26,12 @@ python-multipart==0.0.9
 
 # Añadido en S7 (core/storage.py backend r2, core/wompi.py)
 boto3==1.35.36
+
+# Faltaba desde S3/S4 — core/auth.py usa python-jose para JWT; su ausencia
+# aquí rompía la RECOLECCIÓN de pytest en CI (ModuleNotFoundError: 'jose'
+# en 8 módulos de test), dejando el gate del 90% en 0% en cada run desde S4.
+python-jose==3.3.0
+
+# Faltaba desde S10/S11 — tests/test_pdf_export.py llama a
+# julix.pdf_export.generar_pdf(), que requiere reportlab (import perezoso).
+reportlab==4.2.5
