@@ -21,10 +21,7 @@ pyotp==2.9.0
 cryptography==42.0.5
 qrcode[pil]==7.4.2
 
-# Añadido en S5 (uploads multipart de imágenes, api/admin_endpoint.py)
-python-multipart==0.0.9
-
-# Añadido en S7 (core/storage.py backend r2, core/wompi.py)
+# Añadido en S7 (core/storage.py backend r2)
 boto3==1.35.36
 
 # Faltaba desde S3/S4 — core/auth.py usa python-jose (JWT) y passlib

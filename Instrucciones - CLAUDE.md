@@ -222,12 +222,22 @@ siguiente):
   que lo dispare, pero se conservó con un test directo contra la
   función en `tests/test_orders.py` en vez de borrarlo -- es lógica
   real, no muerta, solo sin exponer todavía).
-- **Fase 3 — pendiente.** Pagos (`api/payments_endpoint.py`,
-  `core/payment.py`, `core/wompi.py`) -- depende de `orders`, real
-  integración de dinero (aunque sin transacciones reales en
-  producción); decidir si se borra del todo o se deja dormida.
+- **Fase 3 — CERRADA.** `api/payments_endpoint.py`, `core/payment.py`,
+  `core/wompi.py` y `tests/test_payments.py` se borraron enteros:
+  decisión tomada (no dejarlos dormidos) porque dependían por completo
+  de `orders` (una tabla también en desmantelamiento) y no había
+  ninguna transacción real en producción -- queda todo en el
+  historial de git si hace falta resucitarlos más adelante sobre
+  `casos`, con un modelo de cobro nuevo a diseñar, no una resurrección
+  literal. Efecto colateral encontrado y limpiado: `python-multipart`
+  (`requirements.txt`/`requirements-test.txt`) había quedado huérfano
+  desde la fase 2 (solo lo usaba la ruta de upload de imágenes ya
+  removida) -- se quitó en el mismo commit.
+  `core.order.update_status()` (con el branch de restaurar stock al
+  cancelar) queda sin ningún caller HTTP tras esto -- se revisa en la
+  fase 4, no se tocó acá.
 - **Fase 4 — pendiente.** `orders_endpoint.py`/`core/order.py`
-  restante, quitar la ruta legacy `/orders/{id}/documents` de
-  `case_documents`, y el drop de las tablas
-  (`products`/`orders`/`order_items`/`product_images`/`payments`) vía
-  migración.
+  restante (incluye decidir el destino de `update_status()`), quitar
+  la ruta legacy `/orders/{id}/documents` de `case_documents`, y el
+  drop de las tablas (`products`/`orders`/`order_items`/
+  `product_images`/`payments`) vía migración.
