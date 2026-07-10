@@ -32,10 +32,12 @@ El repo contiene dos implementaciones de "S1-S7" que NO son la misma cosa:
    faltan roles/refresh tokens — ver "Progreso contra
    AUDITORIA_PARA_CLAUDE.md" más abajo (S1-GAP-01, Fases A y B cerradas).
 
-**No fusiones automáticas.** Antes de tocar auth, confirma con el dev lead
-cuál de las dos rutas es la que se quiere llevar a producción de verdad:
-migrar la rama montada al esquema de `schema_semana1_vridik.sql`, o
-actualizar `vridik_roadmap.md` para reflejar que el diseño cambió.
+**DECISIÓN TOMADA (dev lead, ver "Consolidación de producto" más abajo):
+el copiloto legal es el producto real.** El marketplace se desmantela
+activamente (no solo se congela) en lo que no sea esencial. Antes de
+seguir desmantelando, confirmar con el dev lead qué cuenta como esencial
+en cada caso puntual (ver el punto sobre `case_documents`/`orders` más
+abajo) -- no asumir.
 
 ## Reglas no negociables (todo el proyecto)
 
@@ -133,6 +135,57 @@ auditoría).
   final del stream si hay cita sin respaldo. 7 tests nuevos. Desplegado
   y verificado en producción.
 
-**Balance final:** de los 7 gaps de la auditoría, 6 cerrados (S1 Fases
+**Balance final de la auditoría:** de los 7 gaps, 6 cerrados (S1 Fases
 A/B, S2, S3, S4, S6, S7). Solo **S5** sigue abierto, y depende
 enteramente de Ana Luisa, no de más trabajo de código.
+
+## Consolidación de producto (post-auditoría)
+
+Decisión del dev lead: **el copiloto legal (JuliX/RAG) es el producto
+real**, no el marketplace. Trabajo ya cerrado en esta dirección:
+
+- **Fase C de auth (parcial) — CERRADA.** `POST /auth/login` ahora lee
+  `password_hash` de `user_credentials` (LEFT JOIN), no de
+  `users.hashed_password` (esa columna se queda, nunca se soltó -- sin
+  DDL destructivo). Fix encontrado y necesario antes del cutover:
+  `core/admin.py::create_user()` (POST /admin/users) nunca escribía en
+  `user_credentials` -- solo `/auth/register` y `resetear_password()` lo
+  hacían -- se corrigió con el mismo dual-write. Deliberadamente NO se
+  tocó `role`→`role_id` (RBAC funciona perfecto con la columna TEXT,
+  cero beneficio real, alto riesgo). Verificado end-to-end en producción.
+- **`pdf_jobs` — el desajuste de schema documentado en
+  `migrations/003_pdf_jobs.sql` ya estaba resuelto** (alguien ajustó
+  `workers/pdf_worker.py` para usar el schema real en algún punto
+  anterior a esta sesión) -- el comentario de la migración solo estaba
+  desactualizado, se corrigió.
+- **`case_documents` commiteado.** `api/case_documents_endpoint.py` +
+  `core/case_documents.py` llevaban sin commitear desde antes de esta
+  sesión (se subían en cada `railway up` porque ese comando sube el
+  directorio de trabajo, no el estado de git) -- riesgo real de
+  desaparecer si algún día Railway despliega desde git en vez del CLI.
+  Ya en el historial. Conecta las dos rutas: una orden del marketplace
+  ES el caso legal, JuliX genera el documento sobre esa orden.
+- **`.gitignore` agregado** + 69 `.pyc` destrackeados (nunca debieron
+  estar en git).
+- **Migración de vocabulario de roles — CERRADA.** `admin/seller/
+  customer` → `admin/abogado/cliente` en `roles.codigo` y `users.role`
+  (`migrations/006_roles_vocabulario_legal.sql`), y en todo el código
+  que compara contra esos valores (`core/permissions.py`,
+  `api/admin_endpoint.py`, `core/admin.py`). Alcance deliberadamente
+  acotado: `seller_id` (columna FK), `get_current_seller()` (nombre de
+  función), y el prefix `/seller` del router NO se tocaron -- son
+  conceptos de dominio del marketplace (quién es dueño de un producto),
+  no valores de rol; se revisan en la fase de desmantelamiento, no en
+  esta migración de vocabulario. Verificado end-to-end en producción:
+  19 usuarios reales migrados (7 abogado, 1 admin, 11 cliente), 0 con
+  vocabulario viejo.
+
+**Pendiente de decidir, aún no ejecutado:** qué específicamente cuenta
+como "no esencial" para desmantelar del marketplace (`products`,
+`orders`, `seller_endpoint.py`, RBAC multi-tenant) -- hay una dependencia
+en cadena real: `products` → `orders` → `case_documents` (que SÍ se
+quiere conservar, generación de documentos de JuliX). Desmantelar
+`orders` sin antes rediseñar cómo se ancla un "caso" sin depender de un
+pedido del marketplace rompería `case_documents`. No empezar a borrar
+código de esto sin ese rediseño primero y sin confirmar el alcance con
+el dev lead.
