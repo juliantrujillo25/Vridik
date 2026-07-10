@@ -45,6 +45,18 @@ NO SE EJECUTA CONTRA POSTGRESQL NI ANTHROPIC REALES EN ESTE ENTREGABLE —
 el loop principal solo arranca si se invoca `python workers/pdf_worker.py`
 con `DATABASE_URL` configurado; queda verificado con `py_compile` y con
 pruebas unitarias de `_ruta_pdf_para_job` de forma aislada.
+
+Roadmap Semana 11, Fase D: `_procesar_trabajo()` notifica `pdf.ready`/
+`pdf.error` (core/events.py) a `job["user_id"]` al terminar -- es la
+"prueba de genericidad" que pide el roadmap para el canal SSE de
+mensajería (S11 Fase B/C): el mismo `notificar_evento()` que usa
+api/mensajes_endpoint.py se llama acá, desde un proceso completamente
+distinto (este worker corre aparte del servidor web), demostrando que el
+canal es infraestructura genérica, no algo atado a mensajes. `user_id`
+puede no ser un UUID válido (columna `TEXT`, no siempre viene de
+`users.id`) -- la notificación se intenta con un try/except propio, sin
+importar si falla nunca debe tumbar el procesamiento del PDF en sí (ya
+marcado done/error en la fila de `pdf_jobs`, que es la fuente de verdad).
 """
 
 from __future__ import annotations
@@ -64,6 +76,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from core.events import notificar_evento  # noqa: E402
 from julix.client import JuliXClient  # noqa: E402
 from julix.pdf_export import FuenteCitada, generar_pdf  # noqa: E402
 from julix.router import TAREA_POR_AREA, route_by_area  # noqa: E402
@@ -202,6 +215,22 @@ async def _marcar_error(conn, job_id) -> None:
     )
 
 
+async def _notificar_pdf(conn, *, user_id, job_id, tipo: str, pdf_url: str | None = None) -> None:
+    """Best-effort: `user_id` de `pdf_jobs` es TEXT, no siempre un UUID de
+    `users.id` (puede ser None o un valor legacy) -- si el INSERT en
+    user_events falla por eso (o por cualquier otro motivo), se loguea y
+    se sigue. La fila de pdf_jobs ya quedó en done/error antes de llamar
+    acá, así que una notificación fallida nunca deja un trabajo a medias."""
+    if not user_id:
+        return
+    try:
+        await notificar_evento(
+            conn, user_id=str(user_id), tipo=tipo, payload={"job_id": str(job_id), "pdf_url": pdf_url},
+        )
+    except Exception:  # noqa: BLE001 — notificar es una optimización, no puede tumbar el worker
+        logger.warning("Vridik/pdf_worker: job_id=%s no se pudo notificar %s (user_id=%r)", job_id, tipo, user_id)
+
+
 async def _procesar_trabajo(conn, job) -> None:
     """Procesa un único trabajo con timeout duro (roadmap S10: 60s). Si el
     timeout se cumple, se mata SOLO esta conversión (no el worker) y el
@@ -216,15 +245,18 @@ async def _procesar_trabajo(conn, job) -> None:
         )
         await _marcar_done(conn, job_id, pdf_url)
         logger.info("Vridik/pdf_worker: job_id=%s completado -> %s", job_id, pdf_url)
+        await _notificar_pdf(conn, user_id=job["user_id"], job_id=job_id, tipo="pdf.ready", pdf_url=pdf_url)
     except asyncio.TimeoutError:
         logger.error(
             "Vridik/pdf_worker: job_id=%s timeout duro de %ss excedido generando el PDF",
             job_id, TIMEOUT_DURO_SEGUNDOS,
         )
         await _marcar_error(conn, job_id)
+        await _notificar_pdf(conn, user_id=job["user_id"], job_id=job_id, tipo="pdf.error")
     except Exception:  # noqa: BLE001 — un trabajo con error nunca debe tumbar el loop
         logger.exception("Vridik/pdf_worker: job_id=%s falló generando el PDF", job_id)
         await _marcar_error(conn, job_id)
+        await _notificar_pdf(conn, user_id=job["user_id"], job_id=job_id, tipo="pdf.error")
 
 
 async def _ciclo_una_vez(pool) -> int:

@@ -282,6 +282,36 @@ nunca terminan de forma confiable) -- la lógica de negocio que importa ya
 está probada contra Postgres real; el endpoint es una capa fina de
 formateo encima.
 
+**S11 Fase D — CERRADA: no-leídos (ya resuelto en la Fase A, cursor
+temporal) + `pdf.ready`/`pdf.error` enganchados al canal.**
+`workers/pdf_worker.py::_notificar_pdf()` (nuevo) llama al mismo
+`core.events.notificar_evento()` que usa `api/mensajes_endpoint.py`, pero
+desde un **proceso completamente distinto** (el worker de PDF corre
+aparte del servidor web) -- es la prueba de genericidad que pide el
+roadmap para el canal SSE: no es algo atado a mensajes, es infraestructura
+reusable. Se llama tras `_marcar_done()`/`_marcar_error()` en
+`_procesar_trabajo()`, nunca antes -- la fila de `pdf_jobs` ya es la
+fuente de verdad antes de intentar notificar.
+
+Cuidado real encontrado: `pdf_jobs.user_id` es `TEXT`, no siempre un UUID
+válido de `users.id` (puede ser `None` o un valor legacy) -- pero
+`user_events.user_id` es `UUID`. `_notificar_pdf()` es deliberadamente
+best-effort (try/except propio, solo logea si falla) para que un
+`user_id` raro nunca deje un trabajo de PDF a medias; el job ya quedó
+`done`/`error` en `pdf_jobs` antes de intentar la notificación, que es
+pura optimización de latencia, no la fuente de verdad.
+
+`tests/test_pdf_worker_events.py` (nuevo, 4 tests) prueba
+`_notificar_pdf()` -- no existían tests previos de `pdf_worker.py`
+(el docstring del archivo afirmaba lo contrario; quedó desactualizado,
+no se corrigió esa parte por estar fuera del alcance de esta fase).
+
+**Con esto, S11 (mensajería en tiempo real) queda completo: las 4 fases
+del roadmap cerradas.** Del roadmap de Fase 1 completo, solo sigue
+bloqueado **S5** (banco de evaluación, depende de Ana Luisa) y **S8-9**
+(corpus 85→400+, depende de selección de documentos por Ana Luisa) --
+ninguno de los dos es trabajo de código pendiente.
+
 ## Consolidación de producto (post-auditoría)
 
 Decisión del dev lead: **el copiloto legal (JuliX/RAG) es el producto
