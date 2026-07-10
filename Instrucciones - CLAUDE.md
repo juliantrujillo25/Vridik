@@ -253,9 +253,16 @@ siguiente):
   con el resto de `core/order.py` (ya no tenía caller HTTP desde la
   fase 3).
 
-  **Falta:** el DROP TABLE real de `products`/`orders`/`order_items`/
-  `product_images`/`payments` en producción (datos de prueba
-  confirmados descartables, cero filas reales verificadas dos veces
-  en esta sesión) -- se hace después de confirmar el deploy del
-  código en verde, para no dropear tablas que el código desplegado
-  todavía espera encontrar.
+  **DROP TABLE ejecutado y verificado — FASE 4 CERRADA, DESMANTELAMIENTO
+  COMPLETO.** Con el código ya desplegado y verificado en verde (404 en
+  todas las rutas removidas, `casos`/`admin`/auth intactos), se corrió
+  `DROP TABLE IF EXISTS payments, order_items, product_images, orders,
+  products CASCADE` contra la Postgres de producción real (vía
+  `railway run --service Postgres`). Conteo justo antes del drop: 1
+  payment, 3 order_items, 1 product_image, 3 orders, 2 products (los
+  mismos datos de prueba confirmados descartables). Las 5 tablas
+  verificadas como no existentes después. Producción re-verificada
+  sana post-drop: health 200, `casos` 200, `admin/users` 403 (rol
+  correcto). El marketplace (Vridik Abogados, sprints S1-S7 originales)
+  ya no existe en código ni en base de datos — el copiloto legal
+  (`casos`/`case_documents`/JuliX) es el único producto.
