@@ -236,8 +236,26 @@ siguiente):
   `core.order.update_status()` (con el branch de restaurar stock al
   cancelar) queda sin ningún caller HTTP tras esto -- se revisa en la
   fase 4, no se tocó acá.
-- **Fase 4 — pendiente.** `orders_endpoint.py`/`core/order.py`
-  restante (incluye decidir el destino de `update_status()`), quitar
-  la ruta legacy `/orders/{id}/documents` de `case_documents`, y el
-  drop de las tablas (`products`/`orders`/`order_items`/
-  `product_images`/`payments`) vía migración.
+- **Fase 4 — código cerrado, falta el drop de tablas.** Se borraron
+  enteros `api/orders_endpoint.py`, `core/order.py`,
+  `api/products_endpoint.py`, `core/product.py`. Efecto colateral
+  encontrado y limpiado en el mismo commit: `core/permissions.py`
+  (`check_owner`/`PERMISSIONS`/`has_permission`) y `core/storage.py`
+  (`save_file`/`delete_file`/`ensure_storage`, exclusivo de imágenes
+  de producto) quedaron sin ningún llamador tras sacar
+  products/orders -- se borraron también, junto con el mount
+  `/uploads` en `app/main.py`. La ruta legacy
+  `/orders/{id}/documents` se quitó de `case_documents_endpoint.py` y
+  `core/case_documents.py` volvió a ser solo `caso_id` (la tabla
+  `case_documents` nunca había llegado a crearse en producción --
+  verificado antes de tocar código -- así que no había ningún
+  documento real que preservar). `core.order.update_status()` se fue
+  con el resto de `core/order.py` (ya no tenía caller HTTP desde la
+  fase 3).
+
+  **Falta:** el DROP TABLE real de `products`/`orders`/`order_items`/
+  `product_images`/`payments` en producción (datos de prueba
+  confirmados descartables, cero filas reales verificadas dos veces
+  en esta sesión) -- se hace después de confirmar el deploy del
+  código en verde, para no dropear tablas que el código desplegado
+  todavía espera encontrar.

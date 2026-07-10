@@ -17,13 +17,15 @@ POST  /admin/users/{id}/reset-password   contraseña temporal + revoca sesiones 
 api.auth_endpoint._claims_de_bearer): 401 si el token falta/es inválido,
 403 si es válido pero `role` (columna `users.role`, no el JWT) no es 'admin'.
 
-Desmantelamiento del marketplace (fase 2, ver Instrucciones - CLAUDE.md,
-"Consolidación de producto"): la gestión de productos (POST/PATCH/DELETE
-/admin/products, S3), órdenes (GET/PATCH /admin/orders, S4) e imágenes
-(POST/DELETE/POST-primary /admin/products/{id}/images, S5) se quitó de
-este archivo, junto con `get_current_seller()` (S6) — nada más la usaba
-tras la fase 1 (api/seller_endpoint.py). El catálogo público de solo
-lectura (api/products_endpoint.py, core/product.py) sigue intacto.
+Desmantelamiento del marketplace (ver Instrucciones - CLAUDE.md,
+"Consolidación de producto") — completo: la gestión de productos
+(POST/PATCH/DELETE /admin/products, S3), órdenes (GET/PATCH
+/admin/orders, S4) e imágenes (POST/DELETE/POST-primary
+/admin/products/{id}/images, S5) se quitó de este archivo en la fase
+2, junto con `get_current_seller()` (S6). El catálogo público
+(api/products_endpoint.py, core/product.py) y el checkout
+(api/orders_endpoint.py, core/order.py) se borraron enteros en la
+fase 4 -- ya nada de este archivo depende de ellos.
 """
 
 from __future__ import annotations
@@ -73,8 +75,7 @@ async def get_current_admin(request: Request, authorization: str | None = Header
 
 
 async def get_current_user(request: Request, authorization: str | None = Header(default=None)) -> dict:
-    """Cualquier usuario autenticado, sin importar el rol — customer
-    incluido (S6: necesario para checkout/orders, api/orders_endpoint.py)."""
+    """Cualquier usuario autenticado, sin importar el rol."""
     return await _resolver_usuario(request, authorization)
 
 

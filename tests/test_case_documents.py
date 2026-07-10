@@ -1,12 +1,14 @@
 """
 Vridik — tests/test_case_documents.py
 Prueba api/case_documents_endpoint.py: generación de documentos de caso
-con JuliX, sobre las dos rutas de anclaje que conviven (core/case.py
-`casos`, nueva y preferida; `orders` del marketplace, original, se
-mantiene por compatibilidad). Mismo patrón que tests/test_julix_stream.py
+con JuliX sobre un `caso` propio (core/case.py) -- POST/GET
+/casos/{caso_id}/documents. Mismo patrón que tests/test_julix_stream.py
 (JuliXService se monkeypatchea con un fake `generar_documento` async
-generator) + tests/test_payments.py (fake mínimo de conexión asyncpg con
-users/orders/casos/ownership) — no se toca Anthropic ni PostgreSQL reales.
+generator) — no se toca Anthropic ni PostgreSQL reales.
+
+Desmantelamiento del marketplace (fase 4): la ruta legacy
+/orders/{order_id}/documents se quitó de api/case_documents_endpoint.py —
+este archivo dejó de probarla junto con ella.
 """
 
 from __future__ import annotations
@@ -27,16 +29,10 @@ from core.auth import create_jwt
 
 
 class _FakeCaseDocumentsDB:
-    """Fake de `users` (role) + `orders` (S4) + `casos` (consolidación) +
-    `case_documents`. `seed_order(seller_id=...)` simula que la orden
-    tiene un order_item de un producto de ese seller (sin modelar
-    order_items/products completos, solo lo que order_has_seller_product()
-    necesita)."""
+    """Fake de `users` (role) + `casos` + `case_documents`."""
 
     def __init__(self):
         self.users: dict[str, dict] = {}
-        self.orders: dict[str, dict] = {}
-        self.order_seller: dict[str, str] = {}
         self.casos: dict[str, dict] = {}
         self.case_documents: dict[str, dict] = {}
 
@@ -44,16 +40,6 @@ class _FakeCaseDocumentsDB:
         user_id = str(uuid.uuid4())
         self.users[user_id] = {"id": user_id, "email": email, "role": role}
         return self.users[user_id]
-
-    def seed_order(self, *, user_id: str, seller_id: str | None = None, status: str = "paid") -> dict:
-        order_id = str(uuid.uuid4())
-        self.orders[order_id] = {
-            "id": order_id, "user_id": user_id, "status": status, "total_cents": 10000,
-            "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00",
-        }
-        if seller_id is not None:
-            self.order_seller[order_id] = seller_id
-        return self.orders[order_id]
 
     def seed_caso(self, *, cliente_id: str, abogado_id: str | None = None, titulo: str = "Caso de prueba") -> dict:
         caso_id = str(uuid.uuid4())
@@ -73,23 +59,15 @@ class _FakeCaseDocumentsDB:
             (user_id,) = args
             u = self.users.get(user_id)
             return dict(u) if u else None
-        if q.startswith("SELECT EXISTS(") and "order_items" in q:
-            order_id, seller_id = args
-            existe = self.order_seller.get(order_id) == seller_id
-            return {"existe": existe}
-        if "FROM orders WHERE id" in q:
-            (order_id,) = args
-            o = self.orders.get(order_id)
-            return dict(o) if o else None
         if "FROM casos WHERE id" in q:
             (caso_id,) = args
             c = self.casos.get(caso_id)
             return dict(c) if c else None
         if q.startswith("INSERT INTO case_documents"):
-            order_id, caso_id, created_by, tarea, pregunta, contenido, pdf_url = args
+            caso_id, created_by, tarea, pregunta, contenido, pdf_url = args
             doc_id = str(uuid.uuid4())
             documento = {
-                "id": doc_id, "order_id": order_id, "caso_id": caso_id, "created_by": created_by, "tarea": tarea,
+                "id": doc_id, "caso_id": caso_id, "created_by": created_by, "tarea": tarea,
                 "pregunta": pregunta, "contenido": contenido, "pdf_url": pdf_url,
                 "created_at": "2026-01-01T00:00:00+00:00",
             }
@@ -105,11 +83,6 @@ class _FakeCaseDocumentsDB:
         if "FROM case_documents" in query and "WHERE caso_id" in query:
             (caso_id,) = args
             filas = [d for d in self.case_documents.values() if d["caso_id"] == caso_id]
-            filas.sort(key=lambda d: d["created_at"], reverse=True)
-            return [{k: v for k, v in f.items() if k != "contenido"} for f in filas]
-        if "FROM case_documents" in query and "WHERE order_id" in query:
-            (order_id,) = args
-            filas = [d for d in self.case_documents.values() if d["order_id"] == order_id]
             filas.sort(key=lambda d: d["created_at"], reverse=True)
             return [{k: v for k, v in f.items() if k != "contenido"} for f in filas]
         return []
@@ -150,92 +123,6 @@ def _token_de(usuario: dict) -> str:
     return create_jwt(sub=usuario["id"], email=usuario["email"])
 
 
-# ---------------------------------------------------------------------
-# Ruta original: /orders/{order_id}/documents (compatibilidad)
-# ---------------------------------------------------------------------
-def test_owner_can_create_document(cd_db, cd_client):
-    buyer = cd_db.seed_user(email="cliente@vridik.local")
-    orden = cd_db.seed_order(user_id=buyer["id"])
-    token = _token_de(buyer)
-
-    r = cd_client.post(
-        f"/orders/{orden['id']}/documents",
-        json={"pregunta": "¿Qué aportes debo declarar a la UGPP?"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert r.status_code == 201, r.text
-    body = r.json()
-    assert body["contenido"] == "Primero. Segundo."
-    assert body["pdf_url"] is None
-    assert body["order_id"] == orden["id"]
-
-
-def test_seller_of_order_can_create_document(cd_db, cd_client):
-    buyer = cd_db.seed_user(email="cliente2@vridik.local")
-    seller = cd_db.seed_user(email="seller@vridik.local", role="abogado")
-    orden = cd_db.seed_order(user_id=buyer["id"], seller_id=seller["id"])
-    token = _token_de(seller)
-
-    r = cd_client.post(
-        f"/orders/{orden['id']}/documents",
-        json={"pregunta": "¿Cómo respondo un requerimiento de la UGPP?"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert r.status_code == 201, r.text
-
-
-def test_unrelated_user_forbidden(cd_db, cd_client):
-    buyer = cd_db.seed_user(email="cliente3@vridik.local")
-    otro = cd_db.seed_user(email="otro@vridik.local")
-    orden = cd_db.seed_order(user_id=buyer["id"])
-    token = _token_de(otro)
-
-    r = cd_client.post(
-        f"/orders/{orden['id']}/documents",
-        json={"pregunta": "texto"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert r.status_code == 403
-
-
-def test_admin_can_list_and_get_document(cd_db, cd_client):
-    buyer = cd_db.seed_user(email="cliente4@vridik.local")
-    admin = cd_db.seed_user(email="admin@vridik.local", role="admin")
-    orden = cd_db.seed_order(user_id=buyer["id"])
-    buyer_token = _token_de(buyer)
-    admin_token = _token_de(admin)
-
-    creado = cd_client.post(
-        f"/orders/{orden['id']}/documents",
-        json={"pregunta": "texto"},
-        headers={"Authorization": f"Bearer {buyer_token}"},
-    ).json()
-
-    r_list = cd_client.get(f"/orders/{orden['id']}/documents", headers={"Authorization": f"Bearer {admin_token}"})
-    assert r_list.status_code == 200
-    assert len(r_list.json()) == 1
-    assert "contenido" not in r_list.json()[0]
-
-    r_get = cd_client.get(
-        f"/orders/{orden['id']}/documents/{creado['id']}", headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert r_get.status_code == 200
-    assert r_get.json()["contenido"] == "Primero. Segundo."
-
-
-def test_order_not_found_returns_404(cd_db, cd_client):
-    buyer = cd_db.seed_user(email="cliente5@vridik.local")
-    token = _token_de(buyer)
-
-    r = cd_client.post(
-        f"/orders/{uuid.uuid4()}/documents", json={"pregunta": "texto"}, headers={"Authorization": f"Bearer {token}"},
-    )
-    assert r.status_code == 404
-
-
-# ---------------------------------------------------------------------
-# Ruta nueva: /casos/{caso_id}/documents (independiente del marketplace)
-# ---------------------------------------------------------------------
 def test_cliente_of_caso_can_create_document(cd_db, cd_client):
     cliente = cd_db.seed_user(email="cliente_caso1@vridik.local")
     caso = cd_db.seed_caso(cliente_id=cliente["id"])
@@ -250,7 +137,6 @@ def test_cliente_of_caso_can_create_document(cd_db, cd_client):
     body = r.json()
     assert body["contenido"] == "Primero. Segundo."
     assert body["caso_id"] == caso["id"]
-    assert body["order_id"] is None
 
 
 def test_abogado_asignado_puede_crear_documento(cd_db, cd_client):

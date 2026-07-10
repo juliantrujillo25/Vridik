@@ -2,52 +2,40 @@
 Vridik — app/main.py
 Sprint S6/Railway: punto de entrada ASGI que nixpacks.toml apunta con
 `uvicorn app.main:app`. Re-exporta el API de JuliX (api/julix_endpoint.py)
-y monta el resto de routers de Vridik a medida que existen como
-apps/routers FastAPI propios (S2: panel de administración de usuarios vía
-api/admin_endpoint.py; S3: catálogo público de productos vía
-api/products_endpoint.py; S4: checkout/órdenes vía api/orders_endpoint.py;
-mensajes/S11 y generador quedan pendientes, ver backlog).
-
-Sprint S5: /uploads sirve archivos estáticos desde ./uploads (imágenes de
-producto). Nota: en Railway el filesystem del contenedor es efímero (sin
-volumen montado), así que lo subido con BACKEND=local no sobrevive un
-redeploy — BACKEND=r2 (S7, core/storage.py) es lo que persiste de verdad.
-
-Sprint S7 (Vridik Abogados): `ensure_storage()` (core/storage.py) reemplaza
-la creación inline de ./uploads/products — con BACKEND=r2 es un no-op, no
-hace falta directorio local.
+y monta el resto de routers de Vridik.
 
 Desmantelamiento del marketplace (ver Instrucciones - CLAUDE.md,
-"Consolidación de producto"):
+"Consolidación de producto") — completo:
   - fase 1: api/seller_endpoint.py (S6, vista "propia" de un seller) —
     la pieza más aislada, nadie más lo importaba.
   - fase 2: gestión admin de productos/órdenes/imágenes, dentro de
     api/admin_endpoint.py.
   - fase 3: pagos con Wompi (api/payments_endpoint.py, core/payment.py,
-    core/wompi.py) — se borraron enteros, sin transacciones reales en
-    producción y dependían por completo de `orders`; queda en el
-    historial de git si hace falta resucitarlos sobre `casos`.
-products/orders siguen montados porque el catálogo público y
-case_documents (ruta legacy /orders/{id}/documents) todavía dependen de
-ellos; se revisan en la fase 4.
+    core/wompi.py) — sin transacciones reales en producción y
+    dependían por completo de `orders`.
+  - fase 4: api/products_endpoint.py, core/product.py,
+    api/orders_endpoint.py, core/order.py, core/permissions.py (sin
+    llamadores tras lo anterior), core/storage.py + el mount /uploads
+    (exclusivo de imágenes de producto, S5) — todos se borraron
+    enteros. La ruta legacy /orders/{id}/documents de case_documents
+    también se quitó (la tabla nunca llegó a crearse en producción, no
+    había ningún documento real anclado a una orden). Todo queda
+    recuperable en el historial de git.
+
+api/admin_endpoint.py (gestión de usuarios) y api/casos_endpoint.py +
+api/case_documents_endpoint.py (el copiloto legal, `casos`) son lo que
+queda montado además de auth y JuliX.
 """
 
 import os
 
 import asyncpg
-from fastapi.staticfiles import StaticFiles
 
 from api.julix_endpoint import app
 from api.admin_endpoint import router as admin_router
 from api.auth_endpoint import router as auth_router
 from api.case_documents_endpoint import router as case_documents_router
 from api.casos_endpoint import router as casos_router
-from api.orders_endpoint import router as orders_router
-from api.products_endpoint import router as products_router
-from core.storage import UPLOADS_DIR, ensure_storage
-
-ensure_storage()
-app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 # S1: registro/login sobre PostgreSQL real (ver api/auth_endpoint.py).
 app.include_router(auth_router)
@@ -61,21 +49,8 @@ app.include_router(auth_router)
 # ya no se montan aquí.
 app.include_router(admin_router)
 
-# S3: catálogo de productos, endpoints públicos y de solo lectura (ver
-# core/product.py) — la gestión de escritura se quitó en la fase 2 del
-# desmantelamiento del marketplace.
-app.include_router(products_router)
-
-# S4: checkout y consulta de órdenes propias (ver core/order.py) — la
-# gestión admin (listar todas/cambiar status) se quitó en la fase 2.
-app.include_router(orders_router)
-
-# Consolidación de producto (dev lead): `casos` es la entidad propia del
-# despacho legal, independiente del marketplace (ver core/case.py) — la
-# ruta preferida para documentos nuevos. /orders/{id}/documents (S4) se
-# mantiene por compatibilidad hasta que el marketplace se desmantele de
-# verdad (ver Instrucciones - CLAUDE.md, sección "Consolidación de
-# producto").
+# `casos`: entidad propia del despacho legal, independiente del marketplace
+# (ver core/case.py) — la generación de documentos de JuliX se ancla acá.
 app.include_router(casos_router)
 app.include_router(case_documents_router)
 
