@@ -30,6 +30,7 @@ from api.julix_endpoint import app
 from api.admin_endpoint import router as admin_router
 from api.auth_endpoint import router as auth_router
 from api.case_documents_endpoint import router as case_documents_router
+from api.casos_endpoint import router as casos_router
 from api.orders_endpoint import router as orders_router
 from api.payments_endpoint import router as payments_router
 from api.products_endpoint import router as products_router
@@ -72,9 +73,13 @@ app.include_router(seller_router)
 # autentica con la firma HMAC del evento, no con Authorization.
 app.include_router(payments_router)
 
-# Documentos de caso generados por JuliX sobre una orden ya existente (ver
-# core/case_documents.py: una orden ES el caso, mismo criterio de ownership
-# que api/seller_endpoint.py — sin tabla `cases` paralela).
+# Consolidación de producto (dev lead): `casos` es la entidad propia del
+# despacho legal, independiente del marketplace (ver core/case.py) — la
+# ruta preferida para documentos nuevos. /orders/{id}/documents (S4) se
+# mantiene por compatibilidad hasta que el marketplace se desmantele de
+# verdad (ver Instrucciones - CLAUDE.md, sección "Consolidación de
+# producto").
+app.include_router(casos_router)
 app.include_router(case_documents_router)
 
 
