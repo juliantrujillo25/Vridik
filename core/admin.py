@@ -49,6 +49,15 @@ async def create_user(db_connection, *, email: str, password_hash: str, role: st
         """,
         email, password_hash, role,
     )
+    # Fase C (S1-GAP-01): dual-write a user_credentials -- sin esto, un
+    # usuario creado vía POST /admin/users (a diferencia de /auth/register,
+    # que sí lo hace desde Fase B) quedaba sin fila en user_credentials, y
+    # /auth/login no podría autenticarlo una vez que el login lea de ahí
+    # como fuente real en vez de users.hashed_password.
+    await db_connection.execute(
+        "INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING",
+        fila["id"], password_hash,
+    )
     return dict(fila)
 
 

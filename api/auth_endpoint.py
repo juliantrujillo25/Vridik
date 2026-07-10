@@ -171,8 +171,20 @@ async def login(payload: LoginRequest, request: Request):
     await ensure_users_table(conn)
     await ensure_totp_columns(conn)
 
+    # Fase C (S1-GAP-01): password_hash se lee de user_credentials, no de
+    # users.hashed_password -- esa columna se queda (nunca se suelta, no
+    # hay DDL destructivo) pero deja de ser la fuente real. LEFT JOIN, no
+    # INNER: si por algún motivo faltara la fila de credentials, la fila de
+    # users igual se recupera (password_hash sale NULL, falla el login
+    # igual que si la contraseña no coincidiera -- nunca un 500).
     fila = await conn.fetchrow(
-        "SELECT id, hashed_password, is_active, totp_enabled FROM users WHERE email = $1", payload.email,
+        """
+        SELECT u.id, uc.password_hash AS hashed_password, u.is_active, u.totp_enabled
+        FROM users u
+        LEFT JOIN user_credentials uc ON uc.user_id = u.id
+        WHERE u.email = $1
+        """,
+        payload.email,
     )
     if fila is None or not fila["hashed_password"] or not verify_password(payload.password, fila["hashed_password"]):
         # user_id=None cuando el email ni existe -- no hay a qué usuario

@@ -7,13 +7,11 @@
 --
 -- Migración idempotente: segura de correr aunque la tabla ya exista.
 --
--- Nota de consistencia (no resuelta en este entregable, se pidió
--- explícitamente no tocar workers/pdf_worker.py): el worker actual lee
--- columnas `tarea, caso_id, respuesta, fuentes` que este esquema NO tiene
--- (aquí la columna es `query`, sin `tarea`/`caso_id`/`fuentes`). Antes de
--- correr el worker contra esta tabla real hay que reconciliar ese
--- desajuste — o ajustando el worker, o añadiendo esas columnas aquí en una
--- migración posterior.
+-- Nota de consistencia (RESUELTA): workers/pdf_worker.py se alineó a este
+-- esquema (columna `query`, sin `tarea`/`caso_id`/`respuesta`/`fuentes` de
+-- una versión anterior del worker) -- ver el encabezado de ese archivo
+-- para el detalle. `pdf_jobs` ya aplicada y verificada contra Railway real
+-- (S1-GAP-01, Fase A de la auditoría de auth arrastró esta también).
 -- =====================================================================
 
 BEGIN;

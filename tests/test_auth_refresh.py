@@ -73,9 +73,16 @@ class _FakeAuthRefreshDB:
                 "is_active": True, "totp_enabled": False,
             }
             return {"id": user_id}
-        if "SELECT id, hashed_password, is_active, totp_enabled FROM users WHERE email" in q:
+        if "LEFT JOIN user_credentials" in q and "WHERE u.email" in q:
             (email,) = args
-            return next((dict(u) for u in self.users.values() if u["email"] == email), None)
+            u = next((u for u in self.users.values() if u["email"] == email), None)
+            if u is None:
+                return None
+            creds = self.user_credentials.get(u["id"])
+            return {
+                "id": u["id"], "is_active": u["is_active"], "totp_enabled": u["totp_enabled"],
+                "hashed_password": creds["password_hash"] if creds else None,
+            }
         if "SELECT id FROM users WHERE email" in q:
             (email,) = args
             return next(({"id": u["id"]} for u in self.users.values() if u["email"] == email), None)
