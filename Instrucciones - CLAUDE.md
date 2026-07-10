@@ -100,4 +100,39 @@ auditoría).
   - Endpoints `/auth/refresh`/`/auth/logout` aún no tienen wiring en
     ningún frontend (no hay frontend en este repo) — son API-only por
     ahora, listos para que un cliente los use.
-- Resto de gaps (S2 a S7 del backlog) — sin empezar todavía.
+- **S2-GAP-01 (alta) — CERRADO.** `GET /admin/users/{id}/actividad` y
+  `POST /admin/users/{id}/reset-password` montados en `api/admin_endpoint.py`
+  (la lógica ya existía en `core/admin_users.py`, solo faltaba conectarla).
+  Fix necesario: `resetear_password()` ahora también escribe
+  `users.hashed_password` (dual-write) -- antes solo tocaba
+  `user_credentials`, que `/auth/login` no lee todavía. Verificado en
+  producción (ruta montada, exige auth). 6 tests nuevos.
+- **S3-GAP-01 (media) — CERRADO.** `.github/workflows/ci.yml` agrega
+  `coverage report --fail-under=60` (medido: 71-72% real, sin excluir
+  nada). `CONTRIBUTING.md` con las 3 reglas del roadmap.
+- **S4-GAP-01 (media) — CERRADO.** `eval/corrida_humo_s4.json`: 3 casos
+  reales del banco (UGPP-01/02/03) x 2 modelos (Sonnet vía
+  `ugpp_demanda`, Haiku vía `clasificacion_documento`) = 6 registros,
+  todos `status=ok`, costo total real **$0.045962 USD**. No usa
+  `eval/evaluador.py --commit` (ese filtra a solo casos CON
+  `respuesta_esperada`, que hoy son cero -- sigue bloqueado en S5) --
+  es un smoke test directo de `julix/client.py` vía
+  `client._abrir_stream_sdk()`, con autorización explícita del dev lead
+  para gastar dinero real en esta corrida puntual.
+- **S5-GAP-01 (bloqueante) — SIGUE BLOQUEADO.** No es código: falta que
+  Ana Luisa llene `respuesta_esperada` en `eval/banco_casos_vridik.xlsx`
+  (20 casos). Sin esto, `eval/evaluador.py --commit` no tiene nada que
+  evaluar y el GATE de Fase 1 (>=80% aprobación) nunca puede correr.
+- **S6-GAP-01 (media) — CERRADO.** `PROMPTS.md` consolidado, honesto
+  sobre que ningún prompt tiene corrida de evaluación medida todavía
+  (bloqueado en S5).
+- **S7-GAP-01 (alta) — CERRADO.** `julix/service.py::validar_citas_post_generacion()`
+  -- regex extrae citas de norma/artículo del texto ya generado, compara
+  por clave normalizada (no substring crudo) contra
+  `BuiltContext.chunks_incluidos`, marca `[revisar]` como chunk extra al
+  final del stream si hay cita sin respaldo. 7 tests nuevos. Desplegado
+  y verificado en producción.
+
+**Balance final:** de los 7 gaps de la auditoría, 6 cerrados (S1 Fases
+A/B, S2, S3, S4, S6, S7). Solo **S5** sigue abierto, y depende
+enteramente de Ana Luisa, no de más trabajo de código.

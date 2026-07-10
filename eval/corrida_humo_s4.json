@@ -1,0 +1,80 @@
+{
+  "run_id": "s4-humo-20260710T060530Z",
+  "descripcion": "Corrida de humo S4-GAP-01: 3 casos reales x 2 modelos (Sonnet, Haiku), costos comparados.",
+  "total_registros": 6,
+  "costo_total_usd": 0.045962,
+  "registros": [
+    {
+      "caso_id": "UGPP-01",
+      "area": "UGPP",
+      "tarea": "ugpp_demanda",
+      "model": "claude-sonnet-5",
+      "status": "ok",
+      "input_tokens": 181,
+      "output_tokens": 1246,
+      "costo_usd": 0.019233,
+      "latency_ms": 14431,
+      "respuesta_preview": "**Sanción aplicable:** Conforme al Art. 179 de la Ley 1607 de 2012, la UGPP aplica el régimen sancionatorio remitiendo a las normas del Estatuto Tributario, siendo la sanción por inexactitud la equivalente a la prevista para dicho concepto en el ordenamiento tributario.\n\n**Base de cálculo:**\n- Se to"
+    },
+    {
+      "caso_id": "UGPP-01",
+      "area": "UGPP",
+      "tarea": "clasificacion_documento",
+      "model": "claude-haiku-4-5-20251001",
+      "status": "ok",
+      "input_tokens": 152,
+      "output_tokens": 331,
+      "costo_usd": 0.001446,
+      "latency_ms": 4133,
+      "respuesta_preview": "# Sanción por Inexactitud en Autoliquidación de Aportes Parafiscales\n\n## Sanción Aplicable\nSegún el **Art. 179 de la Ley 1607 de 2012**, por inexactitud en la autoliquidación de aportes parafiscales aplica una **sanción por inexactitud**.\n\n## Cálculo de la Sanción\nLa sanción se calcula como un **por"
+    },
+    {
+      "caso_id": "UGPP-02",
+      "area": "UGPP",
+      "tarea": "ugpp_demanda",
+      "model": "claude-sonnet-5",
+      "status": "ok",
+      "input_tokens": 161,
+      "output_tokens": 1106,
+      "costo_usd": 0.017073,
+      "latency_ms": 16449,
+      "respuesta_preview": "**Sanción aplicable (Ley 1607/2012, Art. 178):**\n\nCuando el empleador (aportante) **omite la presentación de la autoliquidación de aportes** al Sistema de Protección Social, estando obligado a hacerlo, la UGPP impone una **sanción del 5% del valor del total de aportes a cargo que debió liquidar y pa"
+    },
+    {
+      "caso_id": "UGPP-02",
+      "area": "UGPP",
+      "tarea": "clasificacion_documento",
+      "model": "claude-haiku-4-5-20251001",
+      "status": "ok",
+      "input_tokens": 136,
+      "output_tokens": 207,
+      "costo_usd": 0.000937,
+      "latency_ms": 3283,
+      "respuesta_preview": "# Sanción por Omisión de Autoliquidación de Aportes\n\nSegún el **Art. 178 de la Ley 1607 de 2012**:\n\n## Sanción Aplicable\n**Multa por omisión de autoliquidación**\n\n## Base de Liquidación\nLa sanción se liquida sobre:\n- **El valor de los aportes no autoliquidados** del período omitido\n\n## Monto de la S"
+    },
+    {
+      "caso_id": "UGPP-03",
+      "area": "UGPP",
+      "tarea": "ugpp_demanda",
+      "model": "claude-sonnet-5",
+      "status": "ok",
+      "input_tokens": 151,
+      "output_tokens": 404,
+      "costo_usd": 0.006513,
+      "latency_ms": 4762,
+      "respuesta_preview": "**Sí es posible.**\n\nConforme al **Artículo 180 de la Ley 1607 de 2012**, el aportante que corrija voluntariamente su autoliquidación de aportes al Sistema de Seguridad Social Integral, **antes de que se profiera el pliego de cargos por parte de la UGPP**, tiene derecho a la **reducción de la sanción"
+    },
+    {
+      "caso_id": "UGPP-03",
+      "area": "UGPP",
+      "tarea": "clasificacion_documento",
+      "model": "claude-haiku-4-5-20251001",
+      "status": "ok",
+      "input_tokens": 125,
+      "output_tokens": 165,
+      "costo_usd": 0.00076,
+      "latency_ms": 2029,
+      "respuesta_preview": "# Respuesta: Sanción Reducida por Corrección Voluntaria\n\nSegún el **Artículo 180 de la Ley 1607 de 2012**, **SÍ es posible acceder a la sanción reducida** si el aportante corrige voluntariamente antes del pliego de cargos.\n\n## Requisito clave:\nLa corrección debe realizarse **antes de que se notifiqu"
+    }
+  ]
+}
