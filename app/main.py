@@ -53,12 +53,12 @@ from api.mensajes_endpoint import router as mensajes_router
 app.include_router(auth_router)
 
 # S2: panel de administración de usuarios (solo rol admin, ver
-# api/admin_endpoint.py:get_current_admin). Reemplaza a
-# api/admin_users_endpoint.py, que esperaba `role` dentro del JWT — S1 nunca
-# lo emite, así que ese router nunca respondía nada distinto de 401 con un
-# token real. api/admin_users_endpoint.py y core/admin_users.py quedan en el
-# repo (y sus tests siguen pasando, arman su propia app FastAPI aislada) pero
-# ya no se montan aquí.
+# api/admin_endpoint.py:get_current_admin). api/admin_users_endpoint.py
+# (esperaba `role` dentro del JWT, que S1 nunca emite -- nunca respondía
+# nada distinto de 401 con un token real) se borró entero en el hardening
+# de S12-13 (endpoint huérfano, nunca se montó acá). core/admin_users.py
+# queda intacto -- api/admin_endpoint.py reusa actividad_usuario()/
+# resetear_password() de ahí.
 app.include_router(admin_router)
 
 # `casos`: entidad propia del despacho legal, independiente del marketplace
@@ -75,10 +75,10 @@ app.include_router(events_router)
 
 @app.on_event("startup")
 async def _conectar_db() -> None:
-    """Abre el pool asyncpg real que api/auth_endpoint.py y
-    api/admin_users_endpoint.py esperan en `request.app.state.db_connection`
-    (un asyncpg.Pool soporta el mismo `fetchrow`/`fetch`/`execute` que una
-    Connection individual, adquiriendo una conexión del pool por llamada)."""
+    """Abre el pool asyncpg real que todos los routers montados esperan en
+    `request.app.state.db_connection` (un asyncpg.Pool soporta el mismo
+    `fetchrow`/`fetch`/`execute` que una Connection individual, adquiriendo
+    una conexión del pool por llamada)."""
     database_url = os.environ.get("DATABASE_URL", "")
     if database_url:
         app.state.db_connection = await asyncpg.create_pool(database_url)

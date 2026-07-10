@@ -7,20 +7,20 @@ simula la unicidad case-insensitive de `email` (CITEXT en Postgres real)
 comparando en minúsculas, y el `RETURNING id` de la migración con UUIDs
 generados localmente.
 
-Además prueba api/admin_users_endpoint.py con FastAPI TestClient: 403 para
-no-admin, 409 para email duplicado, y que crear/reset devuelven la
-contraseña temporal en la respuesta (una sola vez).
+Desmantelamiento de endpoints huérfanos (roadmap S12-13, hardening):
+api/admin_users_endpoint.py se borró entero -- nunca se montó en
+app/main.py (su chequeo de rol esperaba `role` DENTRO del JWT, que S1
+nunca emite; api/admin_endpoint.py es el panel admin real). Este archivo
+dejó de probarlo junto con él; las funciones de core/admin_users.py que
+sí se reusan (`actividad_usuario`/`resetear_password`, vía
+api/admin_endpoint.py) siguen intactas y probadas acá.
 """
 
 from __future__ import annotations
 
-import time
 import uuid
 
-import jwt as pyjwt
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from core.admin_users import (
     EmailDuplicadoError,
@@ -33,8 +33,6 @@ from core.admin_users import (
     listar_usuarios,
     resetear_password,
 )
-
-JWT_SECRET_TEST = "vridik-test-admin-secret-nunca-produccion"
 
 
 class FakeAdminDB:
@@ -256,65 +254,3 @@ async def test_actividad_usuario_retorna_eventos_mas_recientes_primero():
     tipos = [e["event_type"] for e in eventos]
     assert tipos[0] == "user_updated"  # el más reciente primero
     assert "user_created" in tipos
-
-
-# ---------------------------------------------------------------------------
-# Pruebas HTTP (api/admin_users_endpoint.py) — 403 no-admin, 409 duplicado
-# ---------------------------------------------------------------------------
-def _token(role: str, sub: str = "admin-1") -> str:
-    now = int(time.time())
-    return pyjwt.encode({"sub": sub, "role": role, "iat": now, "exp": now + 900}, JWT_SECRET_TEST, algorithm="HS256")
-
-
-@pytest.fixture
-def app_con_router(monkeypatch):
-    import api.admin_users_endpoint as admin_users_endpoint_module
-
-    monkeypatch.setattr(admin_users_endpoint_module, "JWT_SECRET", JWT_SECRET_TEST)
-    app = FastAPI()
-    app.include_router(admin_users_endpoint_module.router)
-    app.state.db_connection = FakeAdminDB()
-    return app
-
-
-def test_endpoint_crear_usuario_sin_rol_admin_responde_403(app_con_router):
-    client = TestClient(app_con_router)
-    resp = client.post(
-        "/admin/users",
-        json={"email": "x@vridik.local", "nombre_completo": "X", "role_codigo": "cliente"},
-        headers={"Authorization": f"Bearer {_token('abogado')}"},
-    )
-    assert resp.status_code == 403
-
-
-def test_endpoint_crear_usuario_admin_devuelve_password_temporal(app_con_router):
-    client = TestClient(app_con_router)
-    resp = client.post(
-        "/admin/users",
-        json={"email": "nuevo@vridik.local", "nombre_completo": "Nuevo", "role_codigo": "cliente"},
-        headers={"Authorization": f"Bearer {_token('admin')}"},
-    )
-    assert resp.status_code == 201
-    body = resp.json()
-    assert body["email"] == "nuevo@vridik.local"
-    assert len(body["password_temporal"]) >= 16
-
-
-def test_endpoint_crear_usuario_email_duplicado_responde_409(app_con_router):
-    client = TestClient(app_con_router)
-    headers = {"Authorization": f"Bearer {_token('admin')}"}
-    payload = {"email": "dup@vridik.local", "nombre_completo": "Dup", "role_codigo": "cliente"}
-    r1 = client.post("/admin/users", json=payload, headers=headers)
-    assert r1.status_code == 201
-    r2 = client.post("/admin/users", json=payload, headers=headers)
-    assert r2.status_code == 409
-
-
-def test_endpoint_listar_usuarios_requiere_admin(app_con_router):
-    client = TestClient(app_con_router)
-    resp = client.get("/admin/users", headers={"Authorization": f"Bearer {_token('cliente')}"})
-    assert resp.status_code == 403
-
-    resp_admin = client.get("/admin/users", headers={"Authorization": f"Bearer {_token('admin')}"})
-    assert resp_admin.status_code == 200
-    assert "usuarios" in resp_admin.json()

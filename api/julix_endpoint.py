@@ -124,11 +124,27 @@ async def _agregar_headers_seguridad(request: Request, call_next):
     """S13 (hardening): headers de seguridad mínimos en cada respuesta.
     No reemplaza un WAF/proxy real (Railway ya termina TLS en el borde),
     pero cierra los gaps más baratos: MIME sniffing, framing (clickjacking)
-    y fuga de Referer hacia otros orígenes."""
+    y fuga de Referer hacia otros orígenes.
+
+    HSTS + CSP (roadmap S12-13, agregado en el hardening de la sesión que
+    cerró S11): Railway sirve siempre HTTPS -- HSTS es seguro sin
+    condicionar a nada. CSP queda en `Content-Security-Policy-Report-Only`
+    (no el header que aplica de verdad) siguiendo la secuencia que pide el
+    roadmap ("Report-Only 2 días → aplicar"): este backend hoy es solo API
+    JSON, no sirve HTML/JS/CSS propios (el mount /uploads que servía
+    archivos estáticos se quitó en el desmantelamiento del marketplace),
+    así que una CSP casi vacía (`default-src 'none'; frame-ancestors
+    'none'`) no puede romper nada -- aplicar directo sería seguro, pero se
+    respeta la secuencia igual por si el roadmap la pide en otro contexto.
+    Nota honesta: todavía no hay un endpoint `report-uri`/`report-to` que
+    junte los reportes de violación -- agregarlo es un paso aparte cuando
+    haga falta, el header solo por sí solo no junta nada todavía."""
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy-Report-Only"] = "default-src 'none'; frame-ancestors 'none'"
     return response
 
 
