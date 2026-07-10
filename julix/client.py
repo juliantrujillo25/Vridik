@@ -74,12 +74,18 @@ else:  # pragma: no cover
 # ---------------------------------------------------------------------------
 # Modelo por tarea — única fuente de verdad (ver README.md)
 #
-# Ajuste de modelo (dev lead, semana 5): se confirma claude-sonnet-5-20250624
-# como modelo de documentos de JuliX. Configurable vía ANTHROPIC_MODEL_JULIX
-# para poder apuntar a otra versión sin tocar código (staging vs. banco de
+# Ajuste de modelo (dev lead, semana 5): se confirma claude-sonnet-5 como
+# modelo de documentos de JuliX. Configurable vía ANTHROPIC_MODEL_JULIX para
+# poder apuntar a otra versión sin tocar código (staging vs. banco de
 # evaluación de S5, por ejemplo).
+#
+# Nota (verificación S7-extra): "claude-sonnet-5-20250624" nunca fue un model
+# ID válido de la API de Anthropic -- causaba 404 not_found_error en toda
+# llamada real a /julix/query, nunca detectado porque el código nunca se
+# había ejercitado contra Claude real hasta ahora. El ID correcto es
+# "claude-sonnet-5" (sin sufijo de fecha).
 # ---------------------------------------------------------------------------
-MODELO_DOCUMENTOS_POR_DEFECTO = os.environ.get("ANTHROPIC_MODEL_JULIX", "claude-sonnet-5-20250624")
+MODELO_DOCUMENTOS_POR_DEFECTO = os.environ.get("ANTHROPIC_MODEL_JULIX", "claude-sonnet-5")
 MODELO_CLASIFICACION_POR_DEFECTO = os.environ.get("ANTHROPIC_MODEL_JULIX_HAIKU", "claude-haiku-4-5-20251001")
 
 MODEL_BY_TASK: dict[str, str] = {

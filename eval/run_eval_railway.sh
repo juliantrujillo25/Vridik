@@ -3,7 +3,7 @@
 # Sprint S5 (banco de evaluación) — corrida en Railway/staging.
 #
 # Qué hace, en orden:
-#   1. Fija el modelo de la corrida a claude-sonnet-5-20250624.
+#   1. Fija el modelo de la corrida a claude-sonnet-5.
 #   2. Corre evaluador.py --dry-run: valida el banco (cuenta cuántos de los
 #      20 casos ya tienen 'respuesta_esperada' llenada por Ana Luisa) sin
 #      llamar a Claude ni escribir en julix_evals.
@@ -28,8 +28,8 @@ echo "=== Vridik/JuliX — corrida del banco de evaluación (S5) ==="
 # (ver julix/client.py, MODELO_DOCUMENTOS_POR_DEFECTO) — se exportan ambas
 # para que la corrida quede fijada a Sonnet 5 sin depender de cuál de los
 # dos nombres termine leyendo el código en cada punto.
-export ANTHROPIC_MODEL=claude-sonnet-5-20250624
-export ANTHROPIC_MODEL_JULIX=claude-sonnet-5-20250624
+export ANTHROPIC_MODEL=claude-sonnet-5
+export ANTHROPIC_MODEL_JULIX=claude-sonnet-5
 
 echo "--- Paso 1/3: dry-run (validación del banco) ---"
 python eval/evaluador.py --dry-run

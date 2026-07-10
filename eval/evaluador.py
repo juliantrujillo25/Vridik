@@ -8,7 +8,7 @@ Qué hace:
   2. Para cada caso CON patrón oro ya llenado por Ana Luisa (columna
      `respuesta_esperada`, ver eval/guia_abogada.md), genera la respuesta de
      JuliX usando el prompt real de producción (julix/prompts/) y el modelo
-     confirmado `claude-sonnet-5-20250624` (julix/client.py).
+     confirmado `claude-sonnet-5` (julix/client.py).
   3. Le pide a un "Claude juez" (mismo cliente, tarea `evaluacion_juez`) que
      califique 0-5 la respuesta de JuliX contra el patrón oro y la
      `norma_clave`, evaluando: precisión normativa, ausencia de alucinación
