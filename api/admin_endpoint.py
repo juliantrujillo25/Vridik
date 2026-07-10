@@ -79,6 +79,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from api.auth_endpoint import _claims_de_bearer, _get_db
 from core.admin import change_role, create_user, ensure_role_column, list_users
+from core.admin_users import UsuarioNoEncontradoError, actividad_usuario, resetear_password
 from core.auth import hash_password
 from core.order import ensure_order_tables, list_all_orders, update_status
 from core.permissions import check_owner
@@ -224,6 +225,32 @@ async def patch_user_role(
     if actualizado is None:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return actualizado
+
+
+@router.get("/users/{user_id}/actividad")
+async def get_user_actividad(
+    user_id: str, request: Request, limite: int = 50, admin: dict = Depends(get_current_admin),
+):
+    """S2-GAP-01 (AUDITORIA_PARA_CLAUDE.md): lee auth_events del usuario,
+    más recientes primero (core.admin_users.actividad_usuario, ya
+    implementado y probado -- solo faltaba montarlo en el router real)."""
+    conn = _get_db(request)
+    return await actividad_usuario(conn, user_id=user_id, limite=limite)
+
+
+@router.post("/users/{user_id}/reset-password")
+async def post_user_reset_password(
+    user_id: str, request: Request, admin: dict = Depends(get_current_admin),
+):
+    """S2-GAP-01: contraseña temporal nueva + revoca refresh tokens activos
+    + fuerza must_change. La password_temporal se devuelve en texto plano
+    UNA sola vez -- nunca se puede volver a leer después de esta respuesta."""
+    conn = _get_db(request)
+    try:
+        resultado = await resetear_password(conn, actor_id=str(admin["id"]), user_id=user_id)
+    except UsuarioNoEncontradoError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"user_id": resultado.user_id, "password_temporal": resultado.password_temporal}
 
 
 @router.post("/products", status_code=201)

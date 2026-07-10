@@ -147,6 +147,10 @@ class FakeAdminDB:
         elif "UPDATE users SET must_change = true" in query:
             (user_id,) = args
             self.users[user_id]["must_change"] = True
+        elif "UPDATE users SET hashed_password" in query:
+            user_id, password_hash = args
+            self.users[user_id]["hashed_password"] = password_hash
+            self.users[user_id]["must_change"] = True
         else:
             raise AssertionError(f"execute no manejado en el fake: {query!r} args={args}")
         return "OK"

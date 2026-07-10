@@ -238,7 +238,15 @@ async def resetear_password(conn, *, actor_id: str, user_id: str) -> ResultadoRe
     """Genera una nueva contraseña temporal, la marca `is_temporary=true`
     (fuerza cambio en el próximo login vía `must_change`) y revoca los
     refresh tokens activos — una sesión ya abierta con la contraseña
-    anterior no debe sobrevivir a un reset administrativo."""
+    anterior no debe sobrevivir a un reset administrativo.
+
+    Escribe la contraseña nueva tanto en `user_credentials` como en
+    `users.hashed_password` (dual-write, mismo patrón de Fase B en
+    api/auth_endpoint.py) -- POST /auth/login todavía lee
+    `users.hashed_password` como fuente real (el cutover completo a
+    `user_credentials` es Fase C); sin esto el reset no tendría efecto en
+    el login real. El upsert en `user_credentials` cubre también usuarios
+    creados por api/admin_endpoint.py::post_users, que hoy no escribe ahí."""
     fila = await conn.fetchrow("SELECT id FROM users WHERE id = $1 AND deleted_at IS NULL", user_id)
     if fila is None:
         raise UsuarioNoEncontradoError(f"Usuario no encontrado: {user_id}")
@@ -248,13 +256,17 @@ async def resetear_password(conn, *, actor_id: str, user_id: str) -> ResultadoRe
 
     await conn.execute(
         """
-        UPDATE user_credentials
+        INSERT INTO user_credentials (user_id, password_hash, hash_algorithm, is_temporary, updated_by)
+        VALUES ($1, $2, 'bcrypt', true, $3)
+        ON CONFLICT (user_id) DO UPDATE
         SET password_hash = $2, hash_algorithm = 'bcrypt', is_temporary = true, updated_at = now(), updated_by = $3
-        WHERE user_id = $1
         """,
         user_id, password_hash, actor_id,
     )
-    await conn.execute("UPDATE users SET must_change = true, updated_at = now() WHERE id = $1", user_id)
+    await conn.execute(
+        "UPDATE users SET hashed_password = $2, must_change = true, updated_at = now() WHERE id = $1",
+        user_id, password_hash,
+    )
     await _revocar_refresh_tokens(conn, user_id=user_id, motivo="admin_reset")
     await _registrar_evento(conn, user_id=user_id, actor_id=actor_id, event_type="password_reset")
 
