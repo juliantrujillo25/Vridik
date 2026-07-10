@@ -33,6 +33,14 @@ refresh_tokens.py) sobre migrations/005_auth_roles_refresh_tokens.sql.
   - register/login/refresh/logout escriben auth_events ('user_created',
     'login_success', 'login_failed', 'token_refresh',
     'refresh_reuse_detected', 'logout').
+
+Roadmap Semana 12-13 (hardening, core/rate_limit.py): POST /auth/login
+rechaza con 429 ANTES de verificar la contraseña si `email`+IP acumuló
+>= 10 `login_failed` en 15 min; POST /auth/2fa/login hace lo mismo por
+`user_id` a partir de 5 códigos TOTP inválidos en 15 min (ahí ya se
+conoce al usuario con certeza, no hace falta IP). La IP se lee de
+`X-Forwarded-For` (Railway está detrás de un proxy) con fallback a
+`request.client.host`.
 """
 
 from __future__ import annotations
@@ -56,6 +64,7 @@ from core.auth import (
     verify_password,
 )
 from core.auth_events import registrar_evento
+from core.rate_limit import excede_limite_login, excede_limite_totp
 from core.refresh_tokens import (
     ReusoDetectado,
     emitir_refresh_token,
@@ -119,6 +128,18 @@ def _claims_de_bearer(authorization: str | None) -> dict:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
+def _client_ip(request: Request) -> str | None:
+    """Railway está detrás de un proxy -- `request.client.host` ahí adentro
+    es la IP interna del proxy, no la del cliente real. `X-Forwarded-For`
+    puede traer una cadena "cliente, proxy1, proxy2"; el primer valor es el
+    más cercano al cliente original. Sin ese header (tests, entornos sin
+    proxy), cae a `request.client.host`."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
 def _qr_base64(otpauth_uri: str) -> str:
     imagen = qrcode.make(otpauth_uri)
     buffer = io.BytesIO()
@@ -171,6 +192,12 @@ async def login(payload: LoginRequest, request: Request):
     await ensure_users_table(conn)
     await ensure_totp_columns(conn)
 
+    ip_address = _client_ip(request)
+    if await excede_limite_login(conn, email=payload.email, ip_address=ip_address):
+        raise HTTPException(
+            status_code=429, detail="Demasiados intentos fallidos. Probá de nuevo en unos minutos.",
+        )
+
     # Fase C (S1-GAP-01): password_hash se lee de user_credentials, no de
     # users.hashed_password -- esa columna se queda (nunca se suelta, no
     # hay DDL destructivo) pero deja de ser la fuente real. LEFT JOIN, no
@@ -188,11 +215,13 @@ async def login(payload: LoginRequest, request: Request):
     )
     if fila is None or not fila["hashed_password"] or not verify_password(payload.password, fila["hashed_password"]):
         # user_id=None cuando el email ni existe -- no hay a qué usuario
-        # referenciar, pero el intento igual queda en la bitácora.
+        # referenciar, pero el intento igual queda en la bitácora (y cuenta
+        # para el rate limit de arriba, sea o no un email real).
         await registrar_evento(
             conn, event_type="login_failed",
             user_id=str(fila["id"]) if fila else None,
             metadata={"email": payload.email},
+            ip_address=ip_address,
         )
         raise HTTPException(status_code=401, detail="Email o contraseña inválidos")
     if not fila["is_active"]:
@@ -203,7 +232,7 @@ async def login(payload: LoginRequest, request: Request):
         temp_token = create_temp_2fa_token(sub=user_id, email=payload.email)
         return {"requires_2fa": True, "temp_token": temp_token}
 
-    await registrar_evento(conn, event_type="login_success", user_id=user_id)
+    await registrar_evento(conn, event_type="login_success", user_id=user_id, ip_address=ip_address)
     token = create_jwt(sub=user_id, email=payload.email)
     refresh_token, _ = await emitir_refresh_token(conn, user_id=user_id)
     return {"access_token": token, "refresh_token": refresh_token, "token_type": "bearer"}
@@ -243,12 +272,21 @@ async def login_2fa(payload: Login2FARequest, request: Request):
 
     user_id = temp_claims["sub"]
     email = temp_claims.get("email", "")
+    ip_address = _client_ip(request)
+
+    if await excede_limite_totp(conn, user_id=user_id):
+        raise HTTPException(
+            status_code=429, detail="Demasiados códigos inválidos. Probá de nuevo en unos minutos.",
+        )
+
     valido = await verificar_login_totp(conn, user_id=user_id, codigo=payload.code)
     if not valido:
-        await registrar_evento(conn, event_type="login_failed", user_id=user_id, metadata={"paso": "2fa"})
+        await registrar_evento(
+            conn, event_type="login_failed", user_id=user_id, metadata={"paso": "2fa"}, ip_address=ip_address,
+        )
         raise HTTPException(status_code=401, detail="Código 2FA inválido")
 
-    await registrar_evento(conn, event_type="login_success", user_id=user_id, metadata={"paso": "2fa"})
+    await registrar_evento(conn, event_type="login_success", user_id=user_id, metadata={"paso": "2fa"}, ip_address=ip_address)
     token = create_jwt(sub=user_id, email=email)
     refresh_token, _ = await emitir_refresh_token(conn, user_id=user_id)
     return {"access_token": token, "refresh_token": refresh_token, "token_type": "bearer"}

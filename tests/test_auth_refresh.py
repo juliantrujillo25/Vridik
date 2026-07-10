@@ -9,9 +9,12 @@ auth_events -- mismo estilo que el resto de tests/test_*.py.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
+
+from core.rate_limit import MAX_FALLOS_LOGIN
 
 os.environ.setdefault("JWT_SECRET", "vridik-test-secret-nunca-usar-en-produccion")
 
@@ -39,9 +42,12 @@ class _FakeAuthRefreshDB:
             user_id, password_hash = args
             self.user_credentials[user_id] = {"user_id": user_id, "password_hash": password_hash}
         elif q.startswith("INSERT INTO auth_events"):
-            user_id, actor_id, event_type, metadata = args
+            user_id, actor_id, event_type, metadata, ip_address, user_agent = args
             self.auth_events.append(
-                {"user_id": user_id, "actor_id": actor_id, "event_type": event_type, "metadata": metadata},
+                {
+                    "user_id": user_id, "actor_id": actor_id, "event_type": event_type, "metadata": metadata,
+                    "ip_address": ip_address, "user_agent": user_agent,
+                },
             )
         elif "INSERT INTO refresh_tokens" in q:
             user_id, token_hash, family_id, expires_at = args
@@ -107,6 +113,32 @@ class _FakeAuthRefreshDB:
             return None
         return None
 
+    async def fetchval(self, query: str, *args):
+        """Cuenta eventos 'login_failed' para core/rate_limit.py — no
+        implementa la ventana de VENTANA_MINUTOS (los tests corren en
+        milisegundos, siempre caen adentro) ni el `IS NOT DISTINCT FROM`
+        de Postgres para ip_address (acá alcanza con == de Python, None
+        incluido)."""
+        q = query.strip()
+        if "auth_events" in q and "event_type = 'login_failed'" in q and "metadata->>'email'" in q:
+            email, ip_address, _ventana = args
+            return sum(
+                1 for e in self.auth_events
+                if e["event_type"] == "login_failed"
+                and json.loads(e["metadata"]).get("email") == email
+                and e["ip_address"] == ip_address
+                and json.loads(e["metadata"]).get("paso") != "2fa"
+            )
+        if "auth_events" in q and "event_type = 'login_failed'" in q and "metadata->>'paso' = '2fa'" in q:
+            user_id, _ventana = args
+            return sum(
+                1 for e in self.auth_events
+                if e["event_type"] == "login_failed"
+                and e["user_id"] == user_id
+                and json.loads(e["metadata"]).get("paso") == "2fa"
+            )
+        return 0
+
 
 @pytest.fixture
 def db():
@@ -145,6 +177,36 @@ def test_login_fallido_registra_evento(db, client):
     r = client.post("/auth/login", json={"email": "login2@vridik.local", "password": "incorrecta"})
     assert r.status_code == 401
     assert any(e["event_type"] == "login_failed" for e in db.auth_events)
+
+
+def test_login_bloqueado_tras_MAX_FALLOS_LOGIN_intentos(db, client):
+    """Roadmap Semana 12-13: 10 fallos de contraseña en 15 min para el mismo
+    email+IP bloquean el siguiente intento con 429 -- incluso si ese
+    siguiente intento trae la contraseña correcta (el bloqueo es previo a
+    verificarla)."""
+    email = "login3@vridik.local"
+    password = "ClaveSegura123"
+    client.post("/auth/register", json={"email": email, "password": password})
+
+    for _ in range(MAX_FALLOS_LOGIN):
+        r = client.post("/auth/login", json={"email": email, "password": "incorrecta"})
+        assert r.status_code == 401
+
+    r = client.post("/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 429, r.text
+
+
+def test_login_email_distinto_no_comparte_el_limite(db, client):
+    """El límite es por email+IP -- fallar 10 veces con un email no debe
+    bloquear el login (correcto) de otro email desde la misma IP."""
+    client.post("/auth/register", json={"email": "login4a@vridik.local", "password": "ClaveSegura123"})
+    client.post("/auth/register", json={"email": "login4b@vridik.local", "password": "ClaveSegura123"})
+
+    for _ in range(MAX_FALLOS_LOGIN):
+        client.post("/auth/login", json={"email": "login4a@vridik.local", "password": "incorrecta"})
+
+    r = client.post("/auth/login", json={"email": "login4b@vridik.local", "password": "ClaveSegura123"})
+    assert r.status_code == 200, r.text
 
 
 def test_refresh_rota_el_token_y_emite_access_token_nuevo(db, client):

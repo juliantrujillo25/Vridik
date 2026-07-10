@@ -171,16 +171,18 @@ async def test_logout_revoca_refresh_tokens(db, seeded_users):
 
 
 # ---------------------------------------------------------------------------
-# 10. Rate-limit placeholder (S12 lo implementa; aquí se fija el contrato)
+# 10. Rate-limit: contrato de S12 (hardening) — implementado en
+#     core/rate_limit.py, wireado en api/auth_endpoint.py::login()/
+#     login_2fa(). Ver tests/test_rate_limit.py (contra PostgreSQL real) y
+#     tests/test_auth_refresh.py (wiring HTTP del 429) para la prueba de
+#     comportamiento; acá solo se fija que las constantes reales no se
+#     corrieron sin querer.
 # ---------------------------------------------------------------------------
-def test_rate_limit_placeholder_contrato_login():
-    """Contrato de S12 (hardening): login 10 fallos/15 min por email+IP.
-    Este test es un placeholder que documenta el umbral esperado — el
-    middleware real de rate limiting se implementa en S12; aquí solo se
-    fija la constante para que S12 no la redefina distinto sin romper CI."""
-    MAX_FALLOS_LOGIN = 10
-    VENTANA_MINUTOS = 15
+def test_rate_limit_contrato_login():
+    from core.rate_limit import MAX_FALLOS_LOGIN, MAX_FALLOS_TOTP, VENTANA_MINUTOS
+
     assert MAX_FALLOS_LOGIN == 10
+    assert MAX_FALLOS_TOTP == 5
     assert VENTANA_MINUTOS == 15
 
 

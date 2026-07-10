@@ -139,6 +139,52 @@ auditoría).
 A/B, S2, S3, S4, S6, S7). Solo **S5** sigue abierto, y depende
 enteramente de Ana Luisa, no de más trabajo de código.
 
+## Continuación del roadmap (post-desmantelamiento del marketplace)
+
+Con el marketplace fuera (ver "Consolidación de producto" abajo), se
+retomó `vridik_roadmap.md` (única fuente de verdad de fase/sprint) más
+allá de los gaps S1-S7 de la auditoría. Estado real relevado antes de
+elegir por dónde seguir:
+
+- **S8-9 (corpus 85→400+ chunks)** — pipeline listo (`rag/ingest_ugpp.py`,
+  `rag/quality_gate.py`), pero `data/corpus_manifest.csv` solo tiene ~20
+  filas. Bloqueado en selección de documentos por Ana Luisa, igual que S5
+  -- no es trabajo de código puro.
+- **S10 (export PDF)** — cerrado (ver nota de `pdf_jobs` en
+  "Consolidación de producto").
+- **S11 (mensajería en tiempo real, SSE)** — solo existe un contrato fake
+  (`tests/test_mensajes.py` contra `FakeMensajesService`,
+  `tests/support/fakes.py`) -- no hay `api/mensajes_endpoint.py` ni
+  `core/mensajes.py` reales, ni canal de eventos `/api/events/stream`.
+  Feature grande y nueva, no arrancada.
+- **S12-13 (2FA + hardening + cierre)** — 2FA TOTP completo y en
+  producción (`/auth/2fa/setup`, `/auth/2fa/verify`, `/auth/2fa/login`);
+  headers de seguridad + CORS fail-closed ya testeados
+  (`tests/test_api_hardening.py`). Faltaba rate limiting de login por
+  email+IP -- gap chico y acotado, elegido para cerrar primero.
+
+**Rate limiting de login (S12-13) — CERRADO.** `core/rate_limit.py`
+(nuevo): `excede_limite_login()` (10 fallos de contraseña/15 min por
+email+IP) y `excede_limite_totp()` (5 códigos TOTP inválidos/15 min por
+user_id) -- ambas cuentan directo sobre `auth_events`, sin tabla de
+contadores nueva ni caché en memoria (se hubiera perdido en cada
+redeploy). `core/auth_events.py::registrar_evento()` ahora escribe
+`ip_address`/`user_agent` (las columnas ya existían en el schema desde
+Fase A, nunca se llenaban). `api/auth_endpoint.py::login()`/`login_2fa()`
+chequean el límite ANTES de verificar contraseña/código -- un intento
+bloqueado ni gasta bcrypt ni revela si el email existe. IP leída de
+`X-Forwarded-For` (Railway detrás de proxy) con fallback a
+`request.client.host`.
+
+Verificación en dos capas: `tests/test_rate_limit.py` (nuevo) prueba las
+queries SQL directo contra PostgreSQL real (fixture `db`, real en CI
+-- INET/JSONB/`IS NOT DISTINCT FROM` no se pueden confiar a un fake);
+`tests/test_auth_refresh.py` prueba el wiring HTTP del 429 sobre el fake
+existente. El placeholder de S12 en `tests/test_auth.py`
+(`test_rate_limit_placeholder_contrato_login`) se actualizó para
+verificar las constantes reales de `core/rate_limit.py` en vez de
+constantes locales sueltas.
+
 ## Consolidación de producto (post-auditoría)
 
 Decisión del dev lead: **el copiloto legal (JuliX/RAG) es el producto
