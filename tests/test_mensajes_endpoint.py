@@ -36,6 +36,7 @@ class _FakeMensajesDB:
         self.mensajes: dict[str, dict] = {}
         self.conversation_reads: dict[tuple[str, str], str] = {}
         self.notificaciones: list[tuple[str, str]] = []  # (canal, payload)
+        self.user_events: list[dict] = []
 
     def seed_user(self, *, email: str, role: str = "cliente") -> dict:
         user_id = str(uuid.uuid4())
@@ -64,6 +65,13 @@ class _FakeMensajesDB:
 
     async def fetchrow(self, query: str, *args):
         q = query.strip()
+        if q.startswith("INSERT INTO user_events"):
+            user_id, event_type, payload = args
+            evento_id = len(self.user_events) + 1
+            self.user_events.append(
+                {"id": evento_id, "user_id": user_id, "event_type": event_type, "payload": payload},
+            )
+            return {"id": evento_id}
         if "SELECT id, email, role FROM users WHERE id" in q:
             (user_id,) = args
             u = self.users.get(user_id)

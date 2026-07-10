@@ -250,6 +250,38 @@ siempre hace ROLLBACK, así que ese fixture no puede probar la entrega
 real). `tests/test_mensajes_endpoint.py` prueba que `crear_mensaje_endpoint`
 notifica al destinatario correcto (fake).
 
+**S11 Fase C — CERRADA: reconexión real.** `user_events` (nuevo,
+`core/events.py::ensure_events_table`): buffer con TTL de 24h, purgado
+oportunista en cada `notificar_evento()` (sin cron nuevo -- "cero infra
+nueva" sigue aplicando). `notificar_evento()` ahora persiste el evento
+(`INSERT ... RETURNING id`) ANTES de mandar el NOTIFY, y ese mismo `id`
+viaja en el payload y en el campo `id:` de SSE -- es el valor que el
+cliente devuelve como `Last-Event-ID` al reconectar.
+
+`api/events_endpoint.py`: si el cliente manda `Last-Event-ID` (header
+estándar de SSE, o `?last_event_id=` para debug manual con curl) y ese id
+todavía está en el buffer (`core.events.existe_evento`), se reproducen
+en orden los eventos posteriores ANTES de seguir con el stream en vivo.
+Si no está (TTL vencido, o nunca existió para este usuario), se manda un
+único evento `event: resync` -- el cliente debe asumir que su estado
+puede estar desactualizado y volver a pedir todo por REST.
+
+Orden importante documentado en el propio archivo: `add_listener()` se
+activa ANTES de leer el buffer, así que un evento que llegue justo en ese
+momento no se pierde -- puede aparecer duplicado (una vez en el replay,
+otra vez en vivo); el cliente real es quien debe descartar por `id`
+cualquier evento ya visto, esto es responsabilidad del futuro frontend,
+no de este backend.
+
+`tests/test_events.py` suma: purga del buffer (fake) y, contra
+PostgreSQL real, un test de replay (`listar_eventos_desde` trae solo lo
+posterior a un id dado) y uno de resync (`existe_evento` da `False` para
+un id que nunca existió). No se escribió un test HTTP-level de streaming
+indefinido contra un fake (TestClient no maneja bien generators SSE que
+nunca terminan de forma confiable) -- la lógica de negocio que importa ya
+está probada contra Postgres real; el endpoint es una capa fina de
+formateo encima.
+
 ## Consolidación de producto (post-auditoría)
 
 Decisión del dev lead: **el copiloto legal (JuliX/RAG) es el producto

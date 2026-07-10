@@ -1,12 +1,13 @@
 """
 Vridik — tests/test_events.py
-Roadmap Semana 11, Fase B: prueba core/events.py en dos capas.
+Roadmap Semana 11: prueba core/events.py en dos capas.
 
-1. Fake mínimo: notificar_evento() arma la query/payload correctos --
-   rápido, sin red, corre siempre.
+1. Fake mínimo: notificar_evento()/existe_evento()/listar_eventos_desde()
+   arman las queries/payloads correctos -- rápido, sin red, corre siempre.
 2. PostgreSQL real (conexiones propias con asyncpg.connect, NUNCA la
    fixture `db` de conftest.py): confirma que un NOTIFY real efectivamente
-   llega a un LISTEN real -- se salta sin TEST_DATABASE_URL, igual que el
+   llega a un LISTEN real, y que el buffer user_events (Fase C) persiste y
+   se puede leer de vuelta -- se salta sin TEST_DATABASE_URL, igual que el
    resto de tests que necesitan Postgres real.
 
 Por qué no usar la fixture `db` para el caso 2: `db` envuelve cada test en
@@ -25,7 +26,7 @@ import os
 
 import pytest
 
-from core.events import canal_de_usuario, notificar_evento
+from core.events import canal_de_usuario, existe_evento, listar_eventos_desde, notificar_evento
 
 try:
     import asyncpg
@@ -36,32 +37,55 @@ except ImportError:  # pragma: no cover
 class _FakeNotifyConn:
     def __init__(self):
         self.llamadas: list[tuple[str, tuple]] = []
+        self.user_events: list[dict] = []
 
     async def execute(self, query: str, *args):
         self.llamadas.append((query, args))
         return "SELECT 1"
 
+    async def fetchrow(self, query: str, *args):
+        self.llamadas.append((query, args))
+        if query.strip().startswith("INSERT INTO user_events"):
+            user_id, event_type, payload = args
+            evento_id = len(self.user_events) + 1
+            self.user_events.append({"id": evento_id, "user_id": user_id, "event_type": event_type, "payload": payload})
+            return {"id": evento_id}
+        return None
+
 
 @pytest.mark.asyncio
-async def test_notificar_evento_arma_pg_notify_con_canal_y_payload_json():
+async def test_notificar_evento_arma_pg_notify_con_canal_id_y_payload_json():
     conn = _FakeNotifyConn()
-    await notificar_evento(conn, user_id="user-123", tipo="message.new", payload={"caso_id": "caso-abc"})
+    evento_id = await notificar_evento(conn, user_id="user-123", tipo="message.new", payload={"caso_id": "caso-abc"})
 
-    assert len(conn.llamadas) == 1
-    query, (canal, cuerpo) = conn.llamadas[0]
-    assert "pg_notify" in query
+    assert evento_id == 1
+    llamadas_notify = [c for c in conn.llamadas if "pg_notify" in c[0]]
+    assert len(llamadas_notify) == 1
+    _, (canal, cuerpo) = llamadas_notify[0]
     assert canal == canal_de_usuario("user-123")
     data = json.loads(cuerpo)
-    assert data == {"type": "message.new", "caso_id": "caso-abc"}
+    assert data == {"id": 1, "type": "message.new", "caso_id": "caso-abc"}
 
 
 @pytest.mark.asyncio
-async def test_notificar_evento_sin_payload_solo_lleva_type():
+async def test_notificar_evento_sin_payload_solo_lleva_id_y_type():
     conn = _FakeNotifyConn()
     await notificar_evento(conn, user_id="user-456", tipo="pdf.ready")
 
-    _, (_, cuerpo) = conn.llamadas[0]
-    assert json.loads(cuerpo) == {"type": "pdf.ready"}
+    _, (_, cuerpo) = [c for c in conn.llamadas if "pg_notify" in c[0]][0]
+    data = json.loads(cuerpo)
+    assert data["type"] == "pdf.ready"
+    assert "id" in data
+
+
+@pytest.mark.asyncio
+async def test_notificar_evento_purga_el_buffer_vencido():
+    conn = _FakeNotifyConn()
+    await notificar_evento(conn, user_id="user-789", tipo="message.new")
+
+    llamadas_delete = [c for c in conn.llamadas if c[0].strip().startswith("DELETE FROM user_events")]
+    assert len(llamadas_delete) == 1
+    assert "24" in llamadas_delete[0][0]
 
 
 def test_canal_de_usuario_es_estable_y_distinto_por_usuario():
@@ -70,33 +94,78 @@ def test_canal_de_usuario_es_estable_y_distinto_por_usuario():
 
 
 # ---------------------------------------------------------------------------
-# PostgreSQL real: NOTIFY/LISTEN de punta a punta.
+# PostgreSQL real: NOTIFY/LISTEN de punta a punta + buffer de reconexión.
 # ---------------------------------------------------------------------------
-@pytest.mark.asyncio
-async def test_notify_real_llega_al_listener_real():
+def _requiere_postgres_real() -> str:
     if asyncpg is None:
         pytest.skip("asyncpg no instalado — ver requirements-test.txt")
     url = os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
     if not url:
         pytest.skip("TEST_DATABASE_URL no configurado: se requiere PostgreSQL real")
+    return url
+
+
+@pytest.mark.asyncio
+async def test_notify_real_llega_al_listener_real():
+    url = _requiere_postgres_real()
 
     escucha = await asyncpg.connect(url)
     emisor = await asyncpg.connect(url)
     try:
+        await emisor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_events (
+                id BIGSERIAL PRIMARY KEY, user_id UUID NOT NULL, event_type TEXT NOT NULL,
+                payload JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
         cola: asyncio.Queue[str] = asyncio.Queue()
-        canal = canal_de_usuario("user-test-notify-real")
+        canal = canal_de_usuario("11111111-1111-1111-1111-111111111111")
 
         def _callback(connection, pid, channel, payload):
             cola.put_nowait(payload)
 
         await escucha.add_listener(canal, _callback)
 
-        await notificar_evento(emisor, user_id="user-test-notify-real", tipo="message.new", payload={"x": 1})
+        evento_id = await notificar_evento(
+            emisor, user_id="11111111-1111-1111-1111-111111111111", tipo="message.new", payload={"x": 1},
+        )
 
         payload = await asyncio.wait_for(cola.get(), timeout=5.0)
-        assert json.loads(payload) == {"type": "message.new", "x": 1}
+        assert json.loads(payload) == {"id": evento_id, "type": "message.new", "x": 1}
 
         await escucha.remove_listener(canal, _callback)
     finally:
         await escucha.close()
         await emisor.close()
+
+
+@pytest.mark.asyncio
+async def test_reconexion_real_replay_y_resync():
+    url = _requiere_postgres_real()
+    user_id = "22222222-2222-2222-2222-222222222222"
+
+    conn = await asyncpg.connect(url)
+    try:
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_events (
+                id BIGSERIAL PRIMARY KEY, user_id UUID NOT NULL, event_type TEXT NOT NULL,
+                payload JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        primero = await notificar_evento(conn, user_id=user_id, tipo="message.new", payload={"n": 1})
+        segundo = await notificar_evento(conn, user_id=user_id, tipo="message.new", payload={"n": 2})
+
+        # Replay: reconectando desde "primero", debe traer solo "segundo".
+        assert await existe_evento(conn, user_id=user_id, evento_id=primero) is True
+        pendientes = await listar_eventos_desde(conn, user_id=user_id, desde_id=primero)
+        assert [p["id"] for p in pendientes] == [segundo]
+
+        # Resync: un id que nunca existió para este usuario.
+        assert await existe_evento(conn, user_id=user_id, evento_id=999_999_999) is False
+    finally:
+        await conn.execute("DELETE FROM user_events WHERE user_id = $1", user_id)
+        await conn.close()
