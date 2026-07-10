@@ -159,19 +159,6 @@ async def list_orders_by_user(db_connection, *, user_id: str, skip: int = 0, lim
     return [dict(f) for f in filas]
 
 
-async def list_all_orders(db_connection, *, skip: int = 0, limit: int = 20, status: str | None = None) -> list[dict]:
-    filas = await db_connection.fetch(
-        f"""
-        SELECT {_ORDER_COLUMNAS} FROM orders
-        WHERE ($1::text IS NULL OR status = $1)
-        ORDER BY created_at DESC
-        OFFSET $2 LIMIT $3
-        """,
-        status, skip, limit,
-    )
-    return [dict(f) for f in filas]
-
-
 async def get_order(db_connection, order_id: str) -> dict | None:
     fila = await db_connection.fetchrow(f"SELECT {_ORDER_COLUMNAS} FROM orders WHERE id = $1", order_id)
     return dict(fila) if fila is not None else None

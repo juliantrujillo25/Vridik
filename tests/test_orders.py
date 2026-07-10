@@ -1,8 +1,14 @@
 """
 Vridik — tests/test_orders.py (Sprint S4)
-Prueba api/orders_endpoint.py (checkout/me/detalle) y las rutas
-/admin/orders de api/admin_endpoint.py end-to-end (FastAPI TestClient) sobre
-un fake mínimo de conexión asyncpg — mismo estilo que tests/test_products.py.
+Prueba api/orders_endpoint.py (checkout/me/detalle) end-to-end (FastAPI
+TestClient) sobre un fake mínimo de conexión asyncpg — mismo estilo que
+tests/test_products.py.
+
+Desmantelamiento del marketplace (fase 2): las rutas /admin/orders (listar
+todas/cambiar status) se quitaron de api/admin_endpoint.py. La lógica de
+`core.order.update_status()` (incluye restaurar stock al cancelar) sigue
+viva porque api/payments_endpoint.py la llama al confirmar un pago Wompi —
+se prueba acá directo contra el fake, sin pasar por ninguna ruta HTTP.
 """
 
 from __future__ import annotations
@@ -11,17 +17,16 @@ import os
 import uuid
 
 # Igual que tests/test_auth.py, test_admin.py, test_products.py: JWT_SECRET
-# debe existir ANTES de importar core.auth (vía api.admin_endpoint/
-# api.orders_endpoint).
+# debe existir ANTES de importar core.auth (vía api.orders_endpoint).
 os.environ.setdefault("JWT_SECRET", "vridik-test-secret-nunca-usar-en-produccion")
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from api.admin_endpoint import router as admin_router
 from api.orders_endpoint import router as orders_router
 from core.auth import create_jwt
+from core.order import update_status
 
 
 class _DummyTx:
@@ -144,7 +149,6 @@ def orders_db():
 @pytest.fixture
 def orders_client(orders_db):
     app = FastAPI()
-    app.include_router(admin_router)
     app.include_router(orders_router)
     app.state.db_connection = orders_db
     return TestClient(app)
@@ -219,23 +223,13 @@ def test_user_cannot_see_other_order(orders_db, orders_client):
     assert r.status_code == 403
 
 
-def test_admin_can_list_all_orders(orders_db, orders_client):
-    admin = orders_db.seed_user(email="admin_e@vridik.local", role="admin")
-    seller = orders_db.seed_user(email="seller_e@vridik.local", role="abogado")
-    buyer = orders_db.seed_user(email="buyer_e@vridik.local", role="abogado")
-    producto = orders_db.seed_product(seller_id=seller["id"], sku="SKU-E", stock=10)
-
-    orders_client.post(
-        "/orders/checkout", json={"items": [{"product_id": producto["id"], "quantity": 1}]},
-        headers={"Authorization": f"Bearer {_token_de(buyer)}"},
-    )
-    r = orders_client.get("/admin/orders", headers={"Authorization": f"Bearer {_token_de(admin)}"})
-    assert r.status_code == 200, r.text
-    assert len(r.json()) == 1
-
-
-def test_admin_can_update_status_and_restore_stock_on_cancel(orders_db, orders_client):
-    admin = orders_db.seed_user(email="admin_f@vridik.local", role="admin")
+async def test_update_status_cancelled_restaura_stock(orders_db, orders_client):
+    """core.order.update_status() ya no se llama desde ninguna ruta HTTP
+    (la ruta admin que la exponía se quitó en la fase 2 del desmantelamiento
+    del marketplace), pero la función sigue viva -- la llama
+    api/payments_endpoint.py para marcar 'paid' al confirmar un pago Wompi.
+    Se prueba directo contra el fake para no perder cobertura del branch de
+    restaurar stock al cancelar."""
     seller = orders_db.seed_user(email="seller_f@vridik.local", role="abogado")
     buyer = orders_db.seed_user(email="buyer_f@vridik.local", role="abogado")
     producto = orders_db.seed_product(seller_id=seller["id"], sku="SKU-F", stock=10)
@@ -247,10 +241,6 @@ def test_admin_can_update_status_and_restore_stock_on_cancel(orders_db, orders_c
     order_id = r.json()["order_id"]
     assert orders_db.products[producto["id"]]["stock"] == 6
 
-    r = orders_client.patch(
-        f"/admin/orders/{order_id}/status", json={"status": "cancelled"},
-        headers={"Authorization": f"Bearer {_token_de(admin)}"},
-    )
-    assert r.status_code == 200, r.text
-    assert r.json()["status"] == "cancelled"
+    actualizada = await update_status(orders_db, order_id, "cancelled")
+    assert actualizada["status"] == "cancelled"
     assert orders_db.products[producto["id"]]["stock"] == 10  # restaurado

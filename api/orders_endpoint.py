@@ -12,9 +12,8 @@ GET  /orders/{id}        requiere JWT, detalle con items — 403 si no eres el
                           dueño ni admin.
 
 `get_current_user` es api.admin_endpoint.get_current_user: cualquier
-usuario autenticado, customer incluido (S6: necesario para que un customer
-pueda hacer checkout — get_current_seller, en cambio, ya exige rol
-seller/admin desde S6 y NO sirve acá).
+usuario autenticado, cliente incluido (necesario para que un cliente pueda
+hacer checkout).
 """
 
 from __future__ import annotations

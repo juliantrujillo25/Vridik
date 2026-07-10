@@ -205,13 +205,23 @@ siguiente):
   aislada: nadie más lo importaba salvo `app/main.py` y su propio test
   file `tests/test_permissions.py`, ambos removidos) +
   `core/order.py::list_orders_for_seller` (código muerto, solo lo
-  llamaba `seller_endpoint.py`). `get_current_seller()` sigue viviendo
-  en `api/admin_endpoint.py` porque el panel admin todavía la usa para
-  crear/editar productos (fase 2).
-- **Fase 2 — pendiente.** Gestión de productos/órdenes dentro de
-  `api/admin_endpoint.py` (`post_products`/`patch_product`/
-  `delete_product`/imágenes/`get_orders`/`patch_order_status`) +
-  `core/product.py`.
+  llamaba `seller_endpoint.py`).
+- **Fase 2 — CERRADA.** Gestión admin de productos/órdenes/imágenes
+  quitada de `api/admin_endpoint.py`: `post_products`/`patch_product`/
+  `delete_product`/`post_product_image`/`delete_product_image`/
+  `post_product_image_primary`/`get_orders`/`patch_order_status`, sus
+  Pydantic models, y `get_current_seller()` (ya sin llamadores tras la
+  fase 1). `core/product.py` quedó solo de lectura (se quitaron
+  `create_product`/`update_product`/`soft_delete`/`add_image`/
+  `get_image`/`delete_image`/`set_primary`) -- el catálogo público
+  (`api/products_endpoint.py`) sigue intacto, no depende de esas
+  funciones. `core/order.py::list_all_orders` también se quitó (código
+  muerto); `update_status()` sigue viva porque
+  `api/payments_endpoint.py` la llama al confirmar un pago Wompi (el
+  branch de "cancelled + restaurar stock" quedó sin ninguna ruta HTTP
+  que lo dispare, pero se conservó con un test directo contra la
+  función en `tests/test_orders.py` en vez de borrarlo -- es lógica
+  real, no muerta, solo sin exponer todavía).
 - **Fase 3 — pendiente.** Pagos (`api/payments_endpoint.py`,
   `core/payment.py`, `core/wompi.py`) -- depende de `orders`, real
   integración de dinero (aunque sin transacciones reales en
