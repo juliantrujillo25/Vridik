@@ -78,14 +78,17 @@ jobs:
       - name: Cargar seed de staging (db/seed_railway.sql)
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/seed_railway.sql
 
-      - name: pytest -q (JUnit XML para el gate de 90%)
+      - name: pytest -q (JUnit XML para el gate de 90%, cobertura para el gate de 60%)
         run: |
           mkdir -p reports
-          pytest -q --junitxml=reports/junit.xml
-        continue-on-error: true # no se detiene aquí: el ratio decide si el job falla
+          pytest -q --junitxml=reports/junit.xml --cov=. --cov-report=term-missing
+        continue-on-error: true # no se detiene aquí: los gates de abajo deciden si el job falla
 
       - name: Gate — fail fast si menos del 90% de los tests pasan
         run: python scripts/check_pass_ratio.py --junit-xml reports/junit.xml --threshold 0.90
+
+      - name: Gate — fail fast si la cobertura real cae debajo de 60% (S3-GAP-01)
+        run: coverage report --fail-under=60
 
       - name: Publicar reporte de tests
         if: always()

@@ -37,3 +37,6 @@ passlib[bcrypt]==1.7.4
 # Faltaba desde S10/S11 — tests/test_pdf_export.py llama a
 # julix.pdf_export.generar_pdf(), que requiere reportlab (import perezoso).
 reportlab==4.2.5
+
+# S3-GAP-01 (AUDITORIA_PARA_CLAUDE.md): gate de cobertura ≥60% en CI.
+pytest-cov==5.0.0
