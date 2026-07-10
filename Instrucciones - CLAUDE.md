@@ -312,6 +312,64 @@ bloqueado **S5** (banco de evaluación, depende de Ana Luisa) y **S8-9**
 (corpus 85→400+, depende de selección de documentos por Ana Luisa) --
 ninguno de los dos es trabajo de código pendiente.
 
+## S12-13 (hardening) — gaps cerrados post-S11
+
+Revisión completa del roadmap Semana 12-13 contra lo que ya estaba en
+código (2FA TOTP, headers básicos, rate limiting de login) encontró 4
+gaps reales, elegidos por el dev lead para cerrar en esta sesión:
+
+- **Endpoint huérfano — CERRADO.** `api/admin_users_endpoint.py` se borró
+  entero: nunca se montaba en `app/main.py` (su chequeo de rol esperaba
+  `role` DENTRO del JWT, que S1 nunca emite -- incompatible desde
+  siempre con los JWT reales, `api/admin_endpoint.py` es el panel admin
+  real). `core/admin_users.py` queda intacto -- `actividad_usuario()`/
+  `resetear_password()` de ahí siguen en uso real vía
+  `api/admin_endpoint.py`. Las pruebas HTTP del endpoint huérfano se
+  quitaron de `tests/test_admin_users.py`; las pruebas de
+  `core/admin_users.py` (que sí se usa) quedaron intactas.
+- **Headers HSTS + CSP — CERRADO.** `api/julix_endpoint.py`:
+  `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+  (seguro sin condicionar nada, Railway sirve siempre HTTPS) y
+  `Content-Security-Policy-Report-Only: default-src 'none';
+  frame-ancestors 'none'` (Report-Only, no el header que aplica de
+  verdad, siguiendo la secuencia del roadmap -- aunque este backend hoy
+  es solo API JSON sin HTML/JS/CSS propios, así que aplicar directo
+  hubiera sido seguro igual). Sin `report-uri`/`report-to` todavía --
+  agregar un colector de reportes es un paso aparte si hace falta.
+- **Códigos de respaldo TOTP + reset admin — CERRADO.**
+  `generar_codigos_respaldo()` ya existía pero nadie los guardaba ni
+  los podía usar. `core/totp_2fa.py::confirmar_activacion()` ahora
+  genera y persiste los hashes (columna `totp_backup_codes`, JSONB) al
+  activar el 2FA y devuelve los códigos en claro UNA vez (`POST
+  /auth/2fa/verify` los suma a la respuesta). `verificar_login_totp()`
+  acepta un código de respaldo como alternativa al TOTP normal -- de un
+  solo uso, el hash se borra al validarlo. Nuevo `POST
+  /admin/users/{id}/reset-2fa` ("perdí el teléfono"): un admin
+  desactiva el 2FA de otro usuario, deja un `auth_event` `totp_reset`
+  con el admin como actor (`desactivar_totp()` ahora acepta `actor_id`
+  opcional).
+- **2FA obligatorio para admin (`must_enroll`) — CERRADO, PENDIENTE DE
+  ENROLAMIENTO REAL.** `get_current_admin()` (`api/admin_endpoint.py`)
+  ahora rechaza con 403 a cualquier admin sin `totp_enabled` -- query
+  separada de `_resolver_usuario()` (que comparte `get_current_user`,
+  sin este requisito) para no tocar el contrato de ningún otro caller.
+  Un admin sin 2FA SÍ puede seguir usando `POST /auth/2fa/setup` +
+  `POST /auth/2fa/verify` (dependen de `get_current_user`, no de
+  `get_current_admin`) para autoenrolarse con su mismo token -- nunca
+  queda completamente afuera de su cuenta, pero sí pierde acceso al
+  panel `/admin/*` hasta que lo haga.
+
+  **Verificado antes de tocar código:** producción tiene exactamente 1
+  admin real y `totp_enabled=false` -- confirmado con una lectura
+  (`railway run --service Postgres`, `SELECT id, role, totp_enabled
+  FROM users WHERE role='admin'`), nunca se escribió nada. El dev lead
+  confirmó explícitamente seguir con el bloqueo real (no un flag suave)
+  sabiendo que iba a perder acceso al panel hasta enrolarse. **Acción
+  pendiente fuera de este código: correr `POST /auth/2fa/setup` +
+  `POST /auth/2fa/verify` con la cuenta admin real apenas esto se
+  despliegue** -- hasta entonces, el panel admin de producción queda
+  inaccesible para esa cuenta.
+
 ## Consolidación de producto (post-auditoría)
 
 Decisión del dev lead: **el copiloto legal (JuliX/RAG) es el producto

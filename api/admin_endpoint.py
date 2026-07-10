@@ -12,6 +12,8 @@ POST  /admin/users                       crea usuario (role: cliente|abogado|adm
 PATCH /admin/users/{id}/role             cambia el rol (un admin no puede cambiarse a sí mismo)
 GET   /admin/users/{id}/actividad        auth_events del usuario (S2-GAP-01)
 POST  /admin/users/{id}/reset-password   contraseña temporal + revoca sesiones (S2-GAP-01)
+POST  /admin/users/{id}/reset-2fa        desactiva el 2FA de otro usuario -- "perdí el
+                                          teléfono" (roadmap S12-13, hardening)
 
 `get_current_admin()` reutiliza el JWT de S1 (core.auth.decode_jwt vía
 api.auth_endpoint._claims_de_bearer): 401 si el token falta/es inválido,
@@ -39,6 +41,7 @@ from api.auth_endpoint import _claims_de_bearer, _get_db
 from core.admin import change_role, create_user, ensure_role_column, list_users
 from core.admin_users import UsuarioNoEncontradoError, actividad_usuario, resetear_password
 from core.auth import hash_password
+from core.totp_2fa import desactivar_totp, ensure_totp_columns
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -71,6 +74,25 @@ async def get_current_admin(request: Request, authorization: str | None = Header
     usuario = await _resolver_usuario(request, authorization)
     if usuario["role"] != "admin":
         raise HTTPException(status_code=403, detail="Requiere rol admin")
+
+    # Roadmap S12-13 (hardening, must_enroll): 2FA obligatorio para admin.
+    # Query separada (no se suma a _resolver_usuario, que también usa
+    # get_current_user sin este requisito) para no tocar el contrato de
+    # ningún otro caller. Rechaza ANTES de dejar pasar cualquier acción del
+    # panel -- pero /auth/2fa/setup y /auth/2fa/verify usan get_current_user,
+    # así que un admin sin 2FA todavía puede autoenrolarse con su mismo
+    # token, nunca queda completamente afuera de su cuenta.
+    conn = _get_db(request)
+    await ensure_totp_columns(conn)
+    fila_2fa = await conn.fetchrow("SELECT totp_enabled FROM users WHERE id = $1", usuario["id"])
+    if fila_2fa is None or not fila_2fa["totp_enabled"]:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Tu cuenta admin requiere 2FA activado (roadmap S12-13). "
+                "Configuralo con POST /auth/2fa/setup y POST /auth/2fa/verify antes de usar el panel."
+            ),
+        )
     return usuario
 
 
@@ -138,3 +160,22 @@ async def post_user_reset_password(
     except UsuarioNoEncontradoError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"user_id": resultado.user_id, "password_temporal": resultado.password_temporal}
+
+
+@router.post("/users/{user_id}/reset-2fa")
+async def post_user_reset_2fa(
+    user_id: str, request: Request, admin: dict = Depends(get_current_admin),
+):
+    """Roadmap S12-13 (hardening): "perdí el teléfono" -- desactiva el 2FA
+    de otro usuario para que pueda volver a entrar con contraseña sola y
+    reactivarlo desde cero (nuevo secreto, nuevos códigos de respaldo). No
+    reactiva nada por sí solo; el usuario tiene que correr
+    POST /auth/2fa/setup de nuevo."""
+    conn = _get_db(request)
+    await ensure_totp_columns(conn)
+    existe = await conn.fetchrow("SELECT id FROM users WHERE id = $1", user_id)
+    if existe is None:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    await desactivar_totp(conn, user_id=user_id, actor_id=str(admin["id"]))
+    return {"user_id": user_id, "two_factor_enabled": False}

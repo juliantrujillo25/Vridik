@@ -31,15 +31,28 @@ que `migrations/004_totp_2fa.sql` nunca se corrió contra Postgres real.
 
 Expuesto vía HTTP en api/auth_endpoint.py (Sprint S12):
 POST /auth/2fa/setup, POST /auth/2fa/verify, POST /auth/2fa/login.
+
+Roadmap S12-13 (hardening, cerrado en la sesión que terminó S11): los
+códigos de respaldo (`generar_codigos_respaldo()`) ya existían pero nadie
+los guardaba ni los podía usar para entrar -- `confirmar_activacion()`
+ahora los genera y persiste (columna `totp_backup_codes`, array de hashes
+en JSONB) al activar el 2FA, y `verificar_login_totp()` los acepta como
+alternativa al código TOTP normal (de un solo uso: el hash usado se borra
+de la lista al validar). `desactivar_totp()` acepta un `actor_id`
+opcional y deja un `auth_event` -- lo usa el reset administrativo
+("perdí el teléfono") de api/admin_endpoint.py.
 """
 
 from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import secrets
 from dataclasses import dataclass, field
+
+from core.auth_events import registrar_evento
 
 try:
     import pyotp
@@ -119,7 +132,8 @@ async def ensure_totp_columns(db_connection) -> None:
         ALTER TABLE users
             ADD COLUMN IF NOT EXISTS totp_secret TEXT,
             ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false,
-            ADD COLUMN IF NOT EXISTS totp_activado_en TIMESTAMPTZ
+            ADD COLUMN IF NOT EXISTS totp_activado_en TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS totp_backup_codes JSONB NOT NULL DEFAULT '[]'::jsonb
         """
     )
 
@@ -174,20 +188,29 @@ async def iniciar_activacion(db_connection, *, user_id: str, email: str) -> tupl
     return secreto, provisioning_uri(secreto, email=email)
 
 
-async def confirmar_activacion(db_connection, *, user_id: str, codigo: str) -> bool:
+async def confirmar_activacion(db_connection, *, user_id: str, codigo: str) -> CodigosRespaldo | None:
     """Paso 2: exige un código válido generado con el secreto ya guardado
     antes de poner `totp_enabled=true`. Si el código no valida, el 2FA
-    sigue sin activarse (nunca se activa 'a medias')."""
+    sigue sin activarse (nunca se activa 'a medias'). Al activar, genera y
+    persiste los códigos de respaldo (hashes) y devuelve el objeto
+    completo (con los códigos en claro) para que el caller se los muestre
+    al usuario UNA sola vez -- después de esta respuesta no se pueden
+    volver a leer."""
     fila = await db_connection.fetchrow("SELECT totp_secret FROM users WHERE id = $1", user_id)
     if fila is None or not fila["totp_secret"]:
-        return False
+        return None
     if not verificar_codigo(_desencriptar_secreto(fila["totp_secret"]), codigo):
-        return False
+        return None
+    codigos = generar_codigos_respaldo()
     await db_connection.execute(
-        "UPDATE users SET totp_enabled = true, totp_activado_en = now() WHERE id = $1",
-        user_id,
+        """
+        UPDATE users
+        SET totp_enabled = true, totp_activado_en = now(), totp_backup_codes = $2::jsonb
+        WHERE id = $1
+        """,
+        user_id, json.dumps(codigos.hashes),
     )
-    return True
+    return codigos
 
 
 async def requiere_totp(db_connection, *, user_id: str) -> bool:
@@ -199,21 +222,46 @@ async def requiere_totp(db_connection, *, user_id: str) -> bool:
 
 
 async def verificar_login_totp(db_connection, *, user_id: str, codigo: str) -> bool:
-    """Segundo paso del login cuando `requiere_totp()` es True."""
+    """Segundo paso del login cuando `requiere_totp()` es True. Acepta un
+    código TOTP de 6 dígitos normal O uno de los códigos de respaldo de un
+    solo uso (para cuando el usuario perdió el dispositivo) -- si matchea
+    un código de respaldo, ese hash se borra de la lista antes de devolver
+    True, así no puede reusarse."""
     fila = await db_connection.fetchrow(
-        "SELECT totp_secret FROM users WHERE id = $1 AND totp_enabled = true", user_id,
+        "SELECT totp_secret, totp_backup_codes FROM users WHERE id = $1 AND totp_enabled = true", user_id,
     )
     if fila is None or not fila["totp_secret"]:
         return False
-    return verificar_codigo(_desencriptar_secreto(fila["totp_secret"]), codigo)
+    if verificar_codigo(_desencriptar_secreto(fila["totp_secret"]), codigo):
+        return True
+
+    hashes_guardados = json.loads(fila["totp_backup_codes"] or "[]")
+    if not verificar_codigo_respaldo(codigo, hashes_guardados):
+        return False
+    hash_usado = _hash_codigo_respaldo(codigo)
+    hashes_restantes = [h for h in hashes_guardados if h != hash_usado]
+    await db_connection.execute(
+        "UPDATE users SET totp_backup_codes = $2::jsonb WHERE id = $1", user_id, json.dumps(hashes_restantes),
+    )
+    return True
 
 
-async def desactivar_totp(db_connection, *, user_id: str) -> None:
+async def desactivar_totp(db_connection, *, user_id: str, actor_id: str | None = None) -> None:
     """Desactiva el 2FA (p.ej. a pedido del usuario, o por un admin tras
     verificar identidad por otro canal — esa verificación vive fuera de
-    este módulo). Limpia el secreto: no tiene sentido conservar un secreto
-    inactivo."""
+    este módulo). Limpia el secreto y los códigos de respaldo: no tiene
+    sentido conservar credenciales inactivas. `actor_id` (opcional, para
+    cuando lo dispara un admin distinto del propio usuario) deja un
+    `auth_event` -- el reset administrativo ("perdí el teléfono",
+    api/admin_endpoint.py) depende de este rastro de auditoría."""
     await db_connection.execute(
-        "UPDATE users SET totp_enabled = false, totp_secret = NULL, totp_activado_en = NULL WHERE id = $1",
+        """
+        UPDATE users
+        SET totp_enabled = false, totp_secret = NULL, totp_activado_en = NULL, totp_backup_codes = '[]'::jsonb
+        WHERE id = $1
+        """,
         user_id,
+    )
+    await registrar_evento(
+        db_connection, event_type="totp_reset", user_id=user_id, actor_id=actor_id or user_id,
     )

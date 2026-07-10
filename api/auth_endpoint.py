@@ -101,7 +101,9 @@ class Verify2FARequest(BaseModel):
 
 class Login2FARequest(BaseModel):
     temp_token: str
-    code: str = Field(..., min_length=6, max_length=6)
+    # 6 dígitos para un código TOTP normal, 8 para un código de respaldo
+    # de un solo uso (core.totp_2fa.verificar_login_totp acepta ambos).
+    code: str = Field(..., min_length=6, max_length=8)
 
 
 class RefreshRequest(BaseModel):
@@ -254,10 +256,12 @@ async def verify_2fa(payload: Verify2FARequest, request: Request, authorization:
     conn = _get_db(request)
     await ensure_totp_columns(conn)
 
-    activado = await confirmar_activacion(conn, user_id=claims["sub"], codigo=payload.code)
-    if not activado:
+    codigos = await confirmar_activacion(conn, user_id=claims["sub"], codigo=payload.code)
+    if codigos is None:
         raise HTTPException(status_code=400, detail="Código 2FA inválido")
-    return {"two_factor_enabled": True}
+    # codigos.en_claro se muestra UNA sola vez acá -- después de esta
+    # respuesta solo quedan los hashes, no se pueden volver a leer.
+    return {"two_factor_enabled": True, "codigos_respaldo": codigos.en_claro}
 
 
 @router.post("/2fa/login")

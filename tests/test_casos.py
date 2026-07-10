@@ -26,9 +26,12 @@ class _FakeCasosDB:
         self.users: dict[str, dict] = {}
         self.casos: dict[str, dict] = {}
 
-    def seed_user(self, *, email: str, role: str = "cliente") -> dict:
+    def seed_user(self, *, email: str, role: str = "cliente", totp_enabled: bool = True) -> dict:
+        # totp_enabled=True por default (roadmap S12-13, must_enroll de
+        # get_current_admin): estos tests seedean un admin para probar
+        # PATCH /casos/{id}/abogado, no el bloqueo de 2FA en sí.
         user_id = str(uuid.uuid4())
-        self.users[user_id] = {"id": user_id, "email": email, "role": role}
+        self.users[user_id] = {"id": user_id, "email": email, "role": role, "totp_enabled": totp_enabled}
         return self.users[user_id]
 
     async def execute(self, query: str, *args):
@@ -39,7 +42,11 @@ class _FakeCasosDB:
         if "SELECT id, email, role FROM users WHERE id" in q:
             (user_id,) = args
             u = self.users.get(user_id)
-            return dict(u) if u else None
+            return {"id": u["id"], "email": u["email"], "role": u["role"]} if u else None
+        if q.strip() == "SELECT totp_enabled FROM users WHERE id = $1":
+            (user_id,) = args
+            u = self.users.get(user_id)
+            return {"totp_enabled": u["totp_enabled"]} if u else None
         if q.startswith("INSERT INTO casos"):
             cliente_id, abogado_id, titulo, descripcion = args
             caso_id = str(uuid.uuid4())

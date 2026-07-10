@@ -35,12 +35,16 @@ class _FakeAdminDB:
         self.refresh_tokens: dict[str, dict] = {}
         self.auth_events: list[dict] = []
 
-    def seed(self, *, email: str, role: str = "abogado", is_active: bool = True) -> dict:
+    def seed(self, *, email: str, role: str = "abogado", is_active: bool = True, totp_enabled: bool = True) -> dict:
+        # totp_enabled=True por default: la mayoría de estos tests seedean
+        # un admin y esperan que get_current_admin lo deje pasar sin
+        # pensar en 2FA -- el must_enroll de S12-13 se prueba aparte, con
+        # totp_enabled=False explícito.
         user_id = str(uuid.uuid4())
         self.users[user_id] = {
             "id": user_id, "email": email, "hashed_password": "x-hash",
             "role": role, "is_active": is_active, "created_at": "2026-01-01T00:00:00+00:00",
-            "deleted_at": None, "must_change": False,
+            "deleted_at": None, "must_change": False, "totp_enabled": totp_enabled,
         }
         return self.users[user_id]
 
@@ -58,7 +62,11 @@ class _FakeAdminDB:
             user_id, password_hash, *_resto = args
             self.user_credentials[user_id] = {"user_id": user_id, "password_hash": password_hash}
         elif q.startswith("INSERT INTO auth_events"):
-            user_id, actor_id, event_type, metadata = args
+            # core/admin_users.py tiene su propia _registrar_evento() (4
+            # columnas, sin ip_address/user_agent) separada de
+            # core/auth_events.py::registrar_evento() (6 columnas) -- este
+            # fake atiende a los dos llamadores según cuántos args mandaron.
+            user_id, actor_id, event_type, metadata = args[:4]
             self.auth_events.append(
                 {"user_id": user_id, "actor_id": actor_id, "event_type": event_type, "metadata": metadata},
             )
@@ -86,6 +94,14 @@ class _FakeAdminDB:
             (user_id,) = args
             u = self.users.get(user_id)
             return {"id": u["id"]} if u and u["deleted_at"] is None else None
+        if q.strip() == "SELECT id FROM users WHERE id = $1":
+            (user_id,) = args
+            u = self.users.get(user_id)
+            return {"id": u["id"]} if u else None
+        if q.strip() == "SELECT totp_enabled FROM users WHERE id = $1":
+            (user_id,) = args
+            u = self.users.get(user_id)
+            return {"totp_enabled": u["totp_enabled"]} if u else None
         if "INSERT INTO users" in q and "RETURNING" in q:
             email, password_hash, role = args
             nuevo = self.seed(email=email, role=role)
@@ -242,3 +258,48 @@ def test_admin_reset_password_usuario_inexistente_404(admin_db, admin_client):
         f"/admin/users/{uuid.uuid4()}/reset-password", headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 404
+
+
+def test_admin_reset_2fa_desactiva_y_deja_auth_event(admin_db, admin_client):
+    """Roadmap S12-13 (hardening): 'perdí el teléfono' -- un admin puede
+    desactivar el 2FA de otro usuario, dejando un auth_event 'totp_reset'
+    con el admin como actor."""
+    admin = admin_db.seed(email="admin7@vridik.local", role="admin")
+    seller = admin_db.seed(email="vendedor7@vridik.local", role="abogado")
+    token = _token_de(admin)
+
+    r = admin_client.post(f"/admin/users/{seller['id']}/reset-2fa", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"user_id": seller["id"], "two_factor_enabled": False}
+
+    evento = next(e for e in admin_db.auth_events if e.get("event_type") == "totp_reset")
+    assert evento["user_id"] == seller["id"]
+    assert evento["actor_id"] == admin["id"]
+
+
+def test_admin_reset_2fa_usuario_inexistente_404(admin_db, admin_client):
+    admin = admin_db.seed(email="admin8@vridik.local", role="admin")
+    token = _token_de(admin)
+
+    r = admin_client.post(f"/admin/users/{uuid.uuid4()}/reset-2fa", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 404
+
+
+def test_admin_reset_2fa_forbidden_para_no_admin(admin_db, admin_client):
+    seller = admin_db.seed(email="vendedor8@vridik.local", role="abogado")
+    token = _token_de(seller)
+
+    r = admin_client.post(f"/admin/users/{seller['id']}/reset-2fa", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 403
+
+
+def test_admin_sin_2fa_no_puede_usar_el_panel(admin_db, admin_client):
+    """Roadmap S12-13 (hardening, must_enroll): un admin sin 2FA activado
+    queda bloqueado de CUALQUIER ruta /admin/* -- 403, no 401 (el token
+    es válido, el rol es correcto, falta el segundo factor)."""
+    admin_sin_2fa = admin_db.seed(email="admin9@vridik.local", role="admin", totp_enabled=False)
+    token = _token_de(admin_sin_2fa)
+
+    r = admin_client.get("/admin/users", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 403
+    assert "2FA" in r.json()["detail"]
