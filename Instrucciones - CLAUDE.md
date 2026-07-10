@@ -180,12 +180,44 @@ real**, no el marketplace. Trabajo ya cerrado en esta dirección:
   19 usuarios reales migrados (7 abogado, 1 admin, 11 cliente), 0 con
   vocabulario viejo.
 
-**Pendiente de decidir, aún no ejecutado:** qué específicamente cuenta
-como "no esencial" para desmantelar del marketplace (`products`,
-`orders`, `seller_endpoint.py`, RBAC multi-tenant) -- hay una dependencia
-en cadena real: `products` → `orders` → `case_documents` (que SÍ se
-quiere conservar, generación de documentos de JuliX). Desmantelar
-`orders` sin antes rediseñar cómo se ancla un "caso" sin depender de un
-pedido del marketplace rompería `case_documents`. No empezar a borrar
-código de esto sin ese rediseño primero y sin confirmar el alcance con
-el dev lead.
+- **Rediseño `casos` — CERRADO.** `core/case.py`/`api/casos_endpoint.py`:
+  entidad `casos` (cliente_id, abogado_id, estado) independiente del
+  marketplace. `case_documents` ahora ancla a `caso_id` **o** `order_id`
+  (uno de los dos; `order_id` pasó a nullable). Rutas nuevas
+  `POST/GET /casos/{id}/documents`; `/orders/{id}/documents` se
+  mantiene por compatibilidad hasta desmantelar `orders` de verdad.
+  Verificado en producción real (`POST/GET /casos` end-to-end). Esto
+  desbloquea poder desmantelar `orders` sin romper la generación de
+  documentos de JuliX.
+
+**Desmantelamiento del marketplace — alcance confirmado por el dev
+lead: completo** (`seller_endpoint.py` + `products` + `orders`,
+incluye decidir qué pasa con Wompi). Se verificó antes de tocar nada
+que los datos de producción en esas tablas (2 products, 3 orders, 1
+payment) son datos de prueba de S1-S7, no clientes reales -- confirmado
+por el dev lead, se pueden descartar sin migración.
+
+Progreso, fase por fase (cada fase = un commit, probado local, CI
+verde, desplegado y verificado en producción antes de pasar a la
+siguiente):
+
+- **Fase 1 — CERRADA.** `api/seller_endpoint.py` (la pieza más
+  aislada: nadie más lo importaba salvo `app/main.py` y su propio test
+  file `tests/test_permissions.py`, ambos removidos) +
+  `core/order.py::list_orders_for_seller` (código muerto, solo lo
+  llamaba `seller_endpoint.py`). `get_current_seller()` sigue viviendo
+  en `api/admin_endpoint.py` porque el panel admin todavía la usa para
+  crear/editar productos (fase 2).
+- **Fase 2 — pendiente.** Gestión de productos/órdenes dentro de
+  `api/admin_endpoint.py` (`post_products`/`patch_product`/
+  `delete_product`/imágenes/`get_orders`/`patch_order_status`) +
+  `core/product.py`.
+- **Fase 3 — pendiente.** Pagos (`api/payments_endpoint.py`,
+  `core/payment.py`, `core/wompi.py`) -- depende de `orders`, real
+  integración de dinero (aunque sin transacciones reales en
+  producción); decidir si se borra del todo o se deja dormida.
+- **Fase 4 — pendiente.** `orders_endpoint.py`/`core/order.py`
+  restante, quitar la ruta legacy `/orders/{id}/documents` de
+  `case_documents`, y el drop de las tablas
+  (`products`/`orders`/`order_items`/`product_images`/`payments`) vía
+  migración.

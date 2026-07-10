@@ -13,12 +13,15 @@ producto). Nota: en Railway el filesystem del contenedor es efímero (sin
 volumen montado), así que lo subido con BACKEND=local no sobrevive un
 redeploy — BACKEND=r2 (S7, core/storage.py) es lo que persiste de verdad.
 
-Sprint S6 (core/permissions.py): RBAC más fino admin/seller/customer — vista
-"propia" de un seller sobre sus productos/órdenes vía api/seller_endpoint.py.
-
 Sprint S7 (Vridik Abogados): `ensure_storage()` (core/storage.py) reemplaza
 la creación inline de ./uploads/products — con BACKEND=r2 es un no-op, no
 hace falta directorio local. Pagos con Wompi vía api/payments_endpoint.py.
+
+Desmantelamiento del marketplace (fase 1, ver Instrucciones - CLAUDE.md,
+"Consolidación de producto"): api/seller_endpoint.py (S6, vista "propia" de
+un seller) se quitó por ser la pieza más aislada — nadie más lo importaba.
+products/orders/payments siguen montados porque Wompi y el panel admin
+todavía dependen de ellos; se revisan en fases siguientes.
 """
 
 import os
@@ -34,7 +37,6 @@ from api.casos_endpoint import router as casos_router
 from api.orders_endpoint import router as orders_router
 from api.payments_endpoint import router as payments_router
 from api.products_endpoint import router as products_router
-from api.seller_endpoint import router as seller_router
 from core.storage import UPLOADS_DIR, ensure_storage
 
 ensure_storage()
@@ -61,12 +63,6 @@ app.include_router(products_router)
 # admin (listar todas/cambiar status) vive en api/admin_endpoint.py, ya
 # montado arriba.
 app.include_router(orders_router)
-
-# S6: vista "propia" de un seller sobre sus productos/órdenes (ver
-# core/permissions.py). Requiere role in ('abogado', 'admin') (vocabulario
-# migrado del marketplace original -- 'seller' -- al vocabulario del
-# producto real).
-app.include_router(seller_router)
 
 # S7: pagos con Wompi (ver core/payment.py, core/wompi.py). POST
 # /webhooks/wompi es público (lo llama Wompi directo, sin JWT) — se
