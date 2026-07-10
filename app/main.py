@@ -28,8 +28,13 @@ queda montado además de auth y JuliX.
 
 Roadmap Semana 11, Fase A: api/mensajes_endpoint.py -- mensajería real
 sobre un `caso` (deuda "85%" del roadmap), reemplaza al
-FakeMensajesService de tests/support/fakes.py. El canal SSE
-(`/api/events/stream`) llega en fases siguientes, sin tocar esto.
+FakeMensajesService de tests/support/fakes.py.
+
+Roadmap Semana 11, Fase B: api/events_endpoint.py -- GET
+/api/events/stream, canal SSE genérico sobre NOTIFY/LISTEN
+(core/events.py). crear_mensaje_endpoint ya lo usa para `message.new`;
+reconexión real (Fase C) y más tipos de evento llegan después sin
+cambiar el canal.
 """
 
 import os
@@ -41,6 +46,7 @@ from api.admin_endpoint import router as admin_router
 from api.auth_endpoint import router as auth_router
 from api.case_documents_endpoint import router as case_documents_router
 from api.casos_endpoint import router as casos_router
+from api.events_endpoint import router as events_router
 from api.mensajes_endpoint import router as mensajes_router
 
 # S1: registro/login sobre PostgreSQL real (ver api/auth_endpoint.py).
@@ -62,6 +68,9 @@ app.include_router(case_documents_router)
 
 # S11 (Fase A): mensajería real entre cliente/abogado sobre un caso.
 app.include_router(mensajes_router)
+
+# S11 (Fase B): canal SSE genérico, hoy usado por mensajería.
+app.include_router(events_router)
 
 
 @app.on_event("startup")

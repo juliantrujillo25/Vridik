@@ -35,6 +35,7 @@ class _FakeMensajesDB:
         self.conversaciones: dict[str, dict] = {}
         self.mensajes: dict[str, dict] = {}
         self.conversation_reads: dict[tuple[str, str], str] = {}
+        self.notificaciones: list[tuple[str, str]] = []  # (canal, payload)
 
     def seed_user(self, *, email: str, role: str = "cliente") -> dict:
         user_id = str(uuid.uuid4())
@@ -56,6 +57,9 @@ class _FakeMensajesDB:
             clave = (conversacion_id, user_id)
             actual = self.conversation_reads.get(clave)
             self.conversation_reads[clave] = max(actual, last_read_at) if actual else last_read_at
+        elif q.startswith("SELECT pg_notify"):
+            canal, payload = args
+            self.notificaciones.append((canal, payload))
         return "OK"
 
     async def fetchrow(self, query: str, *args):
@@ -169,6 +173,41 @@ def test_abogado_asignado_puede_escribir(mdb, mclient):
         f"/casos/{caso['id']}/mensajes", json={"texto": "respuesta"}, headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 201, r.text
+
+
+def test_crear_mensaje_notifica_message_new_al_otro_participante(mdb, mclient):
+    """Fase B: el cliente escribe -- debe notificarse SOLO al abogado
+    asignado (core/events.py::canal_de_usuario), nunca al propio autor."""
+    cliente = mdb.seed_user(email="cliente_notif@vridik.local")
+    abogado = mdb.seed_user(email="abogado_notif@vridik.local", role="abogado")
+    caso = mdb.seed_caso(cliente_id=cliente["id"], abogado_id=abogado["id"])
+    token = _token_de(cliente)
+
+    r = mclient.post(
+        f"/casos/{caso['id']}/mensajes", json={"texto": "hola abogado"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 201, r.text
+
+    assert len(mdb.notificaciones) == 1
+    canal, payload = mdb.notificaciones[0]
+    assert canal == f"vridik_events_{abogado['id']}"
+    assert '"type": "message.new"' in payload
+    assert caso["id"] in payload
+
+
+def test_crear_mensaje_sin_abogado_asignado_no_notifica_a_nadie(mdb, mclient):
+    """Sin abogado asignado todavía, el único destinatario posible sería el
+    propio autor (el cliente) -- se descarta, así que no hay notify."""
+    cliente = mdb.seed_user(email="cliente_notif2@vridik.local")
+    caso = mdb.seed_caso(cliente_id=cliente["id"])
+    token = _token_de(cliente)
+
+    r = mclient.post(
+        f"/casos/{caso['id']}/mensajes", json={"texto": "hola"}, headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 201, r.text
+    assert mdb.notificaciones == []
 
 
 def test_usuario_sin_relacion_al_caso_forbidden(mdb, mclient):

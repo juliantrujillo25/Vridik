@@ -3,8 +3,14 @@ Vridik — api/mensajes_endpoint.py
 Roadmap Semana 11, Fase A: mensajería real sobre un `caso` (core/case.py),
 mismo criterio de ownership que api/case_documents_endpoint.py (cliente
 del caso, abogado asignado, o admin) -- reemplaza al FakeMensajesService
-de tests/support/fakes.py como capa de datos; el canal SSE (`message.new`)
-llega en la Fase B, sin tocar estas rutas.
+de tests/support/fakes.py como capa de datos.
+
+Fase B: crear_mensaje_endpoint notifica `message.new` (core/events.py) al
+otro participante del caso -- el cliente si escribió el abogado, el
+abogado asignado si escribió el cliente (nunca al propio autor). Quién
+notificar se decide acá, no en core/mensajes.py (que no conoce roles) ni
+en core/events.py (que no conoce casos) -- este archivo es el único que
+tiene ambos datos a mano.
 
 POST   /casos/{caso_id}/mensajes                crea un mensaje (autor =
                                                   usuario autenticado)
@@ -29,6 +35,7 @@ from pydantic import BaseModel, Field
 from api.admin_endpoint import get_current_user
 from api.auth_endpoint import _get_db
 from core.case import ensure_casos_table, get_caso
+from core.events import notificar_evento
 from core.mensajes import (
     borrar_mensaje,
     crear_mensaje,
@@ -76,13 +83,24 @@ async def crear_mensaje_endpoint(
 ):
     conn = _get_db(request)
     await _preparar(conn)
-    await _caso_con_acceso(conn, caso_id, current)
+    caso = await _caso_con_acceso(conn, caso_id, current)
 
     conversacion = await get_or_create_conversacion(conn, caso_id=caso_id)
-    return await crear_mensaje(
+    mensaje = await crear_mensaje(
         conn, conversacion_id=conversacion["id"], autor_id=str(current["id"]),
         texto=payload.texto, adjunto_url=payload.adjunto_url,
     )
+
+    autor_id = str(current["id"])
+    destinatarios = {str(caso["cliente_id"]), str(caso["abogado_id"])} if caso["abogado_id"] else {str(caso["cliente_id"])}
+    destinatarios.discard(autor_id)
+    for user_id in destinatarios:
+        await notificar_evento(
+            conn, user_id=user_id, tipo="message.new",
+            payload={"caso_id": caso_id, "conversacion_id": conversacion["id"], "mensaje_id": mensaje["id"]},
+        )
+
+    return mensaje
 
 
 @router.get("/casos/{caso_id}/mensajes")

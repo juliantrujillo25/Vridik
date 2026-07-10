@@ -210,10 +210,45 @@ construir algo más simple ahora y migrar el schema después.
 `marcar_leido(mensaje_id, user_id)` avanza el cursor hasta el
 `created_at` de ese mensaje (GREATEST, nunca lo retrocede).
 
-`tests/test_mensajes_endpoint.py` (nuevo, 7 tests) prueba la
+`tests/test_mensajes_endpoint.py` (nuevo, 9 tests) prueba la
 implementación real end-to-end -- no reemplaza a
 `tests/test_mensajes.py` (Sprint S3, contrato de `FakeMensajesService`),
 que sigue documentando el contrato de datos original y queda intacto.
+
+**S11 Fase B — CERRADA: canal SSE genérico.** `core/events.py` (nuevo):
+`notificar_evento()` sobre `pg_notify()` (Postgres NOTIFY/LISTEN, cero
+infra nueva) -- un canal por usuario (`vridik_events_<user_id>`, no uno
+global filtrado por conexión) para que Postgres entregue el evento solo a
+quien le importa. Patrón "notificar-y-buscar" del roadmap: el evento
+lleva solo IDs, nunca el contenido -- quien lo recibe hace un fetch
+normal contra la API REST, que ya aplica permisos.
+
+`api/events_endpoint.py` (nuevo): `GET /api/events/stream`, canal SSE
+único y multiplexado por usuario (no por caso), auth con el mismo
+Bearer JWT de siempre -- el roadmap pide "nunca el access token en la
+URL" y recomienda fetch+ReadableStream (no `EventSource` nativo, que no
+puede mandar headers). `api/mensajes_endpoint.py::crear_mensaje_endpoint`
+ya lo usa: al crear un mensaje notifica `message.new` al otro
+participante del caso (nunca al propio autor; sin abogado asignado
+todavía, no notifica a nadie).
+
+Heartbeat cada 25s (`: keep-alive\n\n`) incluido desde esta fase, no
+diferido a la C -- es plomería necesaria para que el generador note
+`request.is_disconnected()` sin bloquearse para siempre en la cola, así
+que no tenía sentido esperar. Lo que sí queda para la **Fase C**:
+reconexión real (`Last-Event-ID` + buffer `user_events` de 24h + evento
+`resync`) -- esta versión reenvía cada NOTIFY tal cual apenas llega, sin
+recuperar lo que pasó mientras el cliente estuvo desconectado (el REST
+normal sigue siendo la fuente de verdad).
+
+Verificación en dos capas, mismo patrón que `core/rate_limit.py`:
+`tests/test_events.py` prueba `notificar_evento()` contra un fake (arma
+la query/payload correctos) Y contra PostgreSQL real con dos conexiones
+propias (`asyncpg.connect()`, nunca la fixture `db` transaccional de
+`conftest.py` -- un NOTIFY solo se entrega al hacer COMMIT, y `db`
+siempre hace ROLLBACK, así que ese fixture no puede probar la entrega
+real). `tests/test_mensajes_endpoint.py` prueba que `crear_mensaje_endpoint`
+notifica al destinatario correcto (fake).
 
 ## Consolidación de producto (post-auditoría)
 
