@@ -32,6 +32,7 @@ NO SE EJECUTA EN ESTE ENTREGABLE — esqueleto de referencia.
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 
 from . import prompts
@@ -66,6 +67,65 @@ DIRECTIVA_FUENTE_OBLIGATORIA = (
     "Si el contexto no trae fuente suficiente para responder la pregunta, responde "
     "exactamente: \"No tengo fuente suficiente\"."
 )
+
+# S7-GAP-01 (AUDITORIA_PARA_CLAUDE.md): la DIRECTIVA_FUENTE_OBLIGATORIA de
+# arriba es una instrucción -- depende de que el modelo la respete. Este
+# patrón detecta citas de norma/artículo en el TEXTO YA GENERADO y verifica
+# cada una contra las referencias de los chunks realmente usados en el
+# contexto (BuiltContext.chunks_incluidos, ya `list[str]` de
+# RankedChunk.referencia -- p.ej. "Ley 1607 de 2012, Art. 179", ver
+# julix/context_builder.py) -- un chequeo mecánico independiente del
+# modelo, no otra instrucción que también podría ignorar.
+#
+# Compara por CLAVE normalizada (tipo + número [+ año]), no por substring
+# crudo -- "Artículo 33" y "Art. 33" deben reconocerse como la misma cita
+# aunque el modelo y el chunk del corpus las escriban distinto.
+_PATRON_ARTICULO = re.compile(
+    r"\bart(?:í|i)culo\.?\s*(\d+[a-zA-Z]?)\b|\bart\.\s*(\d+[a-zA-Z]?)\b", re.IGNORECASE,
+)
+_PATRON_LEY_DECRETO = re.compile(r"\b(ley|decreto)\s+(\d+)\s+de\s+(\d{4})\b", re.IGNORECASE)
+
+
+def _claves_citables(texto: str) -> dict[str, str]:
+    """Extrae {clave_normalizada: texto_original_tal_como_aparece} de un
+    texto -- claves tipo 'articulo:33' o 'ley:1607:2012', comparables sin
+    importar la forma exacta en que se escribió la cita."""
+    claves: dict[str, str] = {}
+    for m in _PATRON_ARTICULO.finditer(texto):
+        numero = (m.group(1) or m.group(2)).lower()
+        claves.setdefault(f"articulo:{numero}", m.group(0).strip())
+    for m in _PATRON_LEY_DECRETO.finditer(texto):
+        tipo, numero, anio = m.group(1).lower(), m.group(2), m.group(3)
+        claves.setdefault(f"{tipo}:{numero}:{anio}", m.group(0).strip())
+    return claves
+
+
+def validar_citas_post_generacion(respuesta: str, chunks_usados: list[str]) -> str:
+    """Verifica con regex que cada norma/artículo citado en `respuesta`
+    aparece en al menos una entrada de `chunks_usados` (referencias
+    citables ya resueltas -- ver BuiltContext.chunks_incluidos) -- el
+    contexto que JuliX realmente tuvo disponible. Nunca bloquea ni oculta
+    la respuesta (sigue siendo un borrador útil): si encuentra al menos
+    una cita sin respaldo, agrega un marcador `[revisar]` al final, nunca
+    silencioso. Sin citas detectadas -> no hay nada que validar, se
+    devuelve la respuesta tal cual."""
+    citadas = _claves_citables(respuesta)
+    if not citadas:
+        return respuesta
+
+    disponibles: set[str] = set()
+    for referencia in chunks_usados:
+        disponibles |= _claves_citables(referencia).keys()
+
+    sin_respaldo = {clave: texto for clave, texto in citadas.items() if clave not in disponibles}
+    if not sin_respaldo:
+        return respuesta
+
+    detalle = ", ".join(sorted(sin_respaldo.values()))
+    return (
+        f"{respuesta}\n\n[revisar] Cita(s) sin respaldo verificable en el contexto "
+        f"recuperado: {detalle}. Confirma manualmente antes de usar este borrador."
+    )
 
 
 class JuliXService:
@@ -163,6 +223,15 @@ class JuliXService:
                 yield f"\n\n[JULIX_PARCIAL_RECUPERABLE: {exc.partial_text}]"
             yield f"\n\n[JULIX_ERROR:{exc.status}] {exc}"
             return  # una respuesta con error nunca se cachea
+
+        # 5.5. Validador de citas post-generación (S7-GAP-01): el streaming ya
+        #      terminó, así que el marcador [revisar] (si aplica) se agrega
+        #      como un chunk extra al final -- el frontend lo ve como parte
+        #      natural del stream, igual que JULIX_ERROR arriba.
+        respuesta_validada = validar_citas_post_generacion(respuesta_completa, contexto.chunks_incluidos)
+        if respuesta_validada != respuesta_completa:
+            yield respuesta_validada[len(respuesta_completa):]
+            respuesta_completa = respuesta_validada
 
         # 6. Cache (S11-extra): guarda la respuesta real completa. Las
         #    "fuentes" son las referencias citables ya calculadas por
