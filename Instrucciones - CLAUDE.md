@@ -185,6 +185,36 @@ existente. El placeholder de S12 en `tests/test_auth.py`
 verificar las constantes reales de `core/rate_limit.py` en vez de
 constantes locales sueltas.
 
+**S11 (mensajería + SSE) — Fase A CERRADA: backend real de mensajes.**
+Plan en 4 fases (mismo patrón que el desmantelamiento del marketplace):
+A. backend real de mensajes (esta) · B. canal SSE genérico
+`/api/events/stream` con NOTIFY/LISTEN · C. reconexión (Last-Event-ID +
+buffer 24h + resync) · D. no-leídos ya cerrado en la Fase A (ver abajo) +
+enganchar `pdf.ready` de `case_documents` al canal.
+
+`core/mensajes.py` (nuevo) reemplaza a
+`tests/support/fakes.py::FakeMensajesService` como capa de datos real,
+misma firma de funciones (crear/marcar_leido/no_leidos_para/borrar) para
+que las fases B-D (SSE encima) no tengan que tocarla.
+`api/mensajes_endpoint.py` (nuevo): rutas sobre un `caso` (core/case.py)
+-- una conversación cuelga siempre de un caso, mismo criterio de
+ownership que `case_documents` (cliente del caso, abogado asignado, o
+admin).
+
+Decisión de diseño: no-leídos por **cursor temporal**
+(`conversation_reads`: conversacion_id, user_id, last_read_at) en vez de
+una fila de lectura por mensaje -- es lo que pide el roadmap S11 de
+entrada ("cursor temporal... marcado solo con conversación abierta y
+pestaña visible"), así que se implementó así desde la Fase A en vez de
+construir algo más simple ahora y migrar el schema después.
+`marcar_leido(mensaje_id, user_id)` avanza el cursor hasta el
+`created_at` de ese mensaje (GREATEST, nunca lo retrocede).
+
+`tests/test_mensajes_endpoint.py` (nuevo, 7 tests) prueba la
+implementación real end-to-end -- no reemplaza a
+`tests/test_mensajes.py` (Sprint S3, contrato de `FakeMensajesService`),
+que sigue documentando el contrato de datos original y queda intacto.
+
 ## Consolidación de producto (post-auditoría)
 
 Decisión del dev lead: **el copiloto legal (JuliX/RAG) es el producto

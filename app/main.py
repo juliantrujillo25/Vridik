@@ -25,6 +25,11 @@ Desmantelamiento del marketplace (ver Instrucciones - CLAUDE.md,
 api/admin_endpoint.py (gestión de usuarios) y api/casos_endpoint.py +
 api/case_documents_endpoint.py (el copiloto legal, `casos`) son lo que
 queda montado además de auth y JuliX.
+
+Roadmap Semana 11, Fase A: api/mensajes_endpoint.py -- mensajería real
+sobre un `caso` (deuda "85%" del roadmap), reemplaza al
+FakeMensajesService de tests/support/fakes.py. El canal SSE
+(`/api/events/stream`) llega en fases siguientes, sin tocar esto.
 """
 
 import os
@@ -36,6 +41,7 @@ from api.admin_endpoint import router as admin_router
 from api.auth_endpoint import router as auth_router
 from api.case_documents_endpoint import router as case_documents_router
 from api.casos_endpoint import router as casos_router
+from api.mensajes_endpoint import router as mensajes_router
 
 # S1: registro/login sobre PostgreSQL real (ver api/auth_endpoint.py).
 app.include_router(auth_router)
@@ -53,6 +59,9 @@ app.include_router(admin_router)
 # (ver core/case.py) — la generación de documentos de JuliX se ancla acá.
 app.include_router(casos_router)
 app.include_router(case_documents_router)
+
+# S11 (Fase A): mensajería real entre cliente/abogado sobre un caso.
+app.include_router(mensajes_router)
 
 
 @app.on_event("startup")
