@@ -29,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from api.julix_endpoint import app
 from api.admin_endpoint import router as admin_router
 from api.auth_endpoint import router as auth_router
+from api.case_documents_endpoint import router as case_documents_router
 from api.orders_endpoint import router as orders_router
 from api.payments_endpoint import router as payments_router
 from api.products_endpoint import router as products_router
@@ -68,6 +69,11 @@ app.include_router(seller_router)
 # /webhooks/wompi es público (lo llama Wompi directo, sin JWT) — se
 # autentica con la firma HMAC del evento, no con Authorization.
 app.include_router(payments_router)
+
+# Documentos de caso generados por JuliX sobre una orden ya existente (ver
+# core/case_documents.py: una orden ES el caso, mismo criterio de ownership
+# que api/seller_endpoint.py — sin tabla `cases` paralela).
+app.include_router(case_documents_router)
 
 
 @app.on_event("startup")
