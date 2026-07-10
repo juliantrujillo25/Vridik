@@ -25,7 +25,10 @@ from passlib.context import CryptContext
 
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", "60"))
+# Fase B (S1-GAP-01): 15 min por el roadmap original (antes 60) -- ahora que
+# existe POST /auth/refresh (core/refresh_tokens.py) la sesión real la
+# sostiene el refresh token de 7 días, no un access token de vida larga.
+JWT_EXPIRE_MINUTES = int(os.environ.get("JWT_EXPIRE_MINUTES", "15"))
 TEMP_2FA_TOKEN_TTL_MINUTES = 5
 TEMP_2FA_SCOPE = "2fa_pending"
 

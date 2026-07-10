@@ -18,6 +18,21 @@ Sprint S12: 2FA TOTP opcional (core/totp_2fa.py) sobre las mismas columnas
     si se reenvía a otro endpoint.
   - POST /auth/2fa/login: canjea temp_token + code por el JWT final (mismo
     `create_jwt` de siempre — el esquema del JWT de sesión no cambia).
+
+Fase B (S1-GAP-01, AUDITORIA_PARA_CLAUDE.md): refresh tokens (core/
+refresh_tokens.py) sobre migrations/005_auth_roles_refresh_tokens.sql.
+  - Todo punto de autenticación final (register, login sin 2FA, 2fa/login)
+    ahora emite además un `refresh_token` (7 días) junto al `access_token`
+    (15 min, antes 60 — ver core/auth.py). El frontend debe cambiar a un
+    flujo de renovación silenciosa vía POST /auth/refresh en vez de
+    depender de un access token de vida larga.
+  - POST /auth/refresh: rota el refresh token (family_id) y emite un
+    access_token nuevo. Reuso detectado -> revoca toda la familia,
+    auth_event 'refresh_reuse_detected', 401.
+  - POST /auth/logout: revoca el refresh token de la sesión actual.
+  - register/login/refresh/logout escriben auth_events ('user_created',
+    'login_success', 'login_failed', 'token_refresh',
+    'refresh_reuse_detected', 'logout').
 """
 
 from __future__ import annotations
@@ -39,6 +54,13 @@ from core.auth import (
     ensure_users_table,
     hash_password,
     verify_password,
+)
+from core.auth_events import registrar_evento
+from core.refresh_tokens import (
+    ReusoDetectado,
+    emitir_refresh_token,
+    revocar_refresh_token,
+    rotar_refresh_token,
 )
 from core.totp_2fa import confirmar_activacion, ensure_totp_columns, iniciar_activacion, verificar_login_totp
 
@@ -71,6 +93,14 @@ class Verify2FARequest(BaseModel):
 class Login2FARequest(BaseModel):
     temp_token: str
     code: str = Field(..., min_length=6, max_length=6)
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str
 
 
 def _get_db(request: Request):
@@ -120,8 +150,19 @@ async def register(payload: RegisterRequest, request: Request):
         payload.email, password_hash,
     )
     user_id = str(fila["id"])
+
+    # Fase B: dual-write a user_credentials (Fase A ya hizo el backfill de
+    # los usuarios existentes) -- users.hashed_password se sigue llenando
+    # también, el cutover completo es Fase C.
+    await conn.execute(
+        "INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING",
+        user_id, password_hash,
+    )
+    await registrar_evento(conn, event_type="user_created", user_id=user_id, actor_id=user_id)
+
     token = create_jwt(sub=user_id, email=payload.email)
-    return {"access_token": token, "token_type": "bearer"}
+    refresh_token, _ = await emitir_refresh_token(conn, user_id=user_id)
+    return {"access_token": token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 
 @router.post("/login")
@@ -134,6 +175,13 @@ async def login(payload: LoginRequest, request: Request):
         "SELECT id, hashed_password, is_active, totp_enabled FROM users WHERE email = $1", payload.email,
     )
     if fila is None or not fila["hashed_password"] or not verify_password(payload.password, fila["hashed_password"]):
+        # user_id=None cuando el email ni existe -- no hay a qué usuario
+        # referenciar, pero el intento igual queda en la bitácora.
+        await registrar_evento(
+            conn, event_type="login_failed",
+            user_id=str(fila["id"]) if fila else None,
+            metadata={"email": payload.email},
+        )
         raise HTTPException(status_code=401, detail="Email o contraseña inválidos")
     if not fila["is_active"]:
         raise HTTPException(status_code=403, detail="Usuario inactivo")
@@ -143,8 +191,10 @@ async def login(payload: LoginRequest, request: Request):
         temp_token = create_temp_2fa_token(sub=user_id, email=payload.email)
         return {"requires_2fa": True, "temp_token": temp_token}
 
+    await registrar_evento(conn, event_type="login_success", user_id=user_id)
     token = create_jwt(sub=user_id, email=payload.email)
-    return {"access_token": token, "token_type": "bearer"}
+    refresh_token, _ = await emitir_refresh_token(conn, user_id=user_id)
+    return {"access_token": token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 
 @router.post("/2fa/setup")
@@ -183,7 +233,40 @@ async def login_2fa(payload: Login2FARequest, request: Request):
     email = temp_claims.get("email", "")
     valido = await verificar_login_totp(conn, user_id=user_id, codigo=payload.code)
     if not valido:
+        await registrar_evento(conn, event_type="login_failed", user_id=user_id, metadata={"paso": "2fa"})
         raise HTTPException(status_code=401, detail="Código 2FA inválido")
 
+    await registrar_evento(conn, event_type="login_success", user_id=user_id, metadata={"paso": "2fa"})
     token = create_jwt(sub=user_id, email=email)
-    return {"access_token": token, "token_type": "bearer"}
+    refresh_token, _ = await emitir_refresh_token(conn, user_id=user_id)
+    return {"access_token": token, "refresh_token": refresh_token, "token_type": "bearer"}
+
+
+@router.post("/refresh")
+async def refresh(payload: RefreshRequest, request: Request):
+    conn = _get_db(request)
+    try:
+        nuevo_refresh, user_id, _family_id = await rotar_refresh_token(conn, token_plano=payload.refresh_token)
+    except ReusoDetectado as exc:
+        await registrar_evento(
+            conn, event_type="refresh_reuse_detected", user_id=exc.user_id,
+            metadata={"accion": "toda_la_familia_revocada"},
+        )
+        raise HTTPException(status_code=401, detail="Refresh token inválido — sesión revocada por seguridad") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    fila = await conn.fetchrow("SELECT email FROM users WHERE id = $1", user_id)
+    email = fila["email"] if fila else ""
+    await registrar_evento(conn, event_type="token_refresh", user_id=user_id)
+    token = create_jwt(sub=user_id, email=email)
+    return {"access_token": token, "refresh_token": nuevo_refresh, "token_type": "bearer"}
+
+
+@router.post("/logout", status_code=204)
+async def logout(payload: LogoutRequest, request: Request):
+    conn = _get_db(request)
+    user_id = await revocar_refresh_token(conn, token_plano=payload.refresh_token)
+    if user_id is not None:
+        await registrar_evento(conn, event_type="logout", user_id=user_id)
+    return None
