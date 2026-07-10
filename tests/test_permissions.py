@@ -36,7 +36,7 @@ class _FakePermissionsDB:
         self.orders: dict[str, dict] = {}
         self.order_items: dict[str, dict] = {}
 
-    def seed_user(self, *, email: str, role: str = "customer") -> dict:
+    def seed_user(self, *, email: str, role: str = "cliente") -> dict:
         user_id = str(uuid.uuid4())
         self.users[user_id] = {"id": user_id, "email": email, "role": role}
         return self.users[user_id]
@@ -182,8 +182,8 @@ def _token_de(usuario: dict) -> str:
 
 
 def test_seller_cannot_update_other_seller_product(perms_db, perms_client):
-    dueño = perms_db.seed_user(email="dueño@vridik.local", role="seller")
-    otro = perms_db.seed_user(email="otro@vridik.local", role="seller")
+    dueño = perms_db.seed_user(email="dueño@vridik.local", role="abogado")
+    otro = perms_db.seed_user(email="otro@vridik.local", role="abogado")
     producto = perms_db.seed_product(seller_id=dueño["id"], sku="SKU-P1")
     token = _token_de(otro)
 
@@ -195,7 +195,7 @@ def test_seller_cannot_update_other_seller_product(perms_db, perms_client):
 
 
 def test_seller_can_create_and_update_own_product(perms_db, perms_client):
-    seller = perms_db.seed_user(email="seller1@vridik.local", role="seller")
+    seller = perms_db.seed_user(email="seller1@vridik.local", role="abogado")
     token = _token_de(seller)
 
     r = perms_client.post(
@@ -216,8 +216,8 @@ def test_seller_can_create_and_update_own_product(perms_db, perms_client):
 
 
 def test_seller_can_list_only_own_products(perms_db, perms_client):
-    seller1 = perms_db.seed_user(email="seller2@vridik.local", role="seller")
-    seller2 = perms_db.seed_user(email="seller3@vridik.local", role="seller")
+    seller1 = perms_db.seed_user(email="seller2@vridik.local", role="abogado")
+    seller2 = perms_db.seed_user(email="seller3@vridik.local", role="abogado")
     perms_db.seed_product(seller_id=seller1["id"], sku="SKU-P3")
     perms_db.seed_product(seller_id=seller2["id"], sku="SKU-P4")
     token = _token_de(seller1)
@@ -230,8 +230,8 @@ def test_seller_can_list_only_own_products(perms_db, perms_client):
 
 
 def test_seller_can_list_orders_with_own_product(perms_db, perms_client):
-    seller = perms_db.seed_user(email="seller4@vridik.local", role="seller")
-    buyer = perms_db.seed_user(email="buyer1@vridik.local", role="customer")
+    seller = perms_db.seed_user(email="seller4@vridik.local", role="abogado")
+    buyer = perms_db.seed_user(email="buyer1@vridik.local", role="cliente")
     producto = perms_db.seed_product(seller_id=seller["id"], sku="SKU-P5", price_cents=1500)
     perms_db.seed_order_with_item(user_id=buyer["id"], product_id=producto["id"], quantity=2, price_cents=1500)
     token = _token_de(seller)
@@ -244,7 +244,7 @@ def test_seller_can_list_orders_with_own_product(perms_db, perms_client):
 
 
 def test_customer_cannot_access_seller_routes(perms_db, perms_client):
-    customer = perms_db.seed_user(email="customer1@vridik.local", role="customer")
+    customer = perms_db.seed_user(email="customer1@vridik.local", role="cliente")
     token = _token_de(customer)
 
     r = perms_client.get("/seller/products", headers={"Authorization": f"Bearer {token}"})
@@ -252,7 +252,7 @@ def test_customer_cannot_access_seller_routes(perms_db, perms_client):
 
 
 def test_customer_cannot_access_admin_routes(perms_db, perms_client):
-    customer = perms_db.seed_user(email="customer2@vridik.local", role="customer")
+    customer = perms_db.seed_user(email="customer2@vridik.local", role="cliente")
     token = _token_de(customer)
 
     r = perms_client.get("/admin/users", headers={"Authorization": f"Bearer {token}"})

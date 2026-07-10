@@ -7,24 +7,30 @@ distinto, sin relación con los JWT reales que emite core.auth.create_jwt).
 
 `ensure_role_column()` es idempotente (mismo patrón que
 core.auth.ensure_users_table / core.totp_2fa.ensure_totp_columns): agrega
-`role` a `users` si todavía no existe, con 'customer' como default seguro
-(un usuario nuevo nunca nace admin ni seller por accidente — S6:
-core/permissions.py, 'customer' es el usuario registrado sin rol especial).
+`role` a `users` si todavía no existe, con 'cliente' como default seguro
+(un usuario nuevo nunca nace admin ni abogado por accidente — S6:
+core/permissions.py, 'cliente' es el usuario registrado sin rol especial.
+Vocabulario migrado del marketplace original -- admin/seller/customer --
+al vocabulario del producto real, admin/abogado/cliente).
 
 El `ADD COLUMN IF NOT EXISTS` de abajo es un no-op sobre una columna que ya
-existe (como `role` en producción desde S2, con default `'seller'`) — por
-eso el `ALTER COLUMN ... SET DEFAULT` aparte, para que los registros nuevos
-sí empiecen a nacer 'customer' aunque la columna ya estuviera creada.
+existe (como `role` en producción desde S2, con default histórico
+`'seller'`) — por eso el `ALTER COLUMN ... SET DEFAULT` aparte, para que
+los registros nuevos sí empiecen a nacer 'cliente' aunque la columna ya
+estuviera creada.
 """
 
 from __future__ import annotations
 
 
 async def ensure_role_column(db_connection) -> None:
+    # Migración de vocabulario de roles (dev lead): default 'cliente', no
+    # 'customer' -- si la columna ya existía con el default viejo (de
+    # cualquier sprint anterior), el ALTER COLUMN de abajo lo corrige.
     await db_connection.execute(
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'customer'"
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'cliente'"
     )
-    await db_connection.execute("ALTER TABLE users ALTER COLUMN role SET DEFAULT 'customer'")
+    await db_connection.execute("ALTER TABLE users ALTER COLUMN role SET DEFAULT 'cliente'")
 
 
 async def list_users(db_connection, *, skip: int, limit: int) -> list[dict]:

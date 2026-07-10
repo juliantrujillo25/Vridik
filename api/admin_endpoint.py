@@ -41,13 +41,15 @@ DELETE /admin/products/{id}/images/{image_id}      borra el registro y,
                                                     archivo también.
 POST   /admin/products/{id}/images/{image_id}/primary  la marca como principal.
 
-Sprint S6 (core/permissions.py): RBAC más fino — tres roles (admin/seller/
-customer, ver ROLES). Dos cambios importantes acá:
+Sprint S6 (core/permissions.py): RBAC más fino — tres roles (admin/abogado/
+cliente, ver ROLES — vocabulario migrado del marketplace original
+admin/seller/customer al vocabulario del producto real). Dos cambios
+importantes acá:
   - `get_current_seller()` YA NO significa "cualquier usuario autenticado"
     (eso ahora es `get_current_user()`, separado): pasa a exigir
-    role in ('seller', 'admin') — un customer nunca la pasa. Antes de S6
+    role in ('abogado', 'admin') — un cliente nunca la pasa. Antes de S6
     `get_current_user = get_current_seller` era un alias literal; dejaron
-    de poder serlo porque customer necesita `get_current_user` sin
+    de poder serlo porque cliente necesita `get_current_user` sin
     restricción (checkout, api/orders_endpoint.py) pero nunca debe pasar
     `get_current_seller`.
   - POST /admin/products ahora también acepta sellers (antes solo admin):
@@ -107,11 +109,11 @@ TAMANO_MAXIMO_IMAGEN_BYTES = 5 * 1024 * 1024  # 5MB
 class CreateUserRequest(BaseModel):
     email: str = Field(..., min_length=3)
     password: str = Field(..., min_length=8)
-    role: Literal["customer", "seller", "admin"] = "customer"
+    role: Literal["cliente", "abogado", "admin"] = "cliente"
 
 
 class ChangeRoleRequest(BaseModel):
-    role: Literal["customer", "seller", "admin"]
+    role: Literal["cliente", "abogado", "admin"]
 
 
 class CreateProductRequest(BaseModel):
@@ -175,12 +177,15 @@ async def get_current_admin(request: Request, authorization: str | None = Header
 
 
 async def get_current_seller(request: Request, authorization: str | None = Header(default=None)) -> dict:
-    """S6: exige role in ('seller', 'admin') — un customer nunca la pasa.
+    """S6: exige role in ('abogado', 'admin') — un cliente nunca la pasa.
     Antes de S6 esto era "cualquier usuario autenticado"; ese contrato
-    ahora lo cubre get_current_user()."""
+    ahora lo cubre get_current_user(). Fase de migración de vocabulario de
+    roles: el nombre de la función queda igual (concepto de dominio del
+    marketplace, se revisa en la fase de desmantelamiento), solo cambia el
+    valor de rol que exige."""
     usuario = await _resolver_usuario(request, authorization)
-    if usuario["role"] not in ("seller", "admin"):
-        raise HTTPException(status_code=403, detail="Requiere rol seller o admin")
+    if usuario["role"] not in ("abogado", "admin"):
+        raise HTTPException(status_code=403, detail="Requiere rol abogado o admin")
     return usuario
 
 

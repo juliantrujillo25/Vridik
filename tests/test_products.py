@@ -31,7 +31,7 @@ class _FakeProductsDB:
         self.users: dict[str, dict] = {}
         self.products: dict[str, dict] = {}
 
-    def seed_user(self, *, email: str, role: str = "seller") -> dict:
+    def seed_user(self, *, email: str, role: str = "abogado") -> dict:
         user_id = str(uuid.uuid4())
         self.users[user_id] = {"id": user_id, "email": email, "role": role}
         return self.users[user_id]
@@ -139,7 +139,7 @@ def _token_de(usuario: dict) -> str:
 
 
 def test_public_list_products_ok(products_db, products_client):
-    seller = products_db.seed_user(email="vendedor@vridik.local", role="seller")
+    seller = products_db.seed_user(email="vendedor@vridik.local", role="abogado")
     products_db.seed_product(seller_id=seller["id"], sku="SKU-1", name="Camiseta")
     products_db.seed_product(seller_id=seller["id"], sku="SKU-2", name="Pantalón", is_active=False)
 
@@ -151,7 +151,7 @@ def test_public_list_products_ok(products_db, products_client):
 
 
 def test_public_get_product_ok(products_db, products_client):
-    seller = products_db.seed_user(email="vendedor2@vridik.local", role="seller")
+    seller = products_db.seed_user(email="vendedor2@vridik.local", role="abogado")
     producto = products_db.seed_product(seller_id=seller["id"], sku="SKU-3", name="Zapatos")
 
     r = products_client.get(f"/products/{producto['id']}")
@@ -163,7 +163,7 @@ def test_public_get_product_ok(products_db, products_client):
 
 def test_admin_create_product(products_db, products_client):
     admin = products_db.seed_user(email="admin@vridik.local", role="admin")
-    seller = products_db.seed_user(email="vendedor3@vridik.local", role="seller")
+    seller = products_db.seed_user(email="vendedor3@vridik.local", role="abogado")
     token = _token_de(admin)
 
     r = products_client.post(
@@ -181,7 +181,7 @@ def test_admin_create_product(products_db, products_client):
 
 
 def test_seller_update_own_product_ok(products_db, products_client):
-    seller = products_db.seed_user(email="vendedor4@vridik.local", role="seller")
+    seller = products_db.seed_user(email="vendedor4@vridik.local", role="abogado")
     producto = products_db.seed_product(seller_id=seller["id"], sku="SKU-4")
     token = _token_de(seller)
 
@@ -194,8 +194,8 @@ def test_seller_update_own_product_ok(products_db, products_client):
 
 
 def test_seller_update_other_product_forbidden(products_db, products_client):
-    dueño = products_db.seed_user(email="dueño@vridik.local", role="seller")
-    otro_seller = products_db.seed_user(email="otro@vridik.local", role="seller")
+    dueño = products_db.seed_user(email="dueño@vridik.local", role="abogado")
+    otro_seller = products_db.seed_user(email="otro@vridik.local", role="abogado")
     producto = products_db.seed_product(seller_id=dueño["id"], sku="SKU-5")
     token = _token_de(otro_seller)
 
@@ -208,7 +208,7 @@ def test_seller_update_other_product_forbidden(products_db, products_client):
 
 def test_admin_soft_delete(products_db, products_client):
     admin = products_db.seed_user(email="admin2@vridik.local", role="admin")
-    seller = products_db.seed_user(email="vendedor5@vridik.local", role="seller")
+    seller = products_db.seed_user(email="vendedor5@vridik.local", role="abogado")
     producto = products_db.seed_product(seller_id=seller["id"], sku="SKU-6")
     token = _token_de(admin)
 

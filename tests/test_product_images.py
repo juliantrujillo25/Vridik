@@ -34,7 +34,7 @@ class _FakeImagesDB:
         self.products: dict[str, dict] = {}
         self.images: dict[str, dict] = {}
 
-    def seed_user(self, *, email: str, role: str = "seller") -> dict:
+    def seed_user(self, *, email: str, role: str = "abogado") -> dict:
         user_id = str(uuid.uuid4())
         self.users[user_id] = {"id": user_id, "email": email, "role": role}
         return self.users[user_id]
@@ -124,7 +124,7 @@ def _token_de(usuario: dict) -> str:
 
 def test_admin_upload_image_url_ok(images_db, images_client):
     admin = images_db.seed_user(email="admin_img1@vridik.local", role="admin")
-    seller = images_db.seed_user(email="seller_img1@vridik.local", role="seller")
+    seller = images_db.seed_user(email="seller_img1@vridik.local", role="abogado")
     producto = images_db.seed_product(seller_id=seller["id"], sku="SKU-IMG-1")
     token = _token_de(admin)
 
@@ -142,7 +142,7 @@ def test_admin_upload_image_url_ok(images_db, images_client):
 
 def test_public_product_includes_images(images_db, images_client):
     admin = images_db.seed_user(email="admin_img2@vridik.local", role="admin")
-    seller = images_db.seed_user(email="seller_img2@vridik.local", role="seller")
+    seller = images_db.seed_user(email="seller_img2@vridik.local", role="abogado")
     producto = images_db.seed_product(seller_id=seller["id"], sku="SKU-IMG-2")
     token = _token_de(admin)
 
@@ -167,7 +167,7 @@ def test_public_product_includes_images(images_db, images_client):
 
 def test_admin_delete_image(images_db, images_client):
     admin = images_db.seed_user(email="admin_img3@vridik.local", role="admin")
-    seller = images_db.seed_user(email="seller_img3@vridik.local", role="seller")
+    seller = images_db.seed_user(email="seller_img3@vridik.local", role="abogado")
     producto = images_db.seed_product(seller_id=seller["id"], sku="SKU-IMG-3")
     token = _token_de(admin)
 
@@ -188,7 +188,7 @@ def test_admin_delete_image(images_db, images_client):
 
 
 def test_non_admin_upload_forbidden(images_db, images_client):
-    seller = images_db.seed_user(email="seller_img4@vridik.local", role="seller")
+    seller = images_db.seed_user(email="seller_img4@vridik.local", role="abogado")
     producto = images_db.seed_product(seller_id=seller["id"], sku="SKU-IMG-4")
     token = _token_de(seller)
 

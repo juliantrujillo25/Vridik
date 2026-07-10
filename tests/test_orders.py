@@ -45,7 +45,7 @@ class _FakeOrdersDB:
         self.orders: dict[str, dict] = {}
         self.order_items: dict[str, dict] = {}
 
-    def seed_user(self, *, email: str, role: str = "seller") -> dict:
+    def seed_user(self, *, email: str, role: str = "abogado") -> dict:
         user_id = str(uuid.uuid4())
         self.users[user_id] = {"id": user_id, "email": email, "role": role}
         return self.users[user_id]
@@ -155,8 +155,8 @@ def _token_de(usuario: dict) -> str:
 
 
 def test_checkout_creates_order_and_decrements_stock(orders_db, orders_client):
-    seller = orders_db.seed_user(email="seller_a@vridik.local", role="seller")
-    buyer = orders_db.seed_user(email="buyer_a@vridik.local", role="seller")
+    seller = orders_db.seed_user(email="seller_a@vridik.local", role="abogado")
+    buyer = orders_db.seed_user(email="buyer_a@vridik.local", role="abogado")
     producto = orders_db.seed_product(seller_id=seller["id"], sku="SKU-A", price_cents=1500, stock=10)
     token = _token_de(buyer)
 
@@ -172,8 +172,8 @@ def test_checkout_creates_order_and_decrements_stock(orders_db, orders_client):
 
 
 def test_checkout_insufficient_stock_fails(orders_db, orders_client):
-    seller = orders_db.seed_user(email="seller_b@vridik.local", role="seller")
-    buyer = orders_db.seed_user(email="buyer_b@vridik.local", role="seller")
+    seller = orders_db.seed_user(email="seller_b@vridik.local", role="abogado")
+    buyer = orders_db.seed_user(email="buyer_b@vridik.local", role="abogado")
     producto = orders_db.seed_product(seller_id=seller["id"], sku="SKU-B", stock=2)
     token = _token_de(buyer)
 
@@ -187,8 +187,8 @@ def test_checkout_insufficient_stock_fails(orders_db, orders_client):
 
 
 def test_user_can_list_own_orders(orders_db, orders_client):
-    seller = orders_db.seed_user(email="seller_c@vridik.local", role="seller")
-    buyer = orders_db.seed_user(email="buyer_c@vridik.local", role="seller")
+    seller = orders_db.seed_user(email="seller_c@vridik.local", role="abogado")
+    buyer = orders_db.seed_user(email="buyer_c@vridik.local", role="abogado")
     producto = orders_db.seed_product(seller_id=seller["id"], sku="SKU-C", stock=10)
     token = _token_de(buyer)
 
@@ -204,9 +204,9 @@ def test_user_can_list_own_orders(orders_db, orders_client):
 
 
 def test_user_cannot_see_other_order(orders_db, orders_client):
-    seller = orders_db.seed_user(email="seller_d@vridik.local", role="seller")
-    buyer = orders_db.seed_user(email="buyer_d@vridik.local", role="seller")
-    otro = orders_db.seed_user(email="otro_d@vridik.local", role="seller")
+    seller = orders_db.seed_user(email="seller_d@vridik.local", role="abogado")
+    buyer = orders_db.seed_user(email="buyer_d@vridik.local", role="abogado")
+    otro = orders_db.seed_user(email="otro_d@vridik.local", role="abogado")
     producto = orders_db.seed_product(seller_id=seller["id"], sku="SKU-D", stock=10)
 
     r = orders_client.post(
@@ -221,8 +221,8 @@ def test_user_cannot_see_other_order(orders_db, orders_client):
 
 def test_admin_can_list_all_orders(orders_db, orders_client):
     admin = orders_db.seed_user(email="admin_e@vridik.local", role="admin")
-    seller = orders_db.seed_user(email="seller_e@vridik.local", role="seller")
-    buyer = orders_db.seed_user(email="buyer_e@vridik.local", role="seller")
+    seller = orders_db.seed_user(email="seller_e@vridik.local", role="abogado")
+    buyer = orders_db.seed_user(email="buyer_e@vridik.local", role="abogado")
     producto = orders_db.seed_product(seller_id=seller["id"], sku="SKU-E", stock=10)
 
     orders_client.post(
@@ -236,8 +236,8 @@ def test_admin_can_list_all_orders(orders_db, orders_client):
 
 def test_admin_can_update_status_and_restore_stock_on_cancel(orders_db, orders_client):
     admin = orders_db.seed_user(email="admin_f@vridik.local", role="admin")
-    seller = orders_db.seed_user(email="seller_f@vridik.local", role="seller")
-    buyer = orders_db.seed_user(email="buyer_f@vridik.local", role="seller")
+    seller = orders_db.seed_user(email="seller_f@vridik.local", role="abogado")
+    buyer = orders_db.seed_user(email="buyer_f@vridik.local", role="abogado")
     producto = orders_db.seed_product(seller_id=seller["id"], sku="SKU-F", stock=10)
 
     r = orders_client.post(

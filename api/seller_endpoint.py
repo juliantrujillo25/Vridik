@@ -24,7 +24,10 @@ GET    /seller/orders/{id}                  detalle, mismo filtro; 403 si
                                              producto del seller
 
 Todas las rutas requieren get_current_seller() de api/admin_endpoint.py
-(S6: exige role in ('seller', 'admin') — un customer nunca las alcanza).
+(S6: exige role in ('abogado', 'admin') — un cliente nunca las alcanza.
+Vocabulario migrado del marketplace original -- 'seller'/'customer' --
+al vocabulario del producto real; el nombre de la función/router se
+queda igual, se revisa en la fase de desmantelamiento).
 
 Sprint S7: `CreateOwnProductRequest` suma `category`/`city` (mismo
 validador de api.admin_endpoint.CreateProductRequest); el borrado de

@@ -1,12 +1,13 @@
 """
 Vridik — core/permissions.py
-Sprint S6: matriz de roles/permisos para RBAC más fino entre admin, seller y
-customer.
+Sprint S6: matriz de roles/permisos para RBAC más fino entre admin, abogado
+y cliente (vocabulario migrado del marketplace original -- admin/seller/
+customer -- al vocabulario del producto real, decisión del dev lead).
 
-`customer` = usuario registrado sin rol especial. Antes de S6 el default de
-`users.role` (core/admin.py:ensure_role_column) era `'seller'` — un
-provisional de S2 que nunca distinguía sellers de clientes comunes; desde
-S6 el default pasa a `'customer'` (ver core/admin.py).
+`cliente` = usuario registrado sin rol especial. Los nombres de función/
+columna que siguen usando "seller" (get_current_seller, seller_id) son
+conceptos de dominio del marketplace, no valores de rol -- se revisan en
+la fase de desmantelamiento, no en esta migración de vocabulario.
 
 Este módulo es deliberadamente el único lugar sin Request/Header de todo el
 sistema de permisos: la matriz PERMISSIONS documenta la intención (qué
@@ -20,18 +21,18 @@ nunca importa desde api/.
 
 from __future__ import annotations
 
-ROLES = ("admin", "seller", "customer")
+ROLES = ("admin", "abogado", "cliente")
 
 PERMISSIONS: dict[str, set[str]] = {
     "admin": {"*"},
-    "seller": {
+    "abogado": {
         "products:create:own",
         "products:update:own",
         "products:read:own",
         "products:images:own",
         "orders:read:own",
     },
-    "customer": {
+    "cliente": {
         "products:read",
         "orders:create",
         "orders:read:own",

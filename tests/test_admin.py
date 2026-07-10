@@ -35,7 +35,7 @@ class _FakeAdminDB:
         self.refresh_tokens: dict[str, dict] = {}
         self.auth_events: list[dict] = []
 
-    def seed(self, *, email: str, role: str = "seller", is_active: bool = True) -> dict:
+    def seed(self, *, email: str, role: str = "abogado", is_active: bool = True) -> dict:
         user_id = str(uuid.uuid4())
         self.users[user_id] = {
             "id": user_id, "email": email, "hashed_password": "x-hash",
@@ -134,7 +134,7 @@ def _token_de(usuario: dict) -> str:
 
 def test_admin_list_users_ok(admin_db, admin_client):
     admin = admin_db.seed(email="admin@vridik.local", role="admin")
-    admin_db.seed(email="vendedor1@vridik.local", role="seller")
+    admin_db.seed(email="vendedor1@vridik.local", role="abogado")
     token = _token_de(admin)
 
     r = admin_client.get("/admin/users", headers={"Authorization": f"Bearer {token}"})
@@ -146,7 +146,7 @@ def test_admin_list_users_ok(admin_db, admin_client):
 
 
 def test_admin_list_users_forbidden(admin_db, admin_client):
-    seller = admin_db.seed(email="vendedor2@vridik.local", role="seller")
+    seller = admin_db.seed(email="vendedor2@vridik.local", role="abogado")
     token = _token_de(seller)
 
     r = admin_client.get("/admin/users", headers={"Authorization": f"Bearer {token}"})
@@ -159,20 +159,20 @@ def test_admin_create_user(admin_db, admin_client):
 
     r = admin_client.post(
         "/admin/users",
-        json={"email": "nuevo_seller@vridik.local", "password": "Clave#Segura123", "role": "seller"},
+        json={"email": "nuevo_seller@vridik.local", "password": "Clave#Segura123", "role": "abogado"},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["email"] == "nuevo_seller@vridik.local"
-    assert body["role"] == "seller"
+    assert body["role"] == "abogado"
     assert "password" not in body
     assert "hashed_password" not in body
 
 
 def test_admin_change_role(admin_db, admin_client):
     admin = admin_db.seed(email="admin3@vridik.local", role="admin")
-    seller = admin_db.seed(email="vendedor3@vridik.local", role="seller")
+    seller = admin_db.seed(email="vendedor3@vridik.local", role="abogado")
     token = _token_de(admin)
 
     r = admin_client.patch(
@@ -186,7 +186,7 @@ def test_admin_change_role(admin_db, admin_client):
     # Un admin no puede cambiarse el rol a sí mismo.
     r = admin_client.patch(
         f"/admin/users/{admin['id']}/role",
-        json={"role": "seller"},
+        json={"role": "abogado"},
         headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 400
@@ -194,7 +194,7 @@ def test_admin_change_role(admin_db, admin_client):
 
 def test_admin_get_user_actividad(admin_db, admin_client):
     admin = admin_db.seed(email="admin4@vridik.local", role="admin")
-    seller = admin_db.seed(email="vendedor4@vridik.local", role="seller")
+    seller = admin_db.seed(email="vendedor4@vridik.local", role="abogado")
     admin_db.seed_evento(user_id=seller["id"], event_type="login_success", created_at="2026-01-02T00:00:00+00:00")
     admin_db.seed_evento(user_id=seller["id"], event_type="login_failed", created_at="2026-01-01T00:00:00+00:00")
     token = _token_de(admin)
@@ -207,7 +207,7 @@ def test_admin_get_user_actividad(admin_db, admin_client):
 
 
 def test_admin_get_user_actividad_forbidden_para_no_admin(admin_db, admin_client):
-    seller = admin_db.seed(email="vendedor5@vridik.local", role="seller")
+    seller = admin_db.seed(email="vendedor5@vridik.local", role="abogado")
     token = _token_de(seller)
 
     r = admin_client.get(f"/admin/users/{seller['id']}/actividad", headers={"Authorization": f"Bearer {token}"})
@@ -216,7 +216,7 @@ def test_admin_get_user_actividad_forbidden_para_no_admin(admin_db, admin_client
 
 def test_admin_reset_password_genera_temporal_y_revoca_sesiones(admin_db, admin_client):
     admin = admin_db.seed(email="admin5@vridik.local", role="admin")
-    seller = admin_db.seed(email="vendedor6@vridik.local", role="seller")
+    seller = admin_db.seed(email="vendedor6@vridik.local", role="abogado")
     refresh_id = admin_db.seed_refresh_token(user_id=seller["id"])
     token = _token_de(admin)
 

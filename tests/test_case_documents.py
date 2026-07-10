@@ -36,7 +36,7 @@ class _FakeCaseDocumentsDB:
         self.order_seller: dict[str, str] = {}
         self.case_documents: dict[str, dict] = {}
 
-    def seed_user(self, *, email: str, role: str = "customer") -> dict:
+    def seed_user(self, *, email: str, role: str = "cliente") -> dict:
         user_id = str(uuid.uuid4())
         self.users[user_id] = {"id": user_id, "email": email, "role": role}
         return self.users[user_id]
@@ -146,7 +146,7 @@ def test_owner_can_create_document(cd_db, cd_client):
 
 def test_seller_of_order_can_create_document(cd_db, cd_client):
     buyer = cd_db.seed_user(email="cliente2@vridik.local")
-    seller = cd_db.seed_user(email="seller@vridik.local", role="seller")
+    seller = cd_db.seed_user(email="seller@vridik.local", role="abogado")
     orden = cd_db.seed_order(user_id=buyer["id"], seller_id=seller["id"])
     token = _token_de(seller)
 

@@ -62,7 +62,9 @@ app.include_router(products_router)
 app.include_router(orders_router)
 
 # S6: vista "propia" de un seller sobre sus productos/órdenes (ver
-# core/permissions.py). Requiere role in ('seller', 'admin').
+# core/permissions.py). Requiere role in ('abogado', 'admin') (vocabulario
+# migrado del marketplace original -- 'seller' -- al vocabulario del
+# producto real).
 app.include_router(seller_router)
 
 # S7: pagos con Wompi (ver core/payment.py, core/wompi.py). POST

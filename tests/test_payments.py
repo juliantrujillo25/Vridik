@@ -41,7 +41,7 @@ class _FakePaymentsDB:
         self.orders: dict[str, dict] = {}
         self.payments: dict[str, dict] = {}
 
-    def seed_user(self, *, email: str, role: str = "customer") -> dict:
+    def seed_user(self, *, email: str, role: str = "cliente") -> dict:
         user_id = str(uuid.uuid4())
         self.users[user_id] = {"id": user_id, "email": email, "role": role}
         return self.users[user_id]
