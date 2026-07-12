@@ -330,6 +330,14 @@ class ApiClient {
     if (lastEventId !== null) headers.set("Last-Event-ID", String(lastEventId));
 
     const resp = await fetch(`${API_BASE}/api/events/stream`, { headers, signal });
+    if (resp.status === 401) {
+      // El access token se venció mientras el stream estaba abierto (vida
+      // de 15min, ver arriba) -- sin esto el bucle de reconexión de
+      // streamEvents() reintentaría para siempre con el mismo token vencido.
+      const ok = await this.renovar();
+      if (!ok) throw new SesionExpiradaError();
+      throw new Error("stream 401 -- token renovado, reintenta la próxima vuelta");
+    }
     if (!resp.ok || !resp.body) throw new Error(`stream ${resp.status}`);
 
     const reader = resp.body.getReader();

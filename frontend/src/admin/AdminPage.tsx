@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, ApiError, SesionExpiradaError } from "../api/client";
+import { api, SesionExpiradaError } from "../api/client";
 import type { AdminUser, AuthEvent, Role } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { fechaHora } from "../ui";
@@ -81,8 +81,7 @@ export function AdminPage() {
       const actualizado = await api.adminCambiarRol(u.id, role);
       setUsuarios((prev) => prev?.map((x) => (x.id === actualizado.id ? actualizado : x)) ?? prev);
     } catch (err) {
-      if (err instanceof ApiError) setError(err.message);
-      else manejarError(err, "No se pudo cambiar el rol.");
+      manejarError(err, "No se pudo cambiar el rol.");
     }
   }
 
@@ -164,7 +163,8 @@ export function AdminPage() {
             <input
               id="nuevo-password"
               className="input"
-              type="text"
+              type="password"
+              autoComplete="new-password"
               required
               minLength={8}
               value={nuevoPassword}

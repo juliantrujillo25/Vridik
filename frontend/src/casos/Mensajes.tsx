@@ -89,13 +89,13 @@ export function Mensajes({ casoId, miId }: { casoId: string; miId: string }) {
     <div className="card mensajes-panel">
       {error && <div className="alert error" role="alert">{error}</div>}
 
-      <ul className="mensajes-list" ref={listRef}>
-        {mensajes === null ? (
-          <div className="empty muted"><span className="spinner" /> Cargando…</div>
-        ) : mensajes.length === 0 ? (
-          <p className="muted mensajes-vacio">Todavía no hay mensajes en este caso.</p>
-        ) : (
-          mensajes.map((m) => {
+      {mensajes === null ? (
+        <div className="empty muted"><span className="spinner" /> Cargando…</div>
+      ) : mensajes.length === 0 ? (
+        <p className="muted mensajes-vacio">Todavía no hay mensajes en este caso.</p>
+      ) : (
+        <ul className="mensajes-list" ref={listRef}>
+          {mensajes.map((m) => {
             const esMio = m.autor_id === miId;
             return (
               <li key={m.id} className={`mensaje-row ${esMio ? "mio" : "otro"}`}>
@@ -117,9 +117,9 @@ export function Mensajes({ casoId, miId }: { casoId: string; miId: string }) {
                 </div>
               </li>
             );
-          })
-        )}
-      </ul>
+          })}
+        </ul>
+      )}
 
       <form className="mensajes-form" onSubmit={onEnviar}>
         <input
