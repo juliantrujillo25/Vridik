@@ -420,6 +420,47 @@ ahora) y se anotó `schema_semana1_vridik.sql` (el schema de CI del
 roadmap-track, nunca aplicado contra Railway real) para que no se
 confunda con lo que hay que revertir en producción.
 
+## Rotación de JWT_SECRET — paso 1: desacoplar la clave de cifrado TOTP
+
+Al arrancar la rotación de `JWT_SECRET` (último ítem puro de código de
+la Fase 1 del roadmap) se encontró un problema serio ANTES de escribir
+código de rotación: `core/totp_2fa.py::_fernet()` derivaba la clave de
+cifrado de `totp_secret` directo de `JWT_SECRET` (SHA-256). Rotar
+`JWT_SECRET` habría dejado **indescifrable para siempre** cualquier
+`totp_secret` ya guardado -- incluida la cuenta admin real recién
+enrolada en esta misma sesión. Como `must_enroll` (S12-13) bloquea el
+panel admin sin 2FA funcional, el escenario era: rotar JWT_SECRET →
+2FA del admin roto → admin no puede entrar al panel → admin no puede
+resetear su propio 2FA (esa acción también requiere panel) → bloqueo
+circular, solo recuperable con otro script directo a la base de datos.
+
+**CERRADO antes de tocar la rotación en sí.** `TOTP_ENCRYPTION_KEY`
+(variable de entorno nueva, independiente): `core/totp_2fa.py::_fernet()`
+la usa si está configurada; si no, cae a `_fernet_legacy()` (la
+derivación vieja de JWT_SECRET, comportamiento idéntico al de antes —
+compatible con cualquier entorno que todavía no configuró la variable
+nueva, incluida la suite de tests). `_desencriptar_secreto()` intenta
+con la clave actual primero y, si falla y hay `TOTP_ENCRYPTION_KEY`
+configurada, reintenta con la legacy -- así un `totp_secret` cifrado
+ANTES de que la variable existiera sigue funcionando sin ninguna
+migración coordinada ni ventana de corte. Confirmado con test real
+(`test_rotar_jwt_secret_no_rompe_un_secreto_cifrado_con_totp_encryption_key`):
+cifrar con `TOTP_ENCRYPTION_KEY` configurada, rotar `JWT_SECRET` por
+completo, y descifrar sigue funcionando.
+
+**Pendiente, siguiente paso:** generar y configurar `TOTP_ENCRYPTION_KEY`
+en Railway (una vez desplegado este código), y recién ahí seguir con el
+soporte real de rotación de `JWT_SECRET` (doble clave en
+`decode_jwt`/`decode_temp_2fa_token`) + `SECURITY.md`. Análisis hecho
+sobre el impacto real de rotar JWT_SECRET sin soporte de doble clave:
+los access tokens duran 15 min y los refresh tokens NO son JWT (son
+tokens opacos hasheados, no dependen de JWT_SECRET en absoluto) -- una
+sesión con refresh token válido se recupera sola en ≤15 min vía
+`POST /auth/refresh`, sin necesitar decodificar nada con la clave
+vieja. El caso que sí necesita doble clave de verdad es
+`create_temp_2fa_token`/`decode_temp_2fa_token` (5 min de vida, entre
+login y confirmación de 2FA) si la rotación cae justo en ese margen.
+
 ## Consolidación de producto (post-auditoría)
 
 Decisión del dev lead: **el copiloto legal (JuliX/RAG) es el producto

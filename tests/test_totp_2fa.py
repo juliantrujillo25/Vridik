@@ -17,8 +17,11 @@ import json
 import pyotp
 import pytest
 
+from cryptography.fernet import Fernet
+
 from core.totp_2fa import (
     _desencriptar_secreto,
+    _encriptar_secreto,
     confirmar_activacion,
     desactivar_totp,
     generar_codigos_respaldo,
@@ -207,3 +210,56 @@ async def test_desactivar_totp_sin_actor_explicito_usa_el_propio_usuario():
     await desactivar_totp(db, user_id="user-1")
     evento = next(e for e in db.auth_events if e["event_type"] == "totp_reset")
     assert evento["actor_id"] == "user-1"
+
+
+# ---------------------------------------------------------------------------
+# Roadmap S12-13 (hardening, previo a la rotación de JWT_SECRET):
+# TOTP_ENCRYPTION_KEY desacopla el cifrado de totp_secret de JWT_SECRET.
+# ---------------------------------------------------------------------------
+def test_sin_totp_encryption_key_usa_la_derivacion_legacy_de_jwt_secret(monkeypatch):
+    """Comportamiento por default (sin la variable nueva configurada):
+    idéntico a como funcionaba antes de este cambio -- no rompe ningún
+    entorno que todavía no la seteó."""
+    monkeypatch.delenv("TOTP_ENCRYPTION_KEY", raising=False)
+    secreto = generar_secreto()
+    cifrado = _encriptar_secreto(secreto)
+    assert _desencriptar_secreto(cifrado) == secreto
+
+
+def test_con_totp_encryption_key_configurada_se_usa_para_cifrar(monkeypatch):
+    clave = Fernet.generate_key().decode("utf-8")
+    monkeypatch.setenv("TOTP_ENCRYPTION_KEY", clave)
+    secreto = generar_secreto()
+    cifrado = _encriptar_secreto(secreto)
+    assert _desencriptar_secreto(cifrado) == secreto
+    # Descifra directo con esa clave -- confirma que es la que se usó de
+    # verdad, no la legacy derivada de JWT_SECRET.
+    assert Fernet(clave.encode("utf-8")).decrypt(cifrado.encode("utf-8")).decode("utf-8") == secreto
+
+
+def test_secreto_legacy_sigue_descifrando_despues_de_activar_totp_encryption_key(monkeypatch):
+    """El caso real: un totp_secret ya se cifró con la derivación legacy
+    (JWT_SECRET) ANTES de que TOTP_ENCRYPTION_KEY existiera. Configurar la
+    variable nueva no debe dejar a ese usuario sin poder loguearse -- el
+    fallback a la clave legacy tiene que seguir funcionando."""
+    monkeypatch.delenv("TOTP_ENCRYPTION_KEY", raising=False)
+    secreto = generar_secreto()
+    cifrado_legacy = _encriptar_secreto(secreto)  # con la derivación de JWT_SECRET
+
+    monkeypatch.setenv("TOTP_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+    assert _desencriptar_secreto(cifrado_legacy) == secreto
+
+
+def test_rotar_jwt_secret_no_rompe_un_secreto_cifrado_con_totp_encryption_key(monkeypatch):
+    """La prueba central de que el desacople funciona: con
+    TOTP_ENCRYPTION_KEY configurada, rotar JWT_SECRET (como pasaría en una
+    rotación real) NO afecta la capacidad de descifrar un totp_secret ya
+    guardado -- antes de este cambio, esto lo dejaba indescifrable para
+    siempre."""
+    monkeypatch.setenv("TOTP_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8"))
+    monkeypatch.setenv("JWT_SECRET", "secreto-original")
+    secreto = generar_secreto()
+    cifrado = _encriptar_secreto(secreto)
+
+    monkeypatch.setenv("JWT_SECRET", "secreto-rotado-completamente-distinto")
+    assert _desencriptar_secreto(cifrado) == secreto

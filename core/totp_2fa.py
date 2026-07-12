@@ -23,11 +23,17 @@ Diseño:
     `refresh_tokens.token_hash` en schema_semana1_vridik.sql: el valor
     real nunca se persiste en claro.
 
-`totp_secret` se cifra en reposo con Fernet (clave derivada de JWT_SECRET,
-ver `_fernet()`) antes de cualquier escritura en `users.totp_secret` — nunca
-se persiste en texto plano. `ensure_totp_columns()` agrega las columnas de
-forma idempotente (mismo patrón que `core.auth.ensure_users_table`), ya
-que `migrations/004_totp_2fa.sql` nunca se corrió contra Postgres real.
+`totp_secret` se cifra en reposo con Fernet (ver `_fernet()`) antes de
+cualquier escritura en `users.totp_secret` — nunca se persiste en texto
+plano. Clave: `TOTP_ENCRYPTION_KEY` (propia, independiente de JWT_SECRET
+-- roadmap S12-13, agregada antes de la rotación de JWT_SECRET para que
+esa rotación no vuelva indescifrable ningún `totp_secret` ya guardado) si
+está configurada; si no, cae a derivarla de JWT_SECRET (`_fernet_legacy()`,
+diseño original de S12, se mantiene solo para poder descifrar lo que ya se
+haya cifrado así antes de que la variable nueva existiera).
+`ensure_totp_columns()` agrega las columnas de forma idempotente (mismo
+patrón que `core.auth.ensure_users_table`), ya que
+`migrations/004_totp_2fa.sql` nunca se corrió contra Postgres real.
 
 Expuesto vía HTTP en api/auth_endpoint.py (Sprint S12):
 POST /auth/2fa/setup, POST /auth/2fa/verify, POST /auth/2fa/login.
@@ -60,9 +66,10 @@ except ImportError:  # pragma: no cover
     pyotp = None  # type: ignore
 
 try:
-    from cryptography.fernet import Fernet
+    from cryptography.fernet import Fernet, InvalidToken
 except ImportError:  # pragma: no cover
     Fernet = None  # type: ignore
+    InvalidToken = Exception  # type: ignore
 
 ISSUER_NAME = "Vridik"
 VENTANA_VALIDEZ_PASOS = 1  # tolera +-1 paso de 30s (drift de reloj del celular)
@@ -98,28 +105,62 @@ def verificar_codigo(secreto: str, codigo: str, *, ventana: int = VENTANA_VALIDE
     return pyotp.totp.TOTP(secreto).verify(codigo, valid_window=ventana)
 
 
-def _fernet() -> "Fernet":
-    """Clave Fernet derivada de JWT_SECRET (SHA-256 -> base64 urlsafe) —
-    ningún secreto nuevo que administrar por separado; si JWT_SECRET rota,
-    los `totp_secret` cifrados con la clave anterior dejan de poder
-    descifrarse (mismo trade-off que invalidar todos los JWT existentes)."""
+def _requiere_cryptography() -> None:
     if Fernet is None:
         raise RuntimeError("core.totp_2fa requiere 'cryptography' instalado (pip install cryptography)")
+
+
+def _fernet_legacy() -> "Fernet":
+    """Clave derivada de JWT_SECRET (SHA-256 -> base64 urlsafe) -- diseño
+    original de S12, ya no se usa para cifrar nada nuevo. Se conserva
+    SOLO para poder descifrar `totp_secret` que ya se hayan guardado con
+    ella antes de que existiera TOTP_ENCRYPTION_KEY (ver _fernet())."""
+    _requiere_cryptography()
     jwt_secret = os.environ.get("JWT_SECRET", "")
     if not jwt_secret:
-        raise RuntimeError("JWT_SECRET no configurado: requerido para cifrar/descifrar totp_secret")
+        raise RuntimeError("JWT_SECRET no configurado: requerido para descifrar un totp_secret legacy")
     clave = base64.urlsafe_b64encode(hashlib.sha256(jwt_secret.encode("utf-8")).digest())
     return Fernet(clave)
 
 
+def _fernet() -> "Fernet":
+    """Roadmap S12-13 (hardening, previo a la rotación de JWT_SECRET):
+    `TOTP_ENCRYPTION_KEY` es una clave Fernet PROPIA, independiente de
+    JWT_SECRET -- antes de este cambio, rotar JWT_SECRET dejaba todo
+    `totp_secret` ya cifrado permanentemente indescifrable (la clave
+    Fernet se derivaba de él). Sin TOTP_ENCRYPTION_KEY configurada, cae a
+    _fernet_legacy() -- mismo comportamiento que antes, para no romper
+    nada en un entorno que todavía no seteó la variable nueva (local,
+    tests, o producción antes de que se configure)."""
+    _requiere_cryptography()
+    clave_directa = os.environ.get("TOTP_ENCRYPTION_KEY", "")
+    if clave_directa:
+        return Fernet(clave_directa.encode("utf-8"))
+    return _fernet_legacy()
+
+
 def _encriptar_secreto(secreto: str) -> str:
     """`totp_secret` nunca se persiste en texto plano — se cifra en reposo
-    con Fernet antes de cualquier `UPDATE users SET totp_secret = ...`."""
+    con Fernet antes de cualquier `UPDATE users SET totp_secret = ...`.
+    Siempre con la clave ACTUAL (`_fernet()`, TOTP_ENCRYPTION_KEY si está
+    configurada) -- nunca se vuelve a cifrar nada con la legacy."""
     return _fernet().encrypt(secreto.encode("utf-8")).decode("utf-8")
 
 
 def _desencriptar_secreto(secreto_cifrado: str) -> str:
-    return _fernet().decrypt(secreto_cifrado.encode("utf-8")).decode("utf-8")
+    """Intenta con la clave actual primero. Si falla Y hay una
+    TOTP_ENCRYPTION_KEY configurada (o sea: la clave actual YA NO es la
+    legacy), reintenta con la legacy antes de fallar de verdad -- cubre
+    exactamente el caso de un `totp_secret` que se cifró ANTES de que
+    TOTP_ENCRYPTION_KEY existiera. Sin esto, activar la variable nueva
+    en un entorno con usuarios ya enrolados los dejaría sin poder
+    loguearse hasta re-enrolarse a mano."""
+    try:
+        return _fernet().decrypt(secreto_cifrado.encode("utf-8")).decode("utf-8")
+    except InvalidToken:
+        if not os.environ.get("TOTP_ENCRYPTION_KEY", ""):
+            raise
+        return _fernet_legacy().decrypt(secreto_cifrado.encode("utf-8")).decode("utf-8")
 
 
 async def ensure_totp_columns(db_connection) -> None:
