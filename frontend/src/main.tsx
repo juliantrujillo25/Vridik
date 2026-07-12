@@ -6,6 +6,7 @@ import { LoginPage } from "./auth/LoginPage";
 import { ProtectedLayout } from "./Layout";
 import { CasosListPage } from "./casos/CasosListPage";
 import { CasoDetailPage } from "./casos/CasoDetailPage";
+import { AccountPage } from "./account/AccountPage";
 import "./index.css";
 import "./layout.css";
 
@@ -18,6 +19,7 @@ const router = createBrowserRouter([
       { index: true, element: <Navigate to="/casos" replace /> },
       { path: "casos", element: <CasosListPage /> },
       { path: "casos/:id", element: <CasoDetailPage /> },
+      { path: "cuenta", element: <AccountPage /> },
     ],
   },
   { path: "*", element: <Navigate to="/casos" replace /> },

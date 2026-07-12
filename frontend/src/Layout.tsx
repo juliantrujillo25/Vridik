@@ -1,4 +1,4 @@
-import { Navigate, Outlet, useNavigate } from "react-router-dom";
+import { Link, Navigate, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "./auth/AuthContext";
 
 /** Envuelve las rutas que requieren sesión: si no hay, manda a /login. */
@@ -17,12 +17,15 @@ export function ProtectedLayout() {
     <div className="app-shell">
       <header className="app-header">
         <div className="app-header-inner">
-          <a className="brand" href="/casos">
+          <Link className="brand" to="/casos">
             <span className="brand-mark" aria-hidden="true">§</span>
             Vridik
             <span className="brand-sub">copiloto legal</span>
-          </a>
-          <button className="btn btn-ghost btn-sm" onClick={onLogout}>Salir</button>
+          </Link>
+          <nav className="app-nav">
+            <Link className="btn btn-ghost btn-sm" to="/cuenta">Cuenta</Link>
+            <button className="btn btn-ghost btn-sm" onClick={onLogout}>Salir</button>
+          </nav>
         </div>
       </header>
       <main className="app-main">

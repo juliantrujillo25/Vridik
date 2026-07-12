@@ -1,0 +1,193 @@
+import { useEffect, useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
+import { api, SesionExpiradaError } from "../api/client";
+import type { Perfil, Setup2FAResponse } from "../api/types";
+
+type Paso = "cargando" | "inactivo" | "qr" | "codigos" | "activo";
+
+export function AccountPage() {
+  const navigate = useNavigate();
+  const [perfil, setPerfil] = useState<Perfil | null>(null);
+  const [paso, setPaso] = useState<Paso>("cargando");
+  const [error, setError] = useState<string | null>(null);
+
+  const [setup, setSetup] = useState<Setup2FAResponse | null>(null);
+  const [code, setCode] = useState("");
+  const [verificando, setVerificando] = useState(false);
+  const [codigosRespaldo, setCodigosRespaldo] = useState<string[] | null>(null);
+  const [confirmoGuardar, setConfirmoGuardar] = useState(false);
+
+  function manejarError(err: unknown, fallback: string) {
+    if (err instanceof SesionExpiradaError) return navigate("/login", { replace: true });
+    setError(err instanceof Error ? err.message : fallback);
+  }
+
+  async function cargar() {
+    setError(null);
+    try {
+      const p = await api.me();
+      setPerfil(p);
+      setPaso(p.totp_enabled ? "activo" : "inactivo");
+    } catch (err) {
+      manejarError(err, "No se pudo cargar tu cuenta.");
+    }
+  }
+
+  useEffect(() => {
+    void cargar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function onIniciarSetup() {
+    setError(null);
+    try {
+      setSetup(await api.setup2fa());
+      setPaso("qr");
+    } catch (err) {
+      manejarError(err, "No se pudo generar el código de activación.");
+    }
+  }
+
+  async function onVerificar(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setVerificando(true);
+    try {
+      const res = await api.verify2fa(code.trim());
+      setCodigosRespaldo(res.codigos_respaldo);
+      setPaso("codigos");
+    } catch (err) {
+      manejarError(err, "Código inválido.");
+    } finally {
+      setVerificando(false);
+    }
+  }
+
+  function onTerminar() {
+    setCode("");
+    setSetup(null);
+    setCodigosRespaldo(null);
+    setConfirmoGuardar(false);
+    void cargar();
+  }
+
+  if (paso === "cargando" || !perfil) {
+    return (
+      <div className="page">
+        <div className="empty muted"><span className="spinner" /> Cargando…</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="page page-narrow">
+      <p className="eyebrow">Cuenta</p>
+      <h1 className="page-title">Tu cuenta</h1>
+
+      {error && <div className="alert error" role="alert">{error}</div>}
+
+      <div className="card account-card">
+        <div className="account-row">
+          <span className="muted">Email</span>
+          <span className="mono">{perfil.email}</span>
+        </div>
+        <div className="account-row">
+          <span className="muted">Rol</span>
+          <span className="mono">{perfil.role}</span>
+        </div>
+      </div>
+
+      <section className="section">
+        <h2 className="section-title">Verificación en dos pasos</h2>
+
+        {paso === "activo" && (
+          <div className="card twofa-status">
+            <span className="pill abierto">2FA activo</span>
+            <p className="muted twofa-status-note">
+              Si perdiste el dispositivo, pedile a un admin que reinicie tu 2FA desde el panel.
+            </p>
+          </div>
+        )}
+
+        {paso === "inactivo" && (
+          <div className="card twofa-status">
+            <span className="pill en_progreso">2FA no activado</span>
+            <p className="muted twofa-status-note">
+              Agregá un segundo paso de verificación con una app como Google Authenticator o Authy.
+            </p>
+            <button className="btn btn-primary" onClick={onIniciarSetup}>Activar 2FA</button>
+          </div>
+        )}
+
+        {paso === "qr" && setup && (
+          <div className="card twofa-setup">
+            <p className="twofa-step-label">Paso 1 de 2 — Escaneá el código</p>
+            <div className="twofa-qr-wrap">
+              <img
+                className="twofa-qr"
+                src={`data:image/png;base64,${setup.qr_code_base64}`}
+                alt="Código QR para configurar la verificación en dos pasos"
+              />
+            </div>
+            <details className="twofa-manual">
+              <summary>¿No podés escanear? Ingresalo a mano</summary>
+              <p className="muted twofa-manual-note">
+                En tu app, elegí "ingresar clave manualmente" y pegá esta URI de configuración:
+              </p>
+              <code className="mono twofa-uri">{setup.otpauth_uri}</code>
+            </details>
+
+            <form className="twofa-code-form" onSubmit={onVerificar}>
+              <div className="field">
+                <label htmlFor="twofa-code">Código de 6 dígitos</label>
+                <input
+                  id="twofa-code"
+                  className="input mono"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  required
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\s/g, ""))}
+                  placeholder="000000"
+                />
+              </div>
+              <div className="twofa-actions">
+                <button className="btn btn-ghost btn-sm" type="button" onClick={onTerminar}>Cancelar</button>
+                <button className="btn btn-primary" type="submit" disabled={verificando || code.length !== 6}>
+                  {verificando ? <span className="spinner" /> : null}
+                  {verificando ? "Verificando…" : "Confirmar"}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {paso === "codigos" && codigosRespaldo && (
+          <div className="card twofa-setup">
+            <p className="twofa-step-label">Paso 2 de 2 — Guardá tus códigos de respaldo</p>
+            <div className="alert warn">
+              Estos 8 códigos son la única forma de entrar si perdés el teléfono. Se muestran <strong>una sola vez</strong>.
+            </div>
+            <ul className="backup-codes">
+              {codigosRespaldo.map((c) => (
+                <li key={c} className="mono">{c}</li>
+              ))}
+            </ul>
+            <label className="check backup-confirm">
+              <input
+                type="checkbox"
+                checked={confirmoGuardar}
+                onChange={(e) => setConfirmoGuardar(e.target.checked)}
+              />
+              Ya guardé estos códigos en un lugar seguro
+            </label>
+            <button className="btn btn-primary" disabled={!confirmoGuardar} onClick={onTerminar}>
+              Listo
+            </button>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}

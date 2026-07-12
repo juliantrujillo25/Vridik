@@ -13,6 +13,8 @@ import type {
   CrearDocumentoInput,
   EstadoCaso,
   LoginResponse,
+  Perfil,
+  Setup2FAResponse,
   TokenPair,
   Verify2FAResponse,
 } from "./types";
@@ -178,12 +180,16 @@ class ApiClient {
     this.clearSession();
   }
 
-  // --- 2FA (requieren access token) ---------------------------------------
-  async setup2fa(): Promise<{ otpauth_uri: string; qr_code_base64: string }> {
+  // --- perfil / 2FA (requieren access token) -------------------------------
+  me(): Promise<Perfil> {
+    return this.request("/auth/me");
+  }
+
+  setup2fa(): Promise<Setup2FAResponse> {
     return this.request("/auth/2fa/setup", { method: "POST" });
   }
 
-  async verify2fa(code: string): Promise<Verify2FAResponse> {
+  verify2fa(code: string): Promise<Verify2FAResponse> {
     return this.request("/auth/2fa/verify", { method: "POST", body: JSON.stringify({ code }) });
   }
 

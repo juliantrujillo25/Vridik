@@ -25,6 +25,19 @@ export interface Verify2FAResponse {
   codigos_respaldo: string[];
 }
 
+export interface Setup2FAResponse {
+  otpauth_uri: string;
+  qr_code_base64: string;
+}
+
+// GET /auth/me
+export interface Perfil {
+  id: string;
+  email: string;
+  role: "admin" | "abogado" | "cliente";
+  totp_enabled: boolean;
+}
+
 export type EstadoCaso = "abierto" | "en_progreso" | "cerrado";
 
 export interface Caso {
