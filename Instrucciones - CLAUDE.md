@@ -370,6 +370,56 @@ gaps reales, elegidos por el dev lead para cerrar en esta sesión:
   despliegue** -- hasta entonces, el panel admin de producción queda
   inaccesible para esa cuenta.
 
+  **Enrolamiento real completado.** La única cuenta admin de
+  producción no tenía email/password conocidos por el dev lead (era de
+  una sesión anterior) -- se le reseteó la password vía
+  `core.admin_users.resetear_password()` (mismo mecanismo tested que
+  `POST /admin/users/{id}/reset-password`, corrido como script directo
+  contra Postgres porque hacía falta ya-ser-admin para llamarlo por
+  HTTP, circular). La password temporal se entregó al dev lead vía un
+  archivo local (nunca impresa en la salida de una herramienta --
+  bloqueado una vez por el classifier de auto-mode por intentar
+  imprimirla, correctamente). El dev lead hizo login, generó el
+  secreto TOTP, lo cargó a mano en su autenticador (el QR salió
+  corrupto por un problema de encoding en PowerShell -- se usó el
+  `secret` crudo de la `otpauth_uri` en vez del PNG) y confirmó la
+  activación. Verificado end-to-end: login con 2FA real, canje de
+  `temp_token`, y `GET /admin/users` responde 20 usuarios con la
+  cuenta real y 2FA activo. `must_enroll` queda cerrado de punta a
+  punta, no solo desplegado.
+
+## Rollback de la migración de auth (roadmap S1) — CERRADO
+
+`ROLLBACK.md` (nuevo, raíz del repo): el rollback de referencia que
+tenía comentado `migrations/005_auth_roles_refresh_tokens.sql` decía
+"Fase A es puramente aditiva, revertirla no afecta el código actual" --
+eso dejó de ser cierto en algún punto de esta sesión. Mapeo real de
+dependencias hecho con grep contra el código actual (no supuesto):
+`user_credentials` es la fuente REAL de `password_hash` desde la Fase C
+(ya no una copia aditiva en paralelo), `auth_events` es load-bearing
+para `core/rate_limit.py::excede_limite_login()` (el login entero
+tira 500 sin esa tabla) y para el reset de 2FA, `refresh_tokens`
+sostiene toda sesión activa. Un `DROP TABLE` a ciegas hoy rompe
+producción.
+
+Procedimiento real documentado: como toda migración de este proyecto es
+aditiva (regla no negociable), código de una versión anterior siempre
+corre seguro contra el esquema actual (más nuevo) -- el rollback
+correcto es de **código** (redeploy de un commit anterior / rollback
+nativo de Railway a un deployment previo), no de esquema. Limitación
+declarada explícitamente en el propio documento: este proyecto no tiene
+un entorno de staging real (solo Railway producción + el service
+container efímero de CI), así que "ensayado en staging" no se pudo
+hacer de forma literal -- se documentó qué SÍ se verificó en su lugar
+(el mapeo de dependencias real, y que el principio de aditividad nunca
+se violó) en vez de afirmar un ensayo que no ocurrió.
+
+También se corrigió el comentario de rollback desactualizado en
+`migrations/005_auth_roles_refresh_tokens.sql` (apunta a `ROLLBACK.md`
+ahora) y se anotó `schema_semana1_vridik.sql` (el schema de CI del
+roadmap-track, nunca aplicado contra Railway real) para que no se
+confunda con lo que hay que revertir en producción.
+
 ## Consolidación de producto (post-auditoría)
 
 Decisión del dev lead: **el copiloto legal (JuliX/RAG) es el producto

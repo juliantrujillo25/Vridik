@@ -134,14 +134,13 @@ CREATE INDEX IF NOT EXISTS ix_auth_events_created_at ON auth_events (created_at 
 
 COMMIT;
 
--- Rollback de referencia (Fase A es puramente aditiva -- revertirla no
--- afecta el código actual, que sigue leyendo users.role/hashed_password):
--- DROP TABLE IF EXISTS auth_events;
--- DROP TABLE IF EXISTS refresh_tokens;
--- DROP TABLE IF EXISTS user_credentials;
--- ALTER TABLE users DROP COLUMN IF EXISTS role_id, DROP COLUMN IF EXISTS nombre_completo,
---     DROP COLUMN IF EXISTS must_change, DROP COLUMN IF EXISTS last_login_at,
---     DROP COLUMN IF EXISTS updated_at, DROP COLUMN IF EXISTS deactivated_at,
---     DROP COLUMN IF EXISTS deleted_at;
--- DROP TABLE IF EXISTS roles;
--- (email vuelto a TEXT: ALTER TABLE users ALTER COLUMN email TYPE TEXT;)
+-- ROLLBACK: el DROP TABLE que estaba acá comentado quedó OBSOLETO -- se
+-- escribió cuando la Fase A era puramente aditiva y nada más dependía de
+-- estas tablas. Ya no es así: user_credentials es la fuente REAL de
+-- password_hash (Fase C, S1-GAP-01), auth_events es load-bearing para
+-- rate limiting de login (core/rate_limit.py) y reset de 2FA, y
+-- refresh_tokens sostiene toda sesión activa. Correr un DROP TABLE
+-- ciego contra esto ROMPE producción. Ver ROLLBACK.md (raíz del repo)
+-- para el procedimiento real -- hoy, el rollback recomendado es de
+-- código (redeploy de un commit anterior contra el esquema actual, que
+-- sigue siendo un superset aditivo compatible), no de esquema.

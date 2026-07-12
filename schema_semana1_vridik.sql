@@ -151,6 +151,14 @@ COMMIT;
 --    legacy y cómo revertir este script (DROP en orden inverso de FKs).
 -- =====================================================================
 
+-- Nota (agregada al escribir ROLLBACK.md, raíz del repo): este schema
+-- SOLO se aplica en CI (.github/workflows/ci.yml, service container
+-- efímero) -- nunca contra la Postgres real de Railway, que corre
+-- migrations/005_auth_roles_refresh_tokens.sql en su lugar. ROLLBACK.md
+-- documenta el rollback de esa migración real (con el mapeo de
+-- dependencias actual); el DROP de referencia de abajo describe este
+-- schema de CI/roadmap-track, no lo que hay que revertir en producción.
+--
 -- Rollback de referencia (ejecutar solo desde ROLLBACK.md, en ese orden):
 -- DROP TABLE IF EXISTS auth_events;
 -- DROP TABLE IF EXISTS refresh_tokens;
