@@ -115,7 +115,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    # El frontend (frontend/, React) usa PATCH (casos: estado/abogado) y
+    # DELETE (mensajes) además de GET/POST -- sin listarlos acá el preflight
+    # de CORS los bloquea en producción (frontend en otro origen que la API).
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
 

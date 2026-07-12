@@ -1,0 +1,196 @@
+/* Sistema de diseño de Vridik — misma identidad que la página de estado del
+   proyecto: papel neutro frío, acento pino "verificado/legal", sans de
+   sistema + monoespaciada para datos. Ambos temas. */
+
+:root {
+  --paper: #f6f7f6;
+  --surface: #ffffff;
+  --surface-2: #eef0ef;
+  --ink: #1a2023;
+  --ink-soft: #495057;
+  --ink-faint: #7c858b;
+  --hair: #dfe3e1;
+  --accent: #2e6e5d;
+  --accent-ink: #ffffff;
+  --accent-soft: #e4efe9;
+  --good: #37866a;
+  --good-bg: #e2efe8;
+  --warn: #9a6c14;
+  --warn-bg: #f4ebd6;
+  --danger: #b23b3b;
+  --danger-bg: #f5e3e1;
+  --muted: #616a72;
+  --muted-bg: #e7eaec;
+  --shadow: 0 1px 2px rgba(20, 30, 28, 0.05), 0 8px 24px rgba(20, 30, 28, 0.04);
+  --mono: "Cascadia Code", "SF Mono", "JetBrains Mono", "Roboto Mono", Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --radius: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #13171a;
+    --surface: #1a1f22;
+    --surface-2: #22282b;
+    --ink: #e4e9e8;
+    --ink-soft: #aeb6b6;
+    --ink-faint: #7d8788;
+    --hair: #2b3236;
+    --accent: #57b096;
+    --accent-ink: #0e1512;
+    --accent-soft: #1e2f2a;
+    --good: #5cae90;
+    --good-bg: #1c2f28;
+    --warn: #d0a03f;
+    --warn-bg: #322a17;
+    --danger: #e07a6f;
+    --danger-bg: #34211f;
+    --muted: #8b949b;
+    --muted-bg: #262c30;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px rgba(0, 0, 0, 0.28);
+  }
+}
+:root[data-theme="light"] {
+  --paper: #f6f7f6; --surface: #ffffff; --surface-2: #eef0ef;
+  --ink: #1a2023; --ink-soft: #495057; --ink-faint: #7c858b; --hair: #dfe3e1;
+  --accent: #2e6e5d; --accent-ink: #ffffff; --accent-soft: #e4efe9;
+  --good: #37866a; --good-bg: #e2efe8; --warn: #9a6c14; --warn-bg: #f4ebd6;
+  --danger: #b23b3b; --danger-bg: #f5e3e1; --muted: #616a72; --muted-bg: #e7eaec;
+  --shadow: 0 1px 2px rgba(20, 30, 28, 0.05), 0 8px 24px rgba(20, 30, 28, 0.04);
+}
+:root[data-theme="dark"] {
+  --paper: #13171a; --surface: #1a1f22; --surface-2: #22282b;
+  --ink: #e4e9e8; --ink-soft: #aeb6b6; --ink-faint: #7d8788; --hair: #2b3236;
+  --accent: #57b096; --accent-ink: #0e1512; --accent-soft: #1e2f2a;
+  --good: #5cae90; --good-bg: #1c2f28; --warn: #d0a03f; --warn-bg: #322a17;
+  --danger: #e07a6f; --danger-bg: #34211f; --muted: #8b949b; --muted-bg: #262c30;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px rgba(0, 0, 0, 0.28);
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a { color: var(--accent); }
+
+h1, h2, h3 { letter-spacing: -0.01em; text-wrap: balance; }
+
+/* --- eyebrow / labels --- */
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+  margin: 0;
+}
+
+/* --- botones --- */
+.btn {
+  font-family: var(--sans);
+  font-size: 0.92rem;
+  font-weight: 550;
+  padding: 0.6rem 1.05rem;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, opacity 0.14s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.btn-primary { background: var(--accent); color: var(--accent-ink); }
+.btn-primary:hover:not(:disabled) { filter: brightness(1.06); }
+.btn-ghost { background: transparent; color: var(--ink-soft); border-color: var(--hair); }
+.btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
+.btn-sm { padding: 0.4rem 0.75rem; font-size: 0.85rem; }
+
+/* --- inputs --- */
+.field { display: flex; flex-direction: column; gap: 0.4rem; }
+.field label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  letter-spacing: 0.01em;
+}
+.input, .textarea, .select {
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  padding: 0.62rem 0.8rem;
+  width: 100%;
+}
+.textarea { resize: vertical; min-height: 5.5rem; line-height: 1.5; }
+.input:focus, .textarea:focus, .select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.input.mono { font-family: var(--mono); letter-spacing: 0.18em; text-align: center; font-size: 1.15rem; }
+
+/* --- cards --- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hair);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+/* --- pills de estado --- */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.26em 0.6em;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.pill.abierto { color: var(--accent); background: var(--accent-soft); }
+.pill.en_progreso { color: var(--warn); background: var(--warn-bg); }
+.pill.cerrado { color: var(--muted); background: var(--muted-bg); }
+
+/* --- mensajes de error / aviso --- */
+.alert {
+  border-radius: var(--radius);
+  padding: 0.7rem 0.9rem;
+  font-size: 0.88rem;
+  border: 1px solid transparent;
+}
+.alert.error { background: var(--danger-bg); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
+.alert.warn { background: var(--warn-bg); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+
+/* --- utilidades --- */
+.mono { font-family: var(--mono); }
+.faint { color: var(--ink-faint); }
+.muted { color: var(--ink-soft); }
+.spinner {
+  width: 1em; height: 1em;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
