@@ -448,18 +448,62 @@ migración coordinada ni ventana de corte. Confirmado con test real
 cifrar con `TOTP_ENCRYPTION_KEY` configurada, rotar `JWT_SECRET` por
 completo, y descifrar sigue funcionando.
 
-**Pendiente, siguiente paso:** generar y configurar `TOTP_ENCRYPTION_KEY`
-en Railway (una vez desplegado este código), y recién ahí seguir con el
-soporte real de rotación de `JWT_SECRET` (doble clave en
-`decode_jwt`/`decode_temp_2fa_token`) + `SECURITY.md`. Análisis hecho
-sobre el impacto real de rotar JWT_SECRET sin soporte de doble clave:
-los access tokens duran 15 min y los refresh tokens NO son JWT (son
-tokens opacos hasheados, no dependen de JWT_SECRET en absoluto) -- una
-sesión con refresh token válido se recupera sola en ≤15 min vía
-`POST /auth/refresh`, sin necesitar decodificar nada con la clave
-vieja. El caso que sí necesita doble clave de verdad es
-`create_temp_2fa_token`/`decode_temp_2fa_token` (5 min de vida, entre
-login y confirmación de 2FA) si la rotación cae justo en ese margen.
+**Paso 1 desplegado y verificado.** `TOTP_ENCRYPTION_KEY` generada
+(Fernet) y configurada en Railway vía `railway variable set --stdin`
+(la clave nunca tocó la salida de ninguna herramienta). El redeploy la
+cargó; verificado end-to-end en producción real con un usuario de
+prueba: enrolar 2FA (cifra con la clave nueva) + login con 2FA
+(descifra con la clave nueva) funciona. La cuenta admin real sigue
+usando el fallback legacy (su secreto se cifró antes de que la variable
+existiera) -- sin romperse.
+
+## Rotación de JWT_SECRET — paso 2: soporte de doble clave + SECURITY.md — CERRADO
+
+`core/auth.py`: las claves de firma/verificación se leen de `os.environ`
+en CADA llamada (antes eran constante de módulo leída al importar) --
+por dos motivos: que una rotación vía variable + redeploy tome efecto
+sin reimportar, y que los tests puedan monkeypatchear. Firmar
+(`create_jwt`/`create_temp_2fa_token`) usa siempre la clave ACTUAL
+(`_jwt_secret_actual()`); verificar (`decode_jwt`/`decode_temp_2fa_token`)
+acepta la actual Y la anterior (`JWT_SECRET_PREVIOUS`, si está
+configurada, vía `jwt_secrets_para_verificar()`). Un token expirado se
+corta como resultado definitivo (no se prueba la otra clave -- la firma
+ya era válida con la primera). `api/julix_endpoint.py::_decodificar_jwt`
+reutiliza la misma `jwt_secrets_para_verificar()` (no duplica la lista
+de claves de la ventana de rotación).
+
+`SECURITY.md` (nuevo): procedimiento de rotación de 5 pasos (guardar la
+actual como PREVIOUS → poner la nueva → verificar la ventana → esperar
+~15 min a que caduquen los access tokens viejos → borrar PREVIOUS),
+tabla de qué depende de `JWT_SECRET` y qué NO (refresh tokens son
+opacos, no JWT; contraseñas bcrypt; totp_secret ya desacoplado), y la
+limitación honesta de "ensayado en staging" (no hay staging real -- se
+documentó qué SÍ se verificó: los tests de doble clave y el desacople
+TOTP end-to-end en producción).
+
+`tests/test_jwt_rotation.py` (nuevo, 12 tests): token viejo valida
+durante la ventana y deja de valer al cerrarla, token nuevo valida,
+clave desconocida se rechaza, expirado se rechaza, temp token de 2FA
+emitido antes de rotar se canjea durante la ventana, un access token
+normal nunca sirve como temp token de 2FA. Efecto colateral del cambio
+import-time → call-time: `tests/test_julix_stream.py` parcheaba el
+atributo de módulo `JWT_SECRET` (ya no surte efecto) -- se cambió a
+`monkeypatch.setenv`, mismo resultado.
+
+Análisis que respaldó el diseño: el impacto real de rotar `JWT_SECRET`
+es acotado porque los refresh tokens NO son JWT (tokens opacos
+hasheados, no dependen de la clave) -- una sesión con refresh válido se
+recupera sola en ≤15 min vía `POST /auth/refresh`. La doble clave cubre
+la ventana de esos 15 min (access tokens) y los 5 min del temp token de
+2FA, para que nadie con una sesión activa vea un 401 durante la
+rotación.
+
+**Pendiente: la rotación en sí NO se ejecutó** -- solo el soporte está
+desplegado. `JWT_SECRET_PREVIOUS` no está configurada (no hay rotación
+en curso), así que el comportamiento es idéntico al de antes.
+Ejecutarla es un procedimiento operativo (ver SECURITY.md), a correr
+solo si hace falta (sospecha de filtración, o rotación preventiva) --
+no es trabajo de código pendiente.
 
 ## Consolidación de producto (post-auditoría)
 

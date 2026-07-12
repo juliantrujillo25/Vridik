@@ -74,6 +74,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from core.auth import jwt_secrets_para_verificar
 from core.feature_flag_legacy import use_postgres
 from julix.context_builder import RankedChunk
 from julix.client import JuliXClient
@@ -188,13 +189,21 @@ def _decodificar_jwt(authorization: str | None) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Falta el header Authorization: Bearer <token>")
     token = authorization[len("Bearer "):].strip()
-    try:
-        claims = pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-    except pyjwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expirado")
-    except pyjwt.InvalidTokenError as exc:
-        raise HTTPException(status_code=401, detail=f"Token inválido: {exc}")
-    return claims
+
+    # Rotación de JWT_SECRET (roadmap S12-13): mismo conjunto de claves que
+    # core.auth.decode_jwt (actual + JWT_SECRET_PREVIOUS si hay rotación en
+    # curso), para no duplicar la lógica de ventana de rotación. Un token
+    # expirado es un resultado definitivo -- se corta sin probar la otra
+    # clave (la firma ya era válida con esta).
+    ultima_exc = None
+    for secret in jwt_secrets_para_verificar():
+        try:
+            return pyjwt.decode(token, secret, algorithms=["HS256"])
+        except pyjwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token expirado")
+        except pyjwt.InvalidTokenError as exc:
+            ultima_exc = exc
+    raise HTTPException(status_code=401, detail=f"Token inválido: {ultima_exc}")
 
 
 class ChunkCandidato(BaseModel):

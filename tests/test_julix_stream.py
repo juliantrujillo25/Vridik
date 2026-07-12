@@ -26,11 +26,14 @@ JWT_SECRET_TEST = "vridik-test-sse-secret-nunca-usar-en-produccion"
 
 @pytest.fixture(autouse=True)
 def _jwt_secret_de_prueba(monkeypatch):
-    """El módulo lee JWT_SECRET una sola vez al importarse (nivel de
-    módulo) — se parchea directamente el atributo del módulo en vez de
-    depender de la variable de entorno, que ya no surtiría efecto tras el
-    import."""
-    monkeypatch.setattr(julix_endpoint_module, "JWT_SECRET", JWT_SECRET_TEST)
+    """Roadmap S12-13 (rotación de JWT_SECRET): la verificación de tokens
+    ahora lee la clave de `os.environ` en cada llamada (vía
+    core.auth.jwt_secrets_para_verificar, reutilizada por
+    api/julix_endpoint.py::_decodificar_jwt) -- antes era una constante de
+    módulo leída al importar. Por eso ahora se setea la variable de
+    entorno en vez de parchear el atributo del módulo."""
+    monkeypatch.setenv("JWT_SECRET", JWT_SECRET_TEST)
+    monkeypatch.delenv("JWT_SECRET_PREVIOUS", raising=False)
     monkeypatch.setenv("JULIX_RATE_LIMIT_ENABLED", "false")
     julix_endpoint_module._rate_limit_buckets.clear()
     yield
