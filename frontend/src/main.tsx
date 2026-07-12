@@ -7,6 +7,7 @@ import { ProtectedLayout } from "./Layout";
 import { CasosListPage } from "./casos/CasosListPage";
 import { CasoDetailPage } from "./casos/CasoDetailPage";
 import { AccountPage } from "./account/AccountPage";
+import { AdminPage } from "./admin/AdminPage";
 import "./index.css";
 import "./layout.css";
 
@@ -20,6 +21,7 @@ const router = createBrowserRouter([
       { path: "casos", element: <CasosListPage /> },
       { path: "casos/:id", element: <CasoDetailPage /> },
       { path: "cuenta", element: <AccountPage /> },
+      { path: "admin", element: <AdminPage /> },
     ],
   },
   { path: "*", element: <Navigate to="/casos" replace /> },

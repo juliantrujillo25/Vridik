@@ -30,11 +30,13 @@ export interface Setup2FAResponse {
   qr_code_base64: string;
 }
 
+export type Role = "admin" | "abogado" | "cliente";
+
 // GET /auth/me
 export interface Perfil {
   id: string;
   email: string;
-  role: "admin" | "abogado" | "cliente";
+  role: Role;
   totp_enabled: boolean;
 }
 
@@ -92,4 +94,33 @@ export interface MessageNewEvent extends EventoSSE {
   caso_id: string;
   conversacion_id: string;
   mensaje_id: string;
+}
+
+// --- panel admin (roadmap S2) ----------------------------------------------
+export interface AdminUser {
+  id: string;
+  email: string;
+  role: Role;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface CrearUsuarioAdminInput {
+  email: string;
+  password: string;
+  role: Role;
+}
+
+export interface AuthEvent {
+  id: string;
+  event_type: string;
+  metadata: Record<string, unknown> | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+}
+
+export interface ResetPasswordResult {
+  user_id: string;
+  password_temporal: string;
 }

@@ -8,14 +8,19 @@
 // request original una sola vez.
 
 import type {
+  AdminUser,
+  AuthEvent,
   Caso,
   CaseDocument,
   CrearDocumentoInput,
+  CrearUsuarioAdminInput,
   EstadoCaso,
   EventoSSE,
   LoginResponse,
   Mensaje,
   Perfil,
+  ResetPasswordResult,
+  Role,
   Setup2FAResponse,
   TokenPair,
   Verify2FAResponse,
@@ -251,6 +256,34 @@ class ApiClient {
 
   borrarMensaje(casoId: string, mensajeId: string): Promise<void> {
     return this.request(`/casos/${casoId}/mensajes/${mensajeId}`, { method: "DELETE" });
+  }
+
+  // --- panel admin (roadmap S2) --------------------------------------------
+  adminListUsers(skip = 0, limit = 20): Promise<AdminUser[]> {
+    return this.request(`/admin/users?skip=${skip}&limit=${limit}`);
+  }
+
+  adminCrearUsuario(input: CrearUsuarioAdminInput): Promise<AdminUser> {
+    return this.request("/admin/users", { method: "POST", body: JSON.stringify(input) });
+  }
+
+  adminCambiarRol(userId: string, role: Role): Promise<AdminUser> {
+    return this.request(`/admin/users/${userId}/role`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+    });
+  }
+
+  adminActividad(userId: string, limite = 50): Promise<AuthEvent[]> {
+    return this.request(`/admin/users/${userId}/actividad?limite=${limite}`);
+  }
+
+  adminResetPassword(userId: string): Promise<ResetPasswordResult> {
+    return this.request(`/admin/users/${userId}/reset-password`, { method: "POST" });
+  }
+
+  adminReset2FA(userId: string): Promise<{ user_id: string; two_factor_enabled: boolean }> {
+    return this.request(`/admin/users/${userId}/reset-2fa`, { method: "POST" });
   }
 
   // --- eventos en vivo (SSE, roadmap S11 Fase C) ---------------------------

@@ -3,7 +3,7 @@ import { useAuth } from "./auth/AuthContext";
 
 /** Envuelve las rutas que requieren sesión: si no hay, manda a /login. */
 export function ProtectedLayout() {
-  const { autenticado, logout } = useAuth();
+  const { autenticado, perfil, logout } = useAuth();
   const navigate = useNavigate();
 
   if (!autenticado) return <Navigate to="/login" replace />;
@@ -23,6 +23,9 @@ export function ProtectedLayout() {
             <span className="brand-sub">copiloto legal</span>
           </Link>
           <nav className="app-nav">
+            {perfil?.role === "admin" && (
+              <Link className="btn btn-ghost btn-sm" to="/admin">Admin</Link>
+            )}
             <Link className="btn btn-ghost btn-sm" to="/cuenta">Cuenta</Link>
             <button className="btn btn-ghost btn-sm" onClick={onLogout}>Salir</button>
           </nav>
