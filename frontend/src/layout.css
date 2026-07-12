@@ -176,6 +176,47 @@
   .caso-row-meta { flex-wrap: wrap; }
 }
 
+/* --- mensajes (caso) --- */
+.mensajes-panel { padding: 1rem 1.1rem 1rem; display: flex; flex-direction: column; gap: 0.9rem; }
+.mensajes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.2rem 0.2rem 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.mensajes-vacio { padding: 1rem 0; text-align: center; }
+.mensaje-row { display: flex; }
+.mensaje-row.mio { justify-content: flex-end; }
+.mensaje-row.otro { justify-content: flex-start; }
+.mensaje-bubble {
+  max-width: 75%;
+  padding: 0.55rem 0.75rem;
+  border-radius: 12px;
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.mensaje-row.mio .mensaje-bubble { background: color-mix(in srgb, var(--accent) 20%, var(--surface-2)); }
+.mensaje-texto { white-space: pre-wrap; word-break: break-word; font-size: 0.92rem; line-height: 1.45; }
+.mensaje-meta { display: flex; align-items: center; gap: 0.5rem; align-self: flex-end; font-size: 0.7rem; }
+.mensaje-borrar {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--ink-faint);
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: 0 0.15rem;
+}
+.mensaje-borrar:hover { color: var(--danger, #b3432b); }
+.mensajes-form { display: flex; gap: 0.6rem; border-top: 1px solid var(--hair); padding-top: 0.9rem; }
+.mensajes-form .input { flex: 1; }
+
 /* --- cuenta / 2FA --- */
 .page-narrow { max-width: 560px; }
 .account-card { padding: 1.3rem 1.4rem; display: flex; flex-direction: column; gap: 0.7rem; margin-bottom: 0; }

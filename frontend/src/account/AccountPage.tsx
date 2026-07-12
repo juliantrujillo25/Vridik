@@ -1,13 +1,14 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext";
 import { api, SesionExpiradaError } from "../api/client";
-import type { Perfil, Setup2FAResponse } from "../api/types";
+import type { Setup2FAResponse } from "../api/types";
 
 type Paso = "cargando" | "inactivo" | "qr" | "codigos" | "activo";
 
 export function AccountPage() {
   const navigate = useNavigate();
-  const [perfil, setPerfil] = useState<Perfil | null>(null);
+  const { perfil, recargarPerfil } = useAuth();
   const [paso, setPaso] = useState<Paso>("cargando");
   const [error, setError] = useState<string | null>(null);
 
@@ -22,21 +23,9 @@ export function AccountPage() {
     setError(err instanceof Error ? err.message : fallback);
   }
 
-  async function cargar() {
-    setError(null);
-    try {
-      const p = await api.me();
-      setPerfil(p);
-      setPaso(p.totp_enabled ? "activo" : "inactivo");
-    } catch (err) {
-      manejarError(err, "No se pudo cargar tu cuenta.");
-    }
-  }
-
   useEffect(() => {
-    void cargar();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (perfil) setPaso(perfil.totp_enabled ? "activo" : "inactivo");
+  }, [perfil]);
 
   async function onIniciarSetup() {
     setError(null);
@@ -68,7 +57,7 @@ export function AccountPage() {
     setSetup(null);
     setCodigosRespaldo(null);
     setConfirmoGuardar(false);
-    void cargar();
+    void recargarPerfil();
   }
 
   if (paso === "cargando" || !perfil) {

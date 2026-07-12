@@ -12,7 +12,9 @@ import type {
   CaseDocument,
   CrearDocumentoInput,
   EstadoCaso,
+  EventoSSE,
   LoginResponse,
+  Mensaje,
   Perfil,
   Setup2FAResponse,
   TokenPair,
@@ -229,6 +231,110 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify(input),
     });
+  }
+
+  // --- mensajería (roadmap S11) --------------------------------------------
+  listMensajes(casoId: string, limit = 50): Promise<Mensaje[]> {
+    return this.request(`/casos/${casoId}/mensajes?limit=${limit}`);
+  }
+
+  crearMensaje(casoId: string, texto: string, adjuntoUrl?: string): Promise<Mensaje> {
+    return this.request(`/casos/${casoId}/mensajes`, {
+      method: "POST",
+      body: JSON.stringify({ texto, adjunto_url: adjuntoUrl ?? null }),
+    });
+  }
+
+  marcarLeido(casoId: string, mensajeId: string): Promise<void> {
+    return this.request(`/casos/${casoId}/mensajes/${mensajeId}/leido`, { method: "POST" });
+  }
+
+  borrarMensaje(casoId: string, mensajeId: string): Promise<void> {
+    return this.request(`/casos/${casoId}/mensajes/${mensajeId}`, { method: "DELETE" });
+  }
+
+  // --- eventos en vivo (SSE, roadmap S11 Fase C) ---------------------------
+  //
+  // El navegador no puede usar EventSource nativo porque necesita mandar el
+  // header Authorization (el backend lo exige explícitamente, ver
+  // api/events_endpoint.py) -- se arma el parseo de SSE a mano sobre
+  // fetch + ReadableStream. Reconecta solo (con Last-Event-ID) si el stream
+  // se corta; devuelve una función para cerrar la conexión.
+  streamEvents(onEvento: (ev: EventoSSE) => void, onResync?: () => void): () => void {
+    const controller = new AbortController();
+    let lastEventId: number | null = null;
+
+    const bucle = async () => {
+      while (!controller.signal.aborted) {
+        try {
+          await this.conectarStreamUnaVez(controller.signal, lastEventId, (id) => {
+            lastEventId = id;
+          }, onEvento, onResync);
+        } catch {
+          // red caída, 401 sin refresh posible, etc. -- se reintenta abajo.
+        }
+        if (controller.signal.aborted) return;
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    };
+    void bucle();
+
+    return () => controller.abort();
+  }
+
+  private async conectarStreamUnaVez(
+    signal: AbortSignal,
+    lastEventId: number | null,
+    setLastEventId: (id: number) => void,
+    onEvento: (ev: EventoSSE) => void,
+    onResync?: () => void,
+  ): Promise<void> {
+    if (!this.accessToken) {
+      const ok = await this.renovar();
+      if (!ok) throw new SesionExpiradaError();
+    }
+    const headers = new Headers({ Authorization: `Bearer ${this.accessToken}` });
+    if (lastEventId !== null) headers.set("Last-Event-ID", String(lastEventId));
+
+    const resp = await fetch(`${API_BASE}/api/events/stream`, { headers, signal });
+    if (!resp.ok || !resp.body) throw new Error(`stream ${resp.status}`);
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        const bloque = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        this.procesarBloqueSSE(bloque, setLastEventId, onEvento, onResync);
+      }
+    }
+  }
+
+  private procesarBloqueSSE(
+    bloque: string,
+    setLastEventId: (id: number) => void,
+    onEvento: (ev: EventoSSE) => void,
+    onResync?: () => void,
+  ): void {
+    let tipo: string | null = null;
+    let dataLine: string | null = null;
+    for (const linea of bloque.split("\n")) {
+      if (linea.startsWith("event:")) tipo = linea.slice(6).trim();
+      else if (linea.startsWith("data:")) dataLine = linea.slice(5).trim();
+    }
+    if (tipo === "resync") {
+      onResync?.();
+      return;
+    }
+    if (!dataLine) return;
+    const data = JSON.parse(dataLine) as EventoSSE;
+    setLastEventId(data.id);
+    onEvento(data);
   }
 }
 

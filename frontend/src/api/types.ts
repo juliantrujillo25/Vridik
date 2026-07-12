@@ -67,3 +67,29 @@ export interface CrearDocumentoInput {
   tarea?: string;
   generar_pdf?: boolean;
 }
+
+export interface Mensaje {
+  id: string;
+  conversacion_id: string;
+  autor_id: string;
+  texto: string;
+  adjunto_url: string | null;
+  borrado: boolean;
+  created_at: string;
+}
+
+// GET /api/events/stream (SSE) -- cada evento trae al menos id/type; el
+// resto del payload depende de `type` (para "message.new":
+// caso_id/conversacion_id/mensaje_id, ver api/mensajes_endpoint.py).
+export interface EventoSSE {
+  id: number;
+  type: string;
+  [key: string]: unknown;
+}
+
+export interface MessageNewEvent extends EventoSSE {
+  type: "message.new";
+  caso_id: string;
+  conversacion_id: string;
+  mensaje_id: string;
+}

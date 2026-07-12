@@ -2,11 +2,14 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, SesionExpiradaError } from "../api/client";
 import type { Caso, CaseDocument, EstadoCaso } from "../api/types";
+import { useAuth } from "../auth/AuthContext";
 import { ESTADOS, ESTADO_LABEL, EstadoPill, fechaHora } from "../ui";
+import { Mensajes } from "./Mensajes";
 
 export function CasoDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
+  const { perfil } = useAuth();
 
   const [caso, setCaso] = useState<Caso | null>(null);
   const [docs, setDocs] = useState<CaseDocument[] | null>(null);
@@ -136,6 +139,11 @@ export function CasoDetailPage() {
         </div>
         <span className="faint mono caso-created">Creado {fechaHora(caso.created_at)}</span>
       </div>
+
+      <section className="section">
+        <h2 className="section-title">Mensajes</h2>
+        {perfil && <Mensajes casoId={id} miId={perfil.id} />}
+      </section>
 
       <section className="section">
         <h2 className="section-title">Generar documento con JuliX</h2>
