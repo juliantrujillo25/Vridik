@@ -240,6 +240,28 @@ async def login(payload: LoginRequest, request: Request):
     return {"access_token": token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 
+@router.get("/me")
+async def me(request: Request, authorization: str | None = Header(default=None)):
+    """Perfil mínimo del usuario autenticado -- agregado para el frontend
+    (frontend/): no había ningún endpoint "quién soy" hasta ahora, y sin
+    esto la UI de 2FA no tiene forma de saber si el usuario ya lo tiene
+    activado antes de ofrecerle "activar 2FA" (activar de nuevo sobre uno
+    ya activo pisa el secreto existente -- core.totp_2fa.iniciar_activacion
+    sobreescribe totp_secret sin confirmar, sería fácil invalidar el 2FA de
+    alguien por accidente sin este chequeo previo)."""
+    claims = _claims_de_bearer(authorization)
+    conn = _get_db(request)
+    await ensure_role_column(conn)
+    await ensure_totp_columns(conn)
+
+    fila = await conn.fetchrow(
+        "SELECT id, email, role, totp_enabled FROM users WHERE id = $1", claims["sub"],
+    )
+    if fila is None:
+        raise HTTPException(status_code=401, detail="Usuario del token no existe")
+    return dict(fila)
+
+
 @router.post("/2fa/setup")
 async def setup_2fa(request: Request, authorization: str | None = Header(default=None)):
     claims = _claims_de_bearer(authorization)
