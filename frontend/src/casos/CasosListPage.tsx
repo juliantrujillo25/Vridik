@@ -2,23 +2,37 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { SesionExpiradaError } from "../api/client";
-import type { Caso } from "../api/types";
+import type { Caso, MessageNewEvent } from "../api/types";
 import { EstadoPill, fechaCorta } from "../ui";
 
 export function CasosListPage() {
   const navigate = useNavigate();
   const [casos, setCasos] = useState<Caso[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [noLeidos, setNoLeidos] = useState<Record<string, number>>({});
 
   const [titulo, setTitulo] = useState("");
   const [descripcion, setDescripcion] = useState("");
   const [creando, setCreando] = useState(false);
   const [mostrarForm, setMostrarForm] = useState(false);
 
+  async function cargarNoLeidos(lista: Caso[]) {
+    const resultados = await Promise.allSettled(lista.map((c) => api.noLeidos(c.id)));
+    setNoLeidos((prev) => {
+      const siguiente = { ...prev };
+      resultados.forEach((r, i) => {
+        if (r.status === "fulfilled") siguiente[lista[i].id] = r.value;
+      });
+      return siguiente;
+    });
+  }
+
   async function cargar() {
     setError(null);
     try {
-      setCasos(await api.listCasos());
+      const lista = await api.listCasos();
+      setCasos(lista);
+      void cargarNoLeidos(lista);
     } catch (err) {
       if (err instanceof SesionExpiradaError) return navigate("/login", { replace: true });
       setError(err instanceof Error ? err.message : "No se pudieron cargar los casos.");
@@ -28,6 +42,18 @@ export function CasosListPage() {
   useEffect(() => {
     void cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Actualiza el badge en vivo cuando llega un mensaje nuevo de un caso ya
+  // listado -- no incrementa a mano (evita desincronizarse con "marcar
+  // leído" de otra pestaña), vuelve a pedir el conteo real de ese caso.
+  useEffect(() => {
+    const detener = api.streamEvents((ev) => {
+      if (ev.type !== "message.new") return;
+      const casoId = (ev as MessageNewEvent).caso_id;
+      void api.noLeidos(casoId).then((n) => setNoLeidos((prev) => ({ ...prev, [casoId]: n })));
+    });
+    return detener;
   }, []);
 
   async function onCrear(e: FormEvent) {
@@ -113,6 +139,11 @@ export function CasosListPage() {
                   {c.descripcion && <span className="caso-row-desc muted">{c.descripcion}</span>}
                 </div>
                 <div className="caso-row-meta">
+                  {noLeidos[c.id] > 0 && (
+                    <span className="badge-noleidos" title={`${noLeidos[c.id]} mensajes sin leer`}>
+                      {noLeidos[c.id]}
+                    </span>
+                  )}
                   <EstadoPill estado={c.estado} />
                   <span className="faint mono caso-row-date">{fechaCorta(c.created_at)}</span>
                 </div>

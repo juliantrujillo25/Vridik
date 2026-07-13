@@ -220,6 +220,15 @@ class ApiClient {
     return this.request(`/casos/${id}/estado`, { method: "PATCH", body: JSON.stringify({ estado }) });
   }
 
+  /** Solo admin (lo exige el backend). El backend no soporta desasignar
+   *  (abogado_id es obligatorio en el request) -- solo asignar/reasignar. */
+  asignarAbogado(id: string, abogadoId: string): Promise<Caso> {
+    return this.request(`/casos/${id}/abogado`, {
+      method: "PATCH",
+      body: JSON.stringify({ abogado_id: abogadoId }),
+    });
+  }
+
   // --- documentos generados por JuliX -------------------------------------
   listDocumentos(casoId: string): Promise<CaseDocument[]> {
     return this.request(`/casos/${casoId}/documents`);
@@ -252,6 +261,11 @@ class ApiClient {
 
   marcarLeido(casoId: string, mensajeId: string): Promise<void> {
     return this.request(`/casos/${casoId}/mensajes/${mensajeId}/leido`, { method: "POST" });
+  }
+
+  async noLeidos(casoId: string): Promise<number> {
+    const res = await this.request<{ no_leidos: number }>(`/casos/${casoId}/mensajes/no-leidos`);
+    return res.no_leidos;
   }
 
   borrarMensaje(casoId: string, mensajeId: string): Promise<void> {

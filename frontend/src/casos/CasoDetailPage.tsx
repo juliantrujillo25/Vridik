@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, SesionExpiradaError } from "../api/client";
-import type { Caso, CaseDocument, EstadoCaso } from "../api/types";
+import type { AdminUser, Caso, CaseDocument, EstadoCaso } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { ESTADOS, ESTADO_LABEL, EstadoPill, fechaHora } from "../ui";
 import { Mensajes } from "./Mensajes";
@@ -14,6 +14,10 @@ export function CasoDetailPage() {
   const [caso, setCaso] = useState<Caso | null>(null);
   const [docs, setDocs] = useState<CaseDocument[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // asignación de abogado (solo admin -- lo exige el backend)
+  const [abogados, setAbogados] = useState<AdminUser[] | null>(null);
+  const [asignando, setAsignando] = useState(false);
 
   // generación
   const [pregunta, setPregunta] = useState("");
@@ -48,12 +52,32 @@ export function CasoDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  useEffect(() => {
+    if (perfil?.role !== "admin") return;
+    api.adminListUsers(0, 100).then(
+      (usuarios) => setAbogados(usuarios.filter((u) => u.role === "abogado")),
+      () => setAbogados([]),
+    );
+  }, [perfil?.role]);
+
   async function onCambiarEstado(estado: EstadoCaso) {
     if (!caso || estado === caso.estado) return;
     try {
       setCaso(await api.cambiarEstado(caso.id, estado));
     } catch (err) {
       manejarError(err, "No se pudo cambiar el estado.");
+    }
+  }
+
+  async function onAsignarAbogado(abogadoId: string) {
+    if (!caso || abogadoId === caso.abogado_id) return;
+    setAsignando(true);
+    try {
+      setCaso(await api.asignarAbogado(caso.id, abogadoId));
+    } catch (err) {
+      manejarError(err, "No se pudo asignar el abogado.");
+    } finally {
+      setAsignando(false);
     }
   }
 
@@ -137,6 +161,25 @@ export function CasoDetailPage() {
             ))}
           </select>
         </div>
+        {perfil?.role === "admin" && (
+          <div className="field estado-field">
+            <label htmlFor="abogado">Abogado asignado</label>
+            <select
+              id="abogado"
+              className="select"
+              value={caso.abogado_id ?? ""}
+              disabled={asignando || abogados === null}
+              onChange={(e) => { if (e.target.value) void onAsignarAbogado(e.target.value); }}
+            >
+              <option value="" disabled>
+                {abogados === null ? "Cargando…" : "— Elegir abogado —"}
+              </option>
+              {abogados?.map((a) => (
+                <option key={a.id} value={a.id}>{a.email}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <span className="faint mono caso-created">Creado {fechaHora(caso.created_at)}</span>
       </div>
 

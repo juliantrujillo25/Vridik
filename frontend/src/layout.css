@@ -86,6 +86,20 @@
 .caso-row-desc { font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46ch; }
 .caso-row-meta { display: flex; align-items: center; gap: 0.9rem; flex: none; }
 .caso-row-date { font-size: 0.78rem; }
+.badge-noleidos {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.3rem;
+  height: 1.3rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-family: var(--mono);
+}
 
 /* --- detalle de caso --- */
 .caso-desc { margin: 0 0 1.4rem; max-width: 68ch; }
