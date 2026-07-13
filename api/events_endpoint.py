@@ -34,12 +34,33 @@ El `yield ": keep-alive\n\n"` cada 25s es la plomería que hace que este
 generador note `request.is_disconnected()` sin bloquearse para siempre
 en la cola, y evita que un proxy intermedio corte la conexión por
 inactividad.
+
+Presupuesto de conexiones (agregado tras un incidente real, 2026-07-12):
+cada stream abierto reserva UNA conexión dedicada del pool de Postgres
+durante toda su vida (`pool.acquire()` más abajo) -- no puede usar el
+patrón normal de acquire-por-llamada porque necesita LISTEN/NOTIFY sobre
+una conexión persistente. Con tráfico real (varios usuarios con el
+detalle de un caso abierto a la vez) eso solo, sin ningún bug de por
+medio, alcanza para agotar el pool entero y colgar el resto de la API
+-- pasó en pruebas de la mensajería en vivo. Dos mitigaciones, además de
+subir max_size del pool (app/main.py):
+  - `_MAX_CONEXIONES_SSE_CONCURRENTES`: techo dedicado para el streaming,
+    para que nunca pueda comerse el pool completo aunque haya legítimos
+    muchos usuarios conectados a la vez -- deja margen siempre para
+    tráfico REST normal.
+  - `_VIDA_MAXIMA_STREAM_SEGUNDOS`: cierra el stream y libera la conexión
+    a los 30 minutos aunque siga "vivo" -- el cliente reconecta solo
+    (ver frontend/src/api/client.ts streamEvents()). Acota el peor caso
+    de una conexión que por lo que sea nunca dispara el `finally` de
+    abajo (p.ej. si `request.is_disconnected()` no detecta un corte
+    abrupto de red a tiempo).
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -51,6 +72,13 @@ from core.events import canal_de_usuario, ensure_events_table, existe_evento, li
 router = APIRouter(tags=["events"])
 
 _INTERVALO_HEARTBEAT_SEGUNDOS = 25.0
+_MAX_CONEXIONES_SSE_CONCURRENTES = 12
+_VIDA_MAXIMA_STREAM_SEGUNDOS = 30 * 60
+
+# Contador en memoria del proceso -- no coordina entre instancias si algún
+# día la API corre con más de un worker/réplica, pero es consistente con
+# el resto del módulo ("cero infra nueva": nada de Redis solo para esto).
+_conexiones_sse_activas = 0
 
 
 def _formatear_evento_sse(*, evento_id: int, tipo: str, payload: dict) -> str:
@@ -59,6 +87,17 @@ def _formatear_evento_sse(*, evento_id: int, tipo: str, payload: dict) -> str:
 
 
 async def _generador_sse(pool, *, user_id: str, last_event_id: int | None, request: Request):
+    global _conexiones_sse_activas
+
+    if _conexiones_sse_activas >= _MAX_CONEXIONES_SSE_CONCURRENTES:
+        # Ninguna conexión del pool se llegó a tocar -- el cliente
+        # reintenta solo tras el backoff de 2s (streamEvents() en
+        # client.ts trata cualquier fin de stream sin más como "reconectar").
+        yield "event: resync\ndata: {}\n\n"
+        return
+
+    _conexiones_sse_activas += 1
+    inicio = time.monotonic()
     conn = await pool.acquire()
     cola: asyncio.Queue[str] = asyncio.Queue()
     canal = canal_de_usuario(user_id)
@@ -83,6 +122,8 @@ async def _generador_sse(pool, *, user_id: str, last_event_id: int | None, reque
         while True:
             if await request.is_disconnected():
                 break
+            if time.monotonic() - inicio >= _VIDA_MAXIMA_STREAM_SEGUNDOS:
+                break
             try:
                 payload = await asyncio.wait_for(cola.get(), timeout=_INTERVALO_HEARTBEAT_SEGUNDOS)
                 data = json.loads(payload)
@@ -92,6 +133,7 @@ async def _generador_sse(pool, *, user_id: str, last_event_id: int | None, reque
     finally:
         await conn.remove_listener(canal, _al_recibir_notify)
         await pool.release(conn)
+        _conexiones_sse_activas -= 1
 
 
 @router.get("/api/events/stream")

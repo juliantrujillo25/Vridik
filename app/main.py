@@ -81,7 +81,18 @@ async def _conectar_db() -> None:
     una conexión del pool por llamada)."""
     database_url = os.environ.get("DATABASE_URL", "")
     if database_url:
-        app.state.db_connection = await asyncpg.create_pool(database_url)
+        # max_size explícito (asyncpg cae a 10 si no se pasa) -- GET
+        # /api/events/stream (api/events_endpoint.py) reserva una conexión
+        # DEDICADA del pool durante toda la vida del stream SSE (no puede
+        # usar el patrón normal de acquire-por-llamada porque necesita
+        # LISTEN/NOTIFY sobre una conexión persistente). Con el default de
+        # 10, un puñado de usuarios con el detalle de un caso abierto a la
+        # vez ya alcanza para agotar el pool entero y colgar el resto de la
+        # API (incidente real, 2026-07-12) -- 20 da margen, y
+        # events_endpoint.py además pone un techo propio a cuántas de esas
+        # conexiones puede usar el streaming SSE, para que nunca se coma
+        # el pool completo.
+        app.state.db_connection = await asyncpg.create_pool(database_url, min_size=2, max_size=20)
 
 
 @app.on_event("shutdown")
