@@ -8,7 +8,7 @@ type Paso = "cargando" | "inactivo" | "qr" | "codigos" | "activo";
 
 export function AccountPage() {
   const navigate = useNavigate();
-  const { perfil, recargarPerfil } = useAuth();
+  const { perfil, perfilCargando, perfilError, recargarPerfil } = useAuth();
   const [paso, setPaso] = useState<Paso>("cargando");
   const [error, setError] = useState<string | null>(null);
 
@@ -60,10 +60,19 @@ export function AccountPage() {
     void recargarPerfil();
   }
 
-  if (paso === "cargando" || !perfil) {
+  if (perfilCargando || paso === "cargando") {
     return (
       <div className="page">
         <div className="empty muted"><span className="spinner" /> Cargando…</div>
+      </div>
+    );
+  }
+
+  if (!perfil) {
+    return (
+      <div className="page">
+        <div className="alert error" role="alert">{perfilError ?? "No se pudo cargar tu cuenta."}</div>
+        <button className="btn btn-ghost btn-sm" onClick={() => void recargarPerfil()}>Reintentar</button>
       </div>
     );
   }
