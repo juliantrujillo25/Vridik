@@ -43,6 +43,55 @@ SOFT_MONTHLY_LIMIT_USD = 150.0
 WARNING_THRESHOLD_RATIO = 0.8
 
 
+async def ensure_julix_calls_table(db_connection) -> None:
+    """Idempotente (mismo patrón que core.case.ensure_casos_table,
+    core.totp_2fa.ensure_totp_columns, etc.) -- a diferencia de esas,
+    `julix_calls` NUNCA tuvo un `ensure_*` propio: julix/sql/ledger_schema.sql
+    existe como migración de referencia pero ningún .py la corre, así que
+    la tabla podía no existir en Postgres real. `registrar_llamada()` la
+    escribe SIN try/except (julix/client.py) -- sin esta función, la
+    primera llamada real a JuliX rompería ahí mismo con un error de
+    "relation julix_calls does not exist" en vez de generar el documento.
+
+    `user_id` nullable (no NOT NULL como en el .sql de referencia): la FK
+    es `ON DELETE SET NULL`, que exige que la columna admita NULL -- el
+    .sql original tenía ambas cosas a la vez, una combinación que
+    Postgres rechazaría al aplicar un DELETE real."""
+    await db_connection.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+    await db_connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS julix_calls (
+            id              BIGSERIAL PRIMARY KEY,
+            user_id         UUID REFERENCES users(id) ON DELETE SET NULL,
+            caso_id         UUID,
+            tarea           TEXT NOT NULL,
+            model           TEXT NOT NULL,
+            prompt_version  INTEGER NOT NULL,
+            prompt_hash     TEXT NOT NULL,
+            input_tokens    INTEGER NOT NULL,
+            output_tokens   INTEGER NOT NULL,
+            costo_usd       NUMERIC(10, 6) NOT NULL,
+            latency_ms      INTEGER NOT NULL,
+            status          TEXT NOT NULL
+                            CHECK (status IN (
+                                'ok', 'timeout', 'rate_limited',
+                                'overloaded_partial', 'truncated', 'invalid_format'
+                            )),
+            environment     TEXT NOT NULL CHECK (environment IN ('staging', 'production')),
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
+    await db_connection.execute("CREATE INDEX IF NOT EXISTS ix_julix_calls_user_id ON julix_calls (user_id)")
+    await db_connection.execute("CREATE INDEX IF NOT EXISTS ix_julix_calls_caso_id ON julix_calls (caso_id)")
+    await db_connection.execute(
+        "CREATE INDEX IF NOT EXISTS ix_julix_calls_created_at ON julix_calls (created_at DESC)"
+    )
+    await db_connection.execute(
+        "CREATE INDEX IF NOT EXISTS ix_julix_calls_status ON julix_calls (status) WHERE status <> 'ok'"
+    )
+
+
 def calcular_costo_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     precios = PRICE_PER_MILLION_TOKENS_USD.get(model)
     if not precios:

@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, SesionExpiradaError } from "../api/client";
-import type { AdminUser, AuthEvent, Role } from "../api/types";
+import type { AdminUser, AuthEvent, CostosResponse, Role } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { fechaHora } from "../ui";
 
@@ -29,6 +29,9 @@ export function AdminPage() {
 
   const [passwordTemporal, setPasswordTemporal] = useState<{ userId: string; valor: string } | null>(null);
 
+  const [costos, setCostos] = useState<CostosResponse | null>(null);
+  const [errorCostos, setErrorCostos] = useState<string | null>(null);
+
   function manejarError(err: unknown, fallback: string) {
     if (err instanceof SesionExpiradaError) return navigate("/login", { replace: true });
     setError(err instanceof Error ? err.message : fallback);
@@ -46,8 +49,21 @@ export function AdminPage() {
     }
   }
 
+  async function cargarCostos() {
+    setErrorCostos(null);
+    try {
+      setCostos(await api.adminCostos());
+    } catch (err) {
+      if (err instanceof SesionExpiradaError) return navigate("/login", { replace: true });
+      setErrorCostos(err instanceof Error ? err.message : "No se pudo cargar el gasto de JuliX.");
+    }
+  }
+
   useEffect(() => {
-    if (perfil?.role === "admin") void cargar(true);
+    if (perfil?.role === "admin") {
+      void cargar(true);
+      void cargarCostos();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfil?.role]);
 
@@ -131,6 +147,9 @@ export function AdminPage() {
     );
   }
 
+  const ratioCostos = costos ? Math.min(costos.gasto_mensual_usd / costos.limite_mensual_usd, 1) : 0;
+  const estadoCostos = costos?.confirmacion_100 ? "critico" : costos?.aviso_80 ? "aviso" : "normal";
+
   return (
     <div className="page">
       <div className="page-head">
@@ -142,6 +161,30 @@ export function AdminPage() {
           {mostrarCrear ? "Cancelar" : "Nuevo usuario"}
         </button>
       </div>
+
+      {errorCostos && <div className="alert error" role="alert">{errorCostos}</div>}
+
+      {costos && (
+        <div className={`card costos-widget costos-${estadoCostos}`}>
+          <div className="costos-widget-head">
+            <span className="section-title costos-widget-title">Gasto de JuliX este mes</span>
+            <span className="mono costos-widget-monto">
+              ${costos.gasto_mensual_usd.toFixed(2)} <span className="faint">/ ${costos.limite_mensual_usd.toFixed(2)} USD</span>
+            </span>
+          </div>
+          <div className="costos-bar-track">
+            <div className="costos-bar-fill" style={{ width: `${ratioCostos * 100}%` }} />
+          </div>
+          {costos.confirmacion_100 && (
+            <p className="costos-nota costos-nota-critico">
+              Por encima del límite blando mensual. No bloquea nada, pero cada documento nuevo debería confirmarse a conciencia.
+            </p>
+          )}
+          {!costos.confirmacion_100 && costos.aviso_80 && (
+            <p className="costos-nota costos-nota-aviso">Ya pasó el 80% del límite blando mensual.</p>
+          )}
+        </div>
+      )}
 
       {error && <div className="alert error" role="alert">{error}</div>}
 

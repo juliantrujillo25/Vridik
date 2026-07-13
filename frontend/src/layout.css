@@ -233,6 +233,18 @@
 .mensajes-form .input { flex: 1; }
 
 /* --- panel admin --- */
+.costos-widget { padding: 1.1rem 1.3rem; display: flex; flex-direction: column; gap: 0.7rem; margin-bottom: 1.4rem; }
+.costos-widget-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.costos-widget-title { margin: 0; padding: 0; border: none; }
+.costos-widget-monto { font-size: 1.05rem; font-weight: 600; }
+.costos-bar-track { height: 0.5rem; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.costos-bar-fill { height: 100%; border-radius: 999px; background: var(--good); transition: width 0.25s ease; }
+.costos-aviso .costos-bar-fill { background: var(--warn); }
+.costos-critico .costos-bar-fill { background: var(--danger); }
+.costos-nota { margin: 0; font-size: 0.85rem; }
+.costos-nota-aviso { color: var(--warn); }
+.costos-nota-critico { color: var(--danger); }
+
 .admin-user-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.7rem; }
 .admin-user-row { padding: 1rem 1.2rem; display: flex; flex-direction: column; gap: 0.7rem; }
 .admin-user-main { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }

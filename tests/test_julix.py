@@ -35,7 +35,7 @@ from julix.context_builder import (
     ordenar_por_prioridad_normativa,
     truncar_con_criterio,
 )
-from julix.ledger import JuliXCallRecord, calcular_costo_usd, registrar_llamada
+from julix.ledger import JuliXCallRecord, calcular_costo_usd, ensure_julix_calls_table, registrar_llamada
 from julix.service import JuliXService
 from rag.context_builder import ChunkRecuperado
 from tests.support.fakes import FakeLedgerDB, FakeSDKStream, FakeSDKStreamFactory
@@ -94,6 +94,23 @@ def test_ledger_calcula_costo_usd_con_tabla_de_precios_2026():
 
 
 @pytest.mark.asyncio
+async def test_ensure_julix_calls_table_es_idempotente():
+    """A diferencia de casos/mensajes/totp/etc., julix_calls nunca tuvo un
+    ensure_* propio (julix/sql/ledger_schema.sql es una migración que
+    ningún .py corría) -- sin esto, la primera llamada real a JuliX
+    rompía con "relation julix_calls does not exist" en vez de generar el
+    documento. Correrlo dos veces no debe fallar (CREATE TABLE/INDEX IF
+    NOT EXISTS)."""
+    db = FakeLedgerDB()
+    await ensure_julix_calls_table(db)
+    await ensure_julix_calls_table(db)
+
+    queries = [q for q, _ in db.llamadas_registradas]
+    assert any(q.strip().startswith("CREATE TABLE IF NOT EXISTS julix_calls") for q in queries)
+    assert not any("CREATE TABLE julix_calls (" in q and "IF NOT EXISTS" not in q for q in queries)
+
+
+@pytest.mark.asyncio
 async def test_ledger_registra_llamada_en_bd():
     db = FakeLedgerDB()
     record = JuliXCallRecord(
@@ -130,8 +147,12 @@ async def test_client_stream_completion_exitoso_registra_ledger(monkeypatch):
     assert len(factory.llamadas) == 1
     assert factory.llamadas[0]["model"] == client.model_for("ugpp_demanda")
 
-    assert len(db.llamadas_registradas) == 1
-    _, args = db.llamadas_registradas[0]
+    # ensure_julix_calls_table() corre antes del INSERT (bootstrap
+    # idempotente de la tabla, ver julix/ledger.py) -- de las llamadas a
+    # execute(), la que importa acá es el INSERT real en julix_calls.
+    inserts = [c for c in db.llamadas_registradas if c[0].strip().startswith("INSERT INTO julix_calls")]
+    assert len(inserts) == 1
+    _, args = inserts[0]
     assert "ok" in args  # status persistido
     assert "julian" in args  # user_id persistido
 

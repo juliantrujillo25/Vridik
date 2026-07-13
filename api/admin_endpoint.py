@@ -42,6 +42,12 @@ from core.admin import change_role, create_user, ensure_role_column, list_users
 from core.admin_users import UsuarioNoEncontradoError, actividad_usuario, resetear_password
 from core.auth import hash_password
 from core.totp_2fa import desactivar_totp, ensure_totp_columns
+from julix.ledger import (
+    SOFT_MONTHLY_LIMIT_USD,
+    ensure_julix_calls_table,
+    gasto_mensual_actual_usd,
+    requiere_confirmacion,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -179,3 +185,23 @@ async def post_user_reset_2fa(
 
     await desactivar_totp(conn, user_id=user_id, actor_id=str(admin["id"]))
     return {"user_id": user_id, "two_factor_enabled": False}
+
+
+@router.get("/costos")
+async def get_costos(request: Request, admin: dict = Depends(get_current_admin)):
+    """Widget de costos del roadmap (S4/S6): gasto acumulado de JuliX en el
+    mes calendario en curso contra el límite blando mensual
+    (julix/ledger.py::SOFT_MONTHLY_LIMIT_USD). Nunca bloqueo duro -- los
+    flags `aviso_80`/`confirmacion_100` son solo información para el
+    panel, no impiden generar documentos (esa decisión, si algún día se
+    quiere, vive en el flujo de generación, no acá)."""
+    conn = _get_db(request)
+    await ensure_julix_calls_table(conn)
+    gasto = await gasto_mensual_actual_usd(conn)
+    aviso_80, confirmacion_100 = await requiere_confirmacion(conn)
+    return {
+        "gasto_mensual_usd": round(gasto, 2),
+        "limite_mensual_usd": SOFT_MONTHLY_LIMIT_USD,
+        "aviso_80": aviso_80,
+        "confirmacion_100": confirmacion_100,
+    }

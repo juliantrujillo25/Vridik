@@ -34,6 +34,9 @@ class _FakeAdminDB:
         self.user_credentials: dict[str, dict] = {}
         self.refresh_tokens: dict[str, dict] = {}
         self.auth_events: list[dict] = []
+        # GET /admin/costos (julix/ledger.py) -- gasto mensual seedeable,
+        # 0 por default (mes sin llamadas registradas todavía).
+        self.gasto_mensual_seed: float = 0.0
 
     def seed(self, *, email: str, role: str = "abogado", is_active: bool = True, totp_enabled: bool = True) -> dict:
         # totp_enabled=True por default: la mayoría de estos tests seedean
@@ -102,6 +105,8 @@ class _FakeAdminDB:
             (user_id,) = args
             u = self.users.get(user_id)
             return {"totp_enabled": u["totp_enabled"]} if u else None
+        if "SUM(costo_usd)" in q:
+            return (self.gasto_mensual_seed,)
         if "INSERT INTO users" in q and "RETURNING" in q:
             email, password_hash, role = args
             nuevo = self.seed(email=email, role=role)
@@ -303,3 +308,68 @@ def test_admin_sin_2fa_no_puede_usar_el_panel(admin_db, admin_client):
     r = admin_client.get("/admin/users", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 403
     assert "2FA" in r.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/costos -- widget de costos (roadmap S4/S6, julix/ledger.py)
+# ---------------------------------------------------------------------------
+def test_admin_costos_sin_llamadas_del_mes_da_gasto_cero(admin_db, admin_client):
+    admin = admin_db.seed(email="admin-costos1@vridik.local", role="admin")
+    token = _token_de(admin)
+
+    r = admin_client.get("/admin/costos", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["gasto_mensual_usd"] == 0.0
+    assert body["limite_mensual_usd"] == 150.0
+    assert body["aviso_80"] is False
+    assert body["confirmacion_100"] is False
+
+
+def test_admin_costos_refleja_el_gasto_acumulado(admin_db, admin_client):
+    admin = admin_db.seed(email="admin-costos2@vridik.local", role="admin")
+    admin_db.gasto_mensual_seed = 42.5
+    token = _token_de(admin)
+
+    r = admin_client.get("/admin/costos", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    assert r.json()["gasto_mensual_usd"] == 42.5
+
+
+def test_admin_costos_marca_aviso_80_por_ciento(admin_db, admin_client):
+    admin = admin_db.seed(email="admin-costos3@vridik.local", role="admin")
+    admin_db.gasto_mensual_seed = 130.0  # 130/150 = 86.6% -- por encima del umbral del 80%
+    token = _token_de(admin)
+
+    r = admin_client.get("/admin/costos", headers={"Authorization": f"Bearer {token}"})
+    body = r.json()
+    assert body["aviso_80"] is True
+    assert body["confirmacion_100"] is False
+
+
+def test_admin_costos_marca_confirmacion_100_por_ciento_pero_nunca_bloquea(admin_db, admin_client):
+    """El límite es blando: al 100% se exige confirmación por documento en
+    la UI de generación, pero este endpoint solo informa -- nunca devuelve
+    un error ni impide nada por sí mismo."""
+    admin = admin_db.seed(email="admin-costos4@vridik.local", role="admin")
+    admin_db.gasto_mensual_seed = 200.0  # por encima del límite de 150
+    token = _token_de(admin)
+
+    r = admin_client.get("/admin/costos", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["aviso_80"] is True
+    assert body["confirmacion_100"] is True
+
+
+def test_admin_costos_forbidden_para_no_admin(admin_db, admin_client):
+    seller = admin_db.seed(email="vendedor-costos@vridik.local", role="abogado")
+    token = _token_de(seller)
+
+    r = admin_client.get("/admin/costos", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 403
+
+
+def test_admin_costos_sin_token_da_401(admin_client):
+    r = admin_client.get("/admin/costos")
+    assert r.status_code == 401

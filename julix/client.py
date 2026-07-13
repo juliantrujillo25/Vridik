@@ -44,7 +44,7 @@ from .errors import (
     JuliXTimeoutError,
     JuliXTruncatedError,
 )
-from .ledger import JuliXCallRecord, registrar_llamada
+from .ledger import JuliXCallRecord, ensure_julix_calls_table, registrar_llamada
 
 logger = logging.getLogger("vridik.julix.client")
 
@@ -290,6 +290,11 @@ class JuliXClient:
                 status=status,
                 environment=self.environment,
             )
+            # ensure_* antes del INSERT -- julix_calls nunca tuvo un
+            # bootstrap propio (a diferencia de casos/mensajes/totp/etc.),
+            # así que sin esto una tabla ausente rompía acá con un error
+            # crudo de Postgres en vez de generar el documento igual.
+            await ensure_julix_calls_table(self.db_connection)
             await registrar_llamada(self.db_connection, record)
             logger.info(
                 "Vridik/JuliX: llamada registrada en julix_calls — user_id=%s tarea=%s model=%s status=%s costo_usd=%s",

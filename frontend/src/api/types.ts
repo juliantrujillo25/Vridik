@@ -129,3 +129,11 @@ export interface ResetPasswordResult {
   user_id: string;
   password_temporal: string;
 }
+
+// GET /admin/costos
+export interface CostosResponse {
+  gasto_mensual_usd: number;
+  limite_mensual_usd: number;
+  aviso_80: boolean;
+  confirmacion_100: boolean;
+}

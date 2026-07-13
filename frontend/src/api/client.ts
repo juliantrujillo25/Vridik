@@ -12,6 +12,7 @@ import type {
   AuthEvent,
   Caso,
   CaseDocument,
+  CostosResponse,
   CrearDocumentoInput,
   CrearUsuarioAdminInput,
   EstadoCaso,
@@ -308,6 +309,10 @@ class ApiClient {
 
   adminReset2FA(userId: string): Promise<{ user_id: string; two_factor_enabled: boolean }> {
     return this.request(`/admin/users/${userId}/reset-2fa`, { method: "POST" });
+  }
+
+  adminCostos(): Promise<CostosResponse> {
+    return this.request("/admin/costos");
   }
 
   // --- eventos en vivo (SSE, roadmap S11 Fase C) ---------------------------
