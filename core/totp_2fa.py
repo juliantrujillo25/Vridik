@@ -287,6 +287,39 @@ async def verificar_login_totp(db_connection, *, user_id: str, codigo: str) -> b
     return True
 
 
+async def regenerar_codigos_respaldo(db_connection, *, user_id: str, codigo: str) -> CodigosRespaldo | None:
+    """Regenera los 8 códigos de respaldo de un usuario que YA tiene el
+    2FA activo, sin tocar el secreto TOTP ni el enrolamiento del
+    autenticador -- a diferencia de `iniciar_activacion()` (sobreescribe
+    el secreto, forzaría re-escanear el QR) o `desactivar_totp()` (reset
+    completo). Pensado para cuando a alguien se le agotan los códigos (se
+    usan de a uno) o los perdió, sin tener que perder también el
+    autenticador ya configurado.
+
+    Exige un código TOTP del autenticador (6 dígitos, `verificar_codigo`
+    directo -- nunca uno de los códigos de respaldo existentes, a
+    diferencia de `verificar_login_totp`): si un código de respaldo
+    filtrado alcanzara para generar un lote nuevo, la protección de "un
+    solo uso" no serviría de nada. Devuelve None si el 2FA no está activo
+    o el código no valida -- los códigos viejos nunca se tocan en ese caso."""
+    fila = await db_connection.fetchrow(
+        "SELECT totp_secret FROM users WHERE id = $1 AND totp_enabled = true", user_id,
+    )
+    if fila is None or not fila["totp_secret"]:
+        return None
+    if not verificar_codigo(_desencriptar_secreto(fila["totp_secret"]), codigo):
+        return None
+
+    codigos = generar_codigos_respaldo()
+    await db_connection.execute(
+        "UPDATE users SET totp_backup_codes = $2::jsonb WHERE id = $1", user_id, json.dumps(codigos.hashes),
+    )
+    await registrar_evento(
+        db_connection, event_type="totp_backup_codes_regenerated", user_id=user_id, actor_id=user_id,
+    )
+    return codigos
+
+
 async def desactivar_totp(db_connection, *, user_id: str, actor_id: str | None = None) -> None:
     """Desactiva el 2FA (p.ej. a pedido del usuario, o por un admin tras
     verificar identidad por otro canal — esa verificación vive fuera de

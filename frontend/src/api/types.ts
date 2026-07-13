@@ -30,6 +30,11 @@ export interface Setup2FAResponse {
   qr_code_base64: string;
 }
 
+// POST /auth/2fa/backup-codes/regenerate
+export interface RegenerarCodigosResponse {
+  codigos_respaldo: string[];
+}
+
 export type Role = "admin" | "abogado" | "cliente";
 
 // GET /auth/me

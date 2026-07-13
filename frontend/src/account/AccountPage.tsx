@@ -4,7 +4,7 @@ import { useAuth } from "../auth/AuthContext";
 import { api, SesionExpiradaError } from "../api/client";
 import type { Setup2FAResponse } from "../api/types";
 
-type Paso = "cargando" | "inactivo" | "qr" | "codigos" | "activo";
+type Paso = "cargando" | "inactivo" | "qr" | "codigos" | "activo" | "regenerar";
 
 export function AccountPage() {
   const navigate = useNavigate();
@@ -43,6 +43,21 @@ export function AccountPage() {
     setVerificando(true);
     try {
       const res = await api.verify2fa(code.trim());
+      setCodigosRespaldo(res.codigos_respaldo);
+      setPaso("codigos");
+    } catch (err) {
+      manejarError(err, "Código inválido.");
+    } finally {
+      setVerificando(false);
+    }
+  }
+
+  async function onRegenerar(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setVerificando(true);
+    try {
+      const res = await api.regenerarCodigosRespaldo(code.trim());
       setCodigosRespaldo(res.codigos_respaldo);
       setPaso("codigos");
     } catch (err) {
@@ -103,7 +118,50 @@ export function AccountPage() {
             <span className="pill abierto">2FA activo</span>
             <p className="muted twofa-status-note">
               Si perdiste el dispositivo, pedile a un admin que reinicie tu 2FA desde el panel.
+              Si lo que te quedaste sin es códigos de respaldo, podés generar un lote nuevo vos mismo.
             </p>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => { setCode(""); setPaso("regenerar"); }}
+            >
+              Generar nuevos códigos de respaldo
+            </button>
+          </div>
+        )}
+
+        {paso === "regenerar" && (
+          <div className="card twofa-setup">
+            <p className="twofa-step-label">Confirmá tu identidad</p>
+            <p className="muted">
+              Ingresá el código de 6 dígitos de tu app de autenticación. Esto invalida los códigos de
+              respaldo anteriores y genera 8 nuevos.
+            </p>
+            <form className="twofa-code-form" onSubmit={onRegenerar}>
+              <div className="field">
+                <label htmlFor="regen-code">Código de 6 dígitos</label>
+                <input
+                  id="regen-code"
+                  className="input mono"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  maxLength={6}
+                  required
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\s/g, ""))}
+                  placeholder="000000"
+                />
+              </div>
+              <div className="twofa-actions">
+                <button className="btn btn-ghost btn-sm" type="button" onClick={() => setPaso("activo")}>
+                  Cancelar
+                </button>
+                <button className="btn btn-primary" type="submit" disabled={verificando || code.length !== 6}>
+                  {verificando ? <span className="spinner" /> : null}
+                  {verificando ? "Verificando…" : "Generar códigos nuevos"}
+                </button>
+              </div>
+            </form>
           </div>
         )}
 
@@ -163,9 +221,14 @@ export function AccountPage() {
 
         {paso === "codigos" && codigosRespaldo && (
           <div className="card twofa-setup">
-            <p className="twofa-step-label">Paso 2 de 2 — Guardá tus códigos de respaldo</p>
+            <p className="twofa-step-label">
+              {setup ? "Paso 2 de 2 — Guardá tus códigos de respaldo" : "Tus códigos de respaldo nuevos"}
+            </p>
             <div className="alert warn">
-              Estos 8 códigos son la única forma de entrar si perdés el teléfono. Se muestran <strong>una sola vez</strong>.
+              {setup
+                ? "Estos 8 códigos son la única forma de entrar si perdés el teléfono. Se muestran "
+                : "Los códigos anteriores ya no sirven. Estos son los nuevos, se muestran "}
+              <strong>una sola vez</strong>.
             </div>
             <ul className="backup-codes">
               {codigosRespaldo.map((c) => (

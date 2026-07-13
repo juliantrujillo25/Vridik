@@ -71,7 +71,13 @@ from core.refresh_tokens import (
     revocar_refresh_token,
     rotar_refresh_token,
 )
-from core.totp_2fa import confirmar_activacion, ensure_totp_columns, iniciar_activacion, verificar_login_totp
+from core.totp_2fa import (
+    confirmar_activacion,
+    ensure_totp_columns,
+    iniciar_activacion,
+    regenerar_codigos_respaldo,
+    verificar_login_totp,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -96,6 +102,13 @@ class LoginRequest(BaseModel):
 
 
 class Verify2FARequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=6)
+
+
+class RegenerarCodigosRequest(BaseModel):
+    # A propósito solo 6 dígitos (código TOTP del autenticador) -- nunca se
+    # acepta un código de respaldo acá, ver el docstring de
+    # core.totp_2fa.regenerar_codigos_respaldo.
     code: str = Field(..., min_length=6, max_length=6)
 
 
@@ -284,6 +297,24 @@ async def verify_2fa(payload: Verify2FARequest, request: Request, authorization:
     # codigos.en_claro se muestra UNA sola vez acá -- después de esta
     # respuesta solo quedan los hashes, no se pueden volver a leer.
     return {"two_factor_enabled": True, "codigos_respaldo": codigos.en_claro}
+
+
+@router.post("/2fa/backup-codes/regenerate")
+async def regenerate_backup_codes(
+    payload: RegenerarCodigosRequest, request: Request, authorization: str | None = Header(default=None),
+):
+    """Códigos de respaldo nuevos para un usuario que ya tiene el 2FA
+    activo -- para cuando se le agotan o los perdió, sin tener que pasar
+    por un reset completo (que además pisa el autenticador ya
+    configurado, ver core.totp_2fa.regenerar_codigos_respaldo)."""
+    claims = _claims_de_bearer(authorization)
+    conn = _get_db(request)
+    await ensure_totp_columns(conn)
+
+    codigos = await regenerar_codigos_respaldo(conn, user_id=claims["sub"], codigo=payload.code)
+    if codigos is None:
+        raise HTTPException(status_code=400, detail="Código 2FA inválido, o el 2FA no está activo")
+    return {"codigos_respaldo": codigos.en_claro}
 
 
 @router.post("/2fa/login")

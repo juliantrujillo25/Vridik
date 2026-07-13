@@ -28,6 +28,7 @@ from core.totp_2fa import (
     generar_secreto,
     iniciar_activacion,
     provisioning_uri,
+    regenerar_codigos_respaldo,
     requiere_totp,
     verificar_codigo,
     verificar_codigo_respaldo,
@@ -199,6 +200,68 @@ async def test_verificar_login_totp_codigo_respaldo_invalido_falla():
     await confirmar_activacion(db, user_id="user-1", codigo=codigo_real)
 
     assert await verificar_login_totp(db, user_id="user-1", codigo="00000000") is False
+
+
+@pytest.mark.asyncio
+async def test_regenerar_codigos_respaldo_con_codigo_totp_valido_reemplaza_el_lote():
+    db = _FakeUsersDB()
+    secreto, _ = await iniciar_activacion(db, user_id="user-1", email="ana@vridik.local")
+    codigo_real = pyotp.totp.TOTP(secreto).now()
+    codigos_originales = await confirmar_activacion(db, user_id="user-1", codigo=codigo_real)
+
+    nuevos = await regenerar_codigos_respaldo(db, user_id="user-1", codigo=pyotp.totp.TOTP(secreto).now())
+    assert nuevos is not None
+    assert len(nuevos.en_claro) == 8
+    # Lote distinto del original (probabilísticamente -- 8 códigos de 8
+    # dígitos cada uno, la chance de una colisión completa es nula).
+    assert set(nuevos.en_claro) != set(codigos_originales.en_claro)
+    assert json.loads(db.filas["user-1"]["totp_backup_codes"]) == nuevos.hashes
+
+    # El secreto y el enrolamiento NO se tocan -- el código TOTP normal
+    # sigue funcionando igual que antes de regenerar.
+    assert db.filas["user-1"]["totp_enabled"] is True
+    assert await verificar_login_totp(db, user_id="user-1", codigo=pyotp.totp.TOTP(secreto).now()) is True
+
+    # Los códigos viejos ya no sirven; los nuevos sí.
+    assert await verificar_login_totp(db, user_id="user-1", codigo=codigos_originales.en_claro[0]) is False
+    assert await verificar_login_totp(db, user_id="user-1", codigo=nuevos.en_claro[0]) is True
+
+    evento = next(e for e in db.auth_events if e["event_type"] == "totp_backup_codes_regenerated")
+    assert evento["user_id"] == "user-1"
+    assert evento["actor_id"] == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_regenerar_codigos_respaldo_rechaza_un_codigo_de_respaldo_como_credencial():
+    """A propósito no acepta un código de respaldo para autorizar la
+    regeneración -- si alcanzara, un código de respaldo filtrado serviría
+    para invalidar y reemplazar todo el lote sin probar posesión real del
+    autenticador."""
+    db = _FakeUsersDB()
+    secreto, _ = await iniciar_activacion(db, user_id="user-1", email="ana@vridik.local")
+    codigos = await confirmar_activacion(db, user_id="user-1", codigo=pyotp.totp.TOTP(secreto).now())
+
+    resultado = await regenerar_codigos_respaldo(db, user_id="user-1", codigo=codigos.en_claro[0])
+    assert resultado is None
+    # Los códigos originales siguen intactos -- el intento rechazado no tocó nada.
+    assert json.loads(db.filas["user-1"]["totp_backup_codes"]) == codigos.hashes
+
+
+@pytest.mark.asyncio
+async def test_regenerar_codigos_respaldo_con_codigo_invalido_no_toca_nada():
+    db = _FakeUsersDB()
+    secreto, _ = await iniciar_activacion(db, user_id="user-1", email="ana@vridik.local")
+    codigos = await confirmar_activacion(db, user_id="user-1", codigo=pyotp.totp.TOTP(secreto).now())
+
+    assert await regenerar_codigos_respaldo(db, user_id="user-1", codigo="000000") is None
+    assert json.loads(db.filas["user-1"]["totp_backup_codes"]) == codigos.hashes
+
+
+@pytest.mark.asyncio
+async def test_regenerar_codigos_respaldo_sin_2fa_activo_falla():
+    db = _FakeUsersDB()
+    # Ni siquiera hay un secreto guardado todavía.
+    assert await regenerar_codigos_respaldo(db, user_id="user-1", codigo="123456") is None
 
 
 @pytest.mark.asyncio

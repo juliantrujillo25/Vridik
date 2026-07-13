@@ -19,6 +19,7 @@ import type {
   LoginResponse,
   Mensaje,
   Perfil,
+  RegenerarCodigosResponse,
   ResetPasswordResult,
   Role,
   Setup2FAResponse,
@@ -198,6 +199,15 @@ class ApiClient {
 
   verify2fa(code: string): Promise<Verify2FAResponse> {
     return this.request("/auth/2fa/verify", { method: "POST", body: JSON.stringify({ code }) });
+  }
+
+  /** Requiere el 2FA ya activo y un código TOTP del autenticador (nunca
+   *  uno de respaldo -- lo exige el backend). Reemplaza el lote entero. */
+  regenerarCodigosRespaldo(code: string): Promise<RegenerarCodigosResponse> {
+    return this.request("/auth/2fa/backup-codes/regenerate", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    });
   }
 
   // --- casos --------------------------------------------------------------
