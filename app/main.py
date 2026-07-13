@@ -37,6 +37,7 @@ reconexión real (Fase C) y más tipos de evento llegan después sin
 cambiar el canal.
 """
 
+import logging
 import os
 
 import asyncpg
@@ -48,6 +49,9 @@ from api.case_documents_endpoint import router as case_documents_router
 from api.casos_endpoint import router as casos_router
 from api.events_endpoint import router as events_router
 from api.mensajes_endpoint import router as mensajes_router
+from core.auth import ensure_auth_migration_005
+
+logger = logging.getLogger("vridik.app")
 
 # S1: registro/login sobre PostgreSQL real (ver api/auth_endpoint.py).
 app.include_router(auth_router)
@@ -93,6 +97,28 @@ async def _conectar_db() -> None:
         # conexiones puede usar el streaming SSE, para que nunca se coma
         # el pool completo.
         app.state.db_connection = await asyncpg.create_pool(database_url, min_size=2, max_size=20)
+
+        # Bootstrap idempotente de migrations/005_auth_roles_refresh_tokens.sql
+        # (refresh_tokens/auth_events/user_credentials/roles) -- UNA sola vez
+        # acá, no en cada request (a diferencia de ensure_users_table/
+        # ensure_role_column, que sí corren por request): son 24 sentencias,
+        # incluido un backfill real sobre toda `users`, agregarlo al camino
+        # de login/refresh/logout sería pagar ese costo en el flujo más
+        # sensible de la app. Nunca existió una versión idempotente de esta
+        # migración en el código (solo el .sql de referencia, que nada
+        # ejecutaba en runtime) -- en logs, no crashea el arranque si falla
+        # (la migración ya está aplicada en producción; esto es red de
+        # seguridad para un entorno nuevo, no una dependencia dura de hoy).
+        try:
+            async with app.state.db_connection.acquire() as conn:
+                await ensure_auth_migration_005(conn)
+        except Exception:
+            logger.critical(
+                "Vridik: no se pudo aplicar el bootstrap de migrations/005_auth_roles_refresh_tokens.sql "
+                "al arrancar -- si las tablas refresh_tokens/auth_events/user_credentials ya existen "
+                "(caso esperado en producción hoy) esto no afecta nada; si no existen, auth va a fallar.",
+                exc_info=True,
+            )
 
 
 @app.on_event("shutdown")

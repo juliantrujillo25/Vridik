@@ -142,3 +142,131 @@ async def ensure_users_table(conn) -> None:
         """
     )
     await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS hashed_password TEXT")
+
+
+async def ensure_auth_migration_005(conn) -> None:
+    """Bootstrap idempotente de migrations/005_auth_roles_refresh_tokens.sql
+    (roles, user_credentials, refresh_tokens, auth_events -- las tres
+    últimas son load-bearing hoy: refresh_tokens sostiene toda sesión
+    activa, auth_events alimenta el rate limiting de login y el reset de
+    2FA, user_credentials es la fuente real de password_hash en varios
+    flujos de admin). A diferencia de ensure_users_table()/ensure_role_column()
+    (que SÍ se llaman en cada request, patrón establecido en este
+    proyecto), esta se llama UNA sola vez al arrancar el proceso
+    (app/main.py) -- son 24 sentencias, incluido un UPDATE de backfill
+    real sobre toda `users`; correrlas en cada login/refresh/logout sería
+    agregar ese costo al camino más sensible de la app para un beneficio
+    que solo importa si el proceso arranca contra una base nueva.
+
+    Nunca existió una versión idempotente de esta migración en el código
+    -- solo el .sql de referencia, que nada ejecutaba en runtime (mismo
+    hueco que julix_calls antes de ensure_julix_calls_table()). En
+    producción la migración ya se aplicó (login/refresh/logout llevan
+    toda la sesión funcionando en base a estas tablas) -- esto es una red
+    de seguridad para que un entorno nuevo (staging futuro, disaster
+    recovery) no vuelva a depender de correr el .sql a mano."""
+    await conn.execute('CREATE EXTENSION IF NOT EXISTS "citext"')
+    await conn.execute('CREATE EXTENSION IF NOT EXISTS "pgcrypto"')
+
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS roles (
+            id          SMALLINT PRIMARY KEY,
+            codigo      TEXT NOT NULL UNIQUE,
+            nombre      TEXT NOT NULL,
+            descripcion TEXT,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
+    await conn.execute(
+        """
+        INSERT INTO roles (id, codigo, nombre, descripcion) VALUES
+            (1, 'admin',    'Administrador', 'Acceso total: gestión de usuarios, productos, órdenes, pagos'),
+            (2, 'seller',   'Vendedor',      'Gestión de sus propios productos y pedidos'),
+            (3, 'customer', 'Cliente',       'Compra servicios, ve sus pedidos')
+        ON CONFLICT (id) DO NOTHING
+        """
+    )
+
+    await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role_id SMALLINT REFERENCES roles(id)")
+    await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS nombre_completo TEXT")
+    await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change BOOLEAN NOT NULL DEFAULT false")
+    await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ")
+    await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()")
+    await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ")
+    await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ")
+    await conn.execute(
+        "UPDATE users SET role_id = (SELECT id FROM roles WHERE codigo = users.role) WHERE role_id IS NULL"
+    )
+    await conn.execute("CREATE INDEX IF NOT EXISTS ix_users_role_id ON users (role_id)")
+    await conn.execute("ALTER TABLE users ALTER COLUMN email TYPE CITEXT")
+
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_credentials (
+            user_id        UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            password_hash  TEXT NOT NULL,
+            hash_algorithm TEXT NOT NULL DEFAULT 'bcrypt'
+                           CHECK (hash_algorithm IN ('argon2id', 'bcrypt')),
+            is_temporary   BOOLEAN NOT NULL DEFAULT false,
+            updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_by     UUID REFERENCES users(id)
+        )
+        """
+    )
+    await conn.execute(
+        """
+        INSERT INTO user_credentials (user_id, password_hash, hash_algorithm)
+        SELECT id, hashed_password, 'bcrypt' FROM users
+        WHERE hashed_password IS NOT NULL
+        ON CONFLICT (user_id) DO NOTHING
+        """
+    )
+
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS refresh_tokens (
+            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            token_hash      TEXT NOT NULL UNIQUE,
+            family_id       UUID NOT NULL,
+            replaced_by_id  UUID REFERENCES refresh_tokens(id),
+            issued_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+            expires_at      TIMESTAMPTZ NOT NULL,
+            used_at         TIMESTAMPTZ,
+            revoked_at      TIMESTAMPTZ,
+            revoked_reason  TEXT,
+            user_agent      TEXT,
+            ip_address      INET
+        )
+        """
+    )
+    await conn.execute("CREATE INDEX IF NOT EXISTS ix_refresh_tokens_user_id ON refresh_tokens (user_id)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS ix_refresh_tokens_family_id ON refresh_tokens (family_id)")
+    await conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_refresh_tokens_expires_at ON refresh_tokens (expires_at)
+            WHERE revoked_at IS NULL
+        """
+    )
+
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS auth_events (
+            id          BIGSERIAL PRIMARY KEY,
+            user_id     UUID REFERENCES users(id) ON DELETE SET NULL,
+            actor_id    UUID REFERENCES users(id) ON DELETE SET NULL,
+            event_type  TEXT NOT NULL,
+            metadata    JSONB NOT NULL DEFAULT '{}'::jsonb,
+            ip_address  INET,
+            user_agent  TEXT,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS ix_auth_events_user_id_created_at ON auth_events (user_id, created_at DESC)"
+    )
+    await conn.execute("CREATE INDEX IF NOT EXISTS ix_auth_events_event_type ON auth_events (event_type)")
+    await conn.execute("CREATE INDEX IF NOT EXISTS ix_auth_events_created_at ON auth_events (created_at DESC)")
