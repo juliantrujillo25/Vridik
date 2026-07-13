@@ -68,9 +68,22 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
    es el access token: 15 min (`JWT_EXPIRE_MINUTES`). Tras ~15 min desde
    el paso 2, ningún token firmado con la clave vieja sigue vigente.
    (El temp token de 2FA vive 5 min, cubierto de sobra por esa ventana.)
-5. **Cerrar la rotación.** Borrar `JWT_SECRET_PREVIOUS` en Railway
-   (dispara un último redeploy). A partir de ahí, solo se acepta la clave
-   nueva. Un token viejo que por lo que sea siga circulando ya no valida.
+5. **Cerrar la rotación.** Borrar `JWT_SECRET_PREVIOUS` en Railway.
+   **OJO (verificado en la rotación real del 2026-07-13):** a diferencia
+   de `variable set`, `railway variable delete` no siempre dispara el
+   redeploy automático que uno esperaría (mismo comportamiento en
+   `set --skip-deploys`, pero acá no se pidió `--skip-deploys`). No
+   confiar en que el borrado solo ya cerró la ventana -- confirmar con
+   `railway deployment list --service vridik-api` que apareció un
+   deployment nuevo DESPUÉS del delete. Si no apareció, forzar uno con
+   `railway redeploy --service vridik-api --yes` antes de dar la
+   rotación por cerrada. Sin este chequeo, la variable queda "borrada"
+   en el panel de Railway pero el proceso corriendo sigue con el
+   entorno viejo en memoria y sigue aceptando tokens firmados con la
+   clave anterior indefinidamente -- exactamente el resultado que la
+   rotación buscaba evitar. Una vez confirmado el redeploy real, solo
+   se acepta la clave nueva; un token viejo que por lo que sea siga
+   circulando ya no valida.
 
 ### Cuándo rotar
 
@@ -93,6 +106,15 @@ job). Lo que sí se verificó, sin tocar la sesión de nadie en producción:
 - **El desacople `TOTP_ENCRYPTION_KEY`** se verificó end-to-end en
   producción real (enrolar + login con 2FA sobre un usuario de prueba)
   antes de habilitar cualquier rotación de `JWT_SECRET`.
+- **Rotación real ejecutada contra producción, 2026-07-13** (no un
+  ensayo): los 5 pasos completos, con verificación en cada uno contra la
+  API real (token viejo válido durante la ventana, token nuevo válido,
+  `POST /auth/refresh` con la clave nueva, espera real de los ~15min de
+  vida del access token, cierre). Encontró y corrigió en el momento el
+  hueco de `railway variable delete` documentado arriba (paso 5) — sin
+  esa verificación, la rotación habría quedado "cerrada" en el papel
+  pero abierta de verdad. Esta ejecución real, con ese hallazgo incluido,
+  es más evidencia que cualquier ensayo en un staging que no existe.
 
 Si en algún momento se arma un staging persistente, ensayar ahí el
 procedimiento completo de 5 pasos (con un login real abierto que
