@@ -37,3 +37,16 @@ export function fechaHora(iso: string): string {
     return iso;
   }
 }
+
+const MARCA_REVISAR = "\n\n[revisar]";
+
+/** julix/service.py::validar_citas_post_generacion() incrusta un aviso de
+ *  texto plano al final del documento cuando encuentra una cita sin
+ *  respaldo en el contexto -- nunca bloquea la generación, así que sin
+ *  esto el aviso queda mezclado en la prosa y es fácil pasarlo por alto.
+ *  Separa el cuerpo del aviso para poder resaltarlo aparte en la UI. */
+export function separarAvisoRevisar(contenido: string): { cuerpo: string; aviso: string | null } {
+  const idx = contenido.indexOf(MARCA_REVISAR);
+  if (idx === -1) return { cuerpo: contenido, aviso: null };
+  return { cuerpo: contenido.slice(0, idx), aviso: contenido.slice(idx + 2).trim() };
+}

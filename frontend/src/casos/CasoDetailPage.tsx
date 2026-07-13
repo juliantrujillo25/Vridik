@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, SesionExpiradaError } from "../api/client";
 import type { AdminUser, Caso, CaseDocument, EstadoCaso } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
-import { ESTADOS, ESTADO_LABEL, EstadoPill, fechaHora } from "../ui";
+import { ESTADOS, ESTADO_LABEL, EstadoPill, fechaHora, separarAvisoRevisar } from "../ui";
 import { Mensajes } from "./Mensajes";
 
 export function CasoDetailPage() {
@@ -259,7 +259,15 @@ export function CasoDetailPage() {
             {cargandoDoc ? (
               <div className="empty muted"><span className="spinner" /> Cargando…</div>
             ) : (
-              <div className="doc-content">{docAbierto.contenido ?? "(sin contenido)"}</div>
+              (() => {
+                const { cuerpo, aviso } = separarAvisoRevisar(docAbierto.contenido ?? "(sin contenido)");
+                return (
+                  <>
+                    {aviso && <div className="alert warn doc-aviso-revisar" role="alert">{aviso}</div>}
+                    <div className="doc-content">{cuerpo}</div>
+                  </>
+                );
+              })()
             )}
             {docAbierto.pdf_url && (
               <a className="btn btn-ghost btn-sm doc-pdf-link" href={docAbierto.pdf_url} target="_blank" rel="noreferrer">

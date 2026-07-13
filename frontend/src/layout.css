@@ -170,6 +170,7 @@
 }
 .doc-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1.1rem; }
 .doc-modal-title { margin: 0.25rem 0 0; font-size: 1.15rem; }
+.doc-aviso-revisar { margin-bottom: 1rem; white-space: pre-wrap; }
 .doc-content {
   overflow-y: auto;
   white-space: pre-wrap;
