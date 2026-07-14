@@ -108,6 +108,16 @@ export interface ActuacionNuevaEvent extends EventoSSE {
   categoria: CategoriaActuacion;
 }
 
+// Alerta proactiva de un término en riesgo (roadmap Fase 2, ver
+// procesal/alertas_terminos.py) -- llega aunque nadie haya abierto el caso.
+export interface TerminoAlertaEvent extends EventoSSE {
+  type: "termino.alerta";
+  caso_id: string;
+  termino_id: string;
+  descripcion: string;
+  fecha_vencimiento: string;
+}
+
 // --- panel admin (roadmap S2) ----------------------------------------------
 export interface AdminUser {
   id: string;

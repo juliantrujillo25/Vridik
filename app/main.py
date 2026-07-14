@@ -37,6 +37,7 @@ reconexión real (Fase C) y más tipos de evento llegan después sin
 cambiar el canal.
 """
 
+import asyncio
 import logging
 import os
 
@@ -52,8 +53,20 @@ from api.events_endpoint import router as events_router
 from api.mensajes_endpoint import router as mensajes_router
 from api.terminos_endpoint import router as terminos_router
 from core.auth import ensure_auth_migration_005
+from core.terminos import ensure_terminos_table
+from procesal.alertas_terminos import ejecutar_ronda_de_alertas
 
 logger = logging.getLogger("vridik.app")
+
+# Fase 2: alertas proactivas de términos en riesgo (roadmap: "0 términos
+# vencidos sin alerta en 90 días", ver procesal/alertas_terminos.py) --
+# "cero infra nueva": un loop de fondo dentro de este mismo proceso
+# siempre-activo, no un servicio Railway con cron propio. 6h por defecto es
+# más que suficiente para un aviso de vencimientos (no es un sistema de
+# tiempo real) y barato en llamadas a la DB.
+_INTERVALO_ALERTAS_TERMINOS_SEGUNDOS = int(
+    os.environ.get("VRIDIK_INTERVALO_ALERTAS_TERMINOS_SEGUNDOS", str(6 * 60 * 60))
+)
 
 # S1: registro/login sobre PostgreSQL real (ver api/auth_endpoint.py).
 app.include_router(auth_router)
@@ -131,9 +144,34 @@ async def _conectar_db() -> None:
                 exc_info=True,
             )
 
+        app.state._tarea_alertas_terminos = asyncio.create_task(_bucle_alertas_terminos())
+
+
+async def _bucle_alertas_terminos() -> None:
+    """Fase 2: ver procesal/alertas_terminos.py -- corre para siempre
+    mientras el proceso esté vivo (cancelada en _cerrar_db). Un ciclo que
+    falla (DB momentáneamente caída, etc.) se loguea y el loop sigue en el
+    próximo intervalo -- nunca tumba el proceso ni deja de reintentar."""
+    while True:
+        try:
+            async with app.state.db_connection.acquire() as conn:
+                await ensure_terminos_table(conn)
+                enviadas = await ejecutar_ronda_de_alertas(conn)
+                if enviadas:
+                    logger.info("Vridik: %s alerta(s) de término enviada(s) en esta ronda", enviadas)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Vridik: falló una ronda de alertas de términos (se reintenta en el próximo ciclo)")
+        await asyncio.sleep(_INTERVALO_ALERTAS_TERMINOS_SEGUNDOS)
+
 
 @app.on_event("shutdown")
 async def _cerrar_db() -> None:
+    tarea_alertas = getattr(app.state, "_tarea_alertas_terminos", None)
+    if tarea_alertas is not None:
+        tarea_alertas.cancel()
+
     db_connection = getattr(app.state, "db_connection", None)
     if db_connection is not None:
         await db_connection.close()

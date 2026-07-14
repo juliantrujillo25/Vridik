@@ -38,6 +38,11 @@ _COLUMNAS = (
 
 ESTADOS_VALIDOS = ("pendiente", "cumplido")
 
+# Mismo corte que el semáforo del frontend (frontend/src/ui.tsx::semaforoTermino)
+# -- un término entra en "riesgo" (amarillo o rojo) a 3 días de calendario o
+# menos del vencimiento, incluido ya vencido (dias_restantes negativo).
+UMBRAL_DIAS_RIESGO = 3
+
 
 async def ensure_terminos_table(db_connection) -> None:
     await ensure_casos_table(db_connection)
@@ -61,6 +66,13 @@ async def ensure_terminos_table(db_connection) -> None:
     )
     await db_connection.execute(
         "CREATE INDEX IF NOT EXISTS ix_terminos_caso_id ON terminos (caso_id, fecha_vencimiento)"
+    )
+    # Migración aditiva (roadmap Fase 2, alertas proactivas -- ver
+    # procesal/alertas_terminos.py): registra la última fecha en la que se
+    # notificó este término por estar en riesgo, para no re-notificar en
+    # cada ronda mientras siga en el mismo estado de riesgo el mismo día.
+    await db_connection.execute(
+        "ALTER TABLE terminos ADD COLUMN IF NOT EXISTS ultima_alerta_enviada DATE"
     )
 
 
@@ -107,6 +119,35 @@ async def marcar_estado_termino(db_connection, *, termino_id: str, estado: str) 
         f"UPDATE terminos SET estado = $2 WHERE id = $1 RETURNING {_COLUMNAS}", termino_id, estado,
     )
     return dict(fila) if fila is not None else None
+
+
+async def listar_terminos_para_alertar(db_connection, *, hoy: date | None = None) -> list[dict]:
+    """Términos pendientes en riesgo (ver UMBRAL_DIAS_RIESGO) que todavía no
+    se notificaron HOY -- join con `casos` para traer cliente_id/abogado_id
+    en la misma consulta (evita N+1 en procesal/alertas_terminos.py, que
+    llama esto una vez por ronda, no una vez por término)."""
+    hoy = hoy or date.today()
+    limite = hoy.fromordinal(hoy.toordinal() + UMBRAL_DIAS_RIESGO)
+    filas = await db_connection.fetch(
+        """
+        SELECT t.id, t.caso_id, t.descripcion, t.fecha_vencimiento,
+               c.cliente_id, c.abogado_id
+        FROM terminos t
+        JOIN casos c ON c.id = t.caso_id
+        WHERE t.estado = 'pendiente'
+          AND t.fecha_vencimiento <= $1
+          AND (t.ultima_alerta_enviada IS NULL OR t.ultima_alerta_enviada <> $2)
+        ORDER BY t.fecha_vencimiento ASC
+        """,
+        limite, hoy,
+    )
+    return [dict(f) for f in filas]
+
+
+async def marcar_alerta_enviada(db_connection, *, termino_id: str, hoy: date | None = None) -> None:
+    await db_connection.execute(
+        "UPDATE terminos SET ultima_alerta_enviada = $2 WHERE id = $1", termino_id, hoy or date.today(),
+    )
 
 
 def dias_restantes(fecha_vencimiento: date, *, hoy: date | None = None) -> int:

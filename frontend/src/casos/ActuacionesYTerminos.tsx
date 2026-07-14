@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, SesionExpiradaError } from "../api/client";
-import type { Actuacion, ActuacionNuevaEvent, EventoSSE, Termino } from "../api/types";
+import type { Actuacion, ActuacionNuevaEvent, EventoSSE, Termino, TerminoAlertaEvent } from "../api/types";
 import { CATEGORIA_LABEL, fechaCorta, fechaHora, semaforoTermino } from "../ui";
 
 function esActuacionNueva(ev: EventoSSE, casoId: string): ev is ActuacionNuevaEvent {
   return ev.type === "actuacion.nueva" && (ev as ActuacionNuevaEvent).caso_id === casoId;
+}
+
+function esTerminoAlerta(ev: EventoSSE, casoId: string): ev is TerminoAlertaEvent {
+  return ev.type === "termino.alerta" && (ev as TerminoAlertaEvent).caso_id === casoId;
 }
 
 function etiquetaDiasRestantes(t: Termino): string {
@@ -57,9 +61,10 @@ export function ActuacionesYTerminos({ casoId }: { casoId: string }) {
   useEffect(() => {
     const detener = api.streamEvents((ev) => {
       if (esActuacionNueva(ev, casoId)) void cargarActuaciones();
+      if (esTerminoAlerta(ev, casoId)) void cargarTerminos();
     });
     return detener;
-  }, [casoId, cargarActuaciones]);
+  }, [casoId, cargarActuaciones, cargarTerminos]);
 
   async function onCrearActuacion(e: FormEvent) {
     e.preventDefault();

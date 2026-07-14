@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { SesionExpiradaError } from "../api/client";
-import type { Caso, MessageNewEvent, Termino } from "../api/types";
+import type { Caso, MessageNewEvent, Termino, TerminoAlertaEvent } from "../api/types";
 import { EstadoPill, fechaCorta, type SemaforoColor } from "../ui";
 
 /** Solo vale la pena mostrar un badge en el dashboard cuando hay algo que
@@ -74,9 +74,20 @@ export function CasosListPage() {
   // leído" de otra pestaña), vuelve a pedir el conteo real de ese caso.
   useEffect(() => {
     const detener = api.streamEvents((ev) => {
-      if (ev.type !== "message.new") return;
-      const casoId = (ev as MessageNewEvent).caso_id;
-      void api.noLeidos(casoId).then((n) => setNoLeidos((prev) => ({ ...prev, [casoId]: n })));
+      if (ev.type === "message.new") {
+        const casoId = (ev as MessageNewEvent).caso_id;
+        void api.noLeidos(casoId).then((n) => setNoLeidos((prev) => ({ ...prev, [casoId]: n })));
+      }
+      // Alerta proactiva de un término (roadmap Fase 2, ver
+      // procesal/alertas_terminos.py) -- puede llegar sin que nadie haya
+      // recargado el dashboard, así que el badge se actualiza en vivo
+      // igual que el de no-leídos.
+      if (ev.type === "termino.alerta") {
+        const casoId = (ev as TerminoAlertaEvent).caso_id;
+        void api.listTerminos(casoId).then((terminos) =>
+          setTerminosUrgentes((prev) => ({ ...prev, [casoId]: peorSemaforoUrgente(terminos) })),
+        );
+      }
     });
     return detener;
   }, []);
