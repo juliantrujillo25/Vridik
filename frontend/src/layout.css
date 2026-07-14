@@ -101,6 +101,25 @@
   font-family: var(--mono);
 }
 
+/* --- badge de términos en riesgo (roadmap Fase 2: semáforo en el dashboard) --- */
+.badge-termino {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25em;
+  min-width: 1.3rem;
+  height: 1.3rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-family: var(--mono);
+}
+.badge-termino::before { content: "⏱"; font-size: 0.8em; }
+.badge-termino.rojo { background: var(--danger); color: #fff; }
+.badge-termino.amarillo { background: var(--warn); color: #2a1f05; }
+.badge-termino.verde { background: var(--good); color: #fff; }
+
 /* --- detalle de caso --- */
 .caso-desc { margin: 0 0 1.4rem; max-width: 68ch; }
 .caso-meta-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 2.4rem; }
