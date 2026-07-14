@@ -8,14 +8,17 @@
 // request original una sola vez.
 
 import type {
+  Actuacion,
   AdminUser,
   AuthEvent,
   Caso,
   CaseDocument,
   CostosResponse,
   CrearDocumentoInput,
+  CrearTerminoInput,
   CrearUsuarioAdminInput,
   EstadoCaso,
+  EstadoTermino,
   EventoSSE,
   LoginResponse,
   Mensaje,
@@ -24,6 +27,7 @@ import type {
   ResetPasswordResult,
   Role,
   Setup2FAResponse,
+  Termino,
   TokenPair,
   Verify2FAResponse,
 } from "./types";
@@ -313,6 +317,40 @@ class ApiClient {
 
   adminCostos(): Promise<CostosResponse> {
     return this.request("/admin/costos");
+  }
+
+  // --- Fase 2: actuaciones + términos (procesal/) --------------------------
+  listActuaciones(casoId: string): Promise<Actuacion[]> {
+    return this.request(`/casos/${casoId}/actuaciones`);
+  }
+
+  /** OJO: dispara una llamada real a Claude (Haiku, barata pero real) para
+   *  clasificar el texto -- ver api/actuaciones_endpoint.py. */
+  crearActuacion(casoId: string, texto: string): Promise<Actuacion> {
+    return this.request(`/casos/${casoId}/actuaciones`, {
+      method: "POST",
+      body: JSON.stringify({ texto }),
+    });
+  }
+
+  listTerminos(casoId: string): Promise<Termino[]> {
+    return this.request(`/casos/${casoId}/terminos`);
+  }
+
+  /** El vencimiento nunca se manda -- lo calcula siempre el backend
+   *  (procesal/calendario_judicial.py::sumar_dias_habiles). */
+  crearTermino(casoId: string, input: CrearTerminoInput): Promise<Termino> {
+    return this.request(`/casos/${casoId}/terminos`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  cambiarEstadoTermino(casoId: string, terminoId: string, estado: EstadoTermino): Promise<Termino> {
+    return this.request(`/casos/${casoId}/terminos/${terminoId}/estado`, {
+      method: "PATCH",
+      body: JSON.stringify({ estado }),
+    });
   }
 
   // --- eventos en vivo (SSE, roadmap S11 Fase C) ---------------------------

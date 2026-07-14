@@ -169,6 +169,9 @@ h1, h2, h3 { letter-spacing: -0.01em; text-wrap: balance; }
 .pill.abierto { color: var(--accent); background: var(--accent-soft); }
 .pill.en_progreso { color: var(--warn); background: var(--warn-bg); }
 .pill.cerrado { color: var(--muted); background: var(--muted-bg); }
+.pill.verde { color: var(--good); background: var(--good-bg); }
+.pill.amarillo { color: var(--warn); background: var(--warn-bg); }
+.pill.rojo { color: var(--danger); background: var(--danger-bg); }
 
 /* --- mensajes de error / aviso --- */
 .alert {

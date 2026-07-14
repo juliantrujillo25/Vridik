@@ -4,6 +4,7 @@ import { api, SesionExpiradaError } from "../api/client";
 import type { AdminUser, Caso, CaseDocument, EstadoCaso } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { ESTADOS, ESTADO_LABEL, EstadoPill, fechaHora, separarAvisoRevisar } from "../ui";
+import { ActuacionesYTerminos } from "./ActuacionesYTerminos";
 import { Mensajes } from "./Mensajes";
 
 export function CasoDetailPage() {
@@ -187,6 +188,8 @@ export function CasoDetailPage() {
         <h2 className="section-title">Mensajes</h2>
         {perfil && <Mensajes casoId={id} miId={perfil.id} />}
       </section>
+
+      <ActuacionesYTerminos casoId={id} />
 
       <section className="section">
         <h2 className="section-title">Generar documento con JuliX</h2>

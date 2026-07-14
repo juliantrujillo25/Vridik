@@ -1,4 +1,4 @@
-import type { EstadoCaso } from "./api/types";
+import type { CategoriaActuacion, EstadoCaso } from "./api/types";
 
 export const ESTADOS: EstadoCaso[] = ["abierto", "en_progreso", "cerrado"];
 
@@ -49,4 +49,26 @@ export function separarAvisoRevisar(contenido: string): { cuerpo: string; aviso:
   const idx = contenido.indexOf(MARCA_REVISAR);
   if (idx === -1) return { cuerpo: contenido, aviso: null };
   return { cuerpo: contenido.slice(0, idx), aviso: contenido.slice(idx + 2).trim() };
+}
+
+// --- Fase 2: actuaciones + términos -----------------------------------------
+export const CATEGORIA_LABEL: Record<CategoriaActuacion, string> = {
+  auto_admisorio: "Auto admisorio",
+  requerimiento: "Requerimiento",
+  fallo: "Fallo",
+  traslado: "Traslado",
+  otro: "Otro",
+};
+
+/** Semáforo del roadmap ("verde/amarillo/rojo"): el umbral es a criterio de
+ *  producto, no del backend (que solo entrega dias_restantes calculado) --
+ *  3 días hábiles de margen como corte amarillo/rojo, alineado con el resto
+ *  de términos legales cortos de UGPP/procesal que ya maneja el copiloto. */
+export type SemaforoColor = "verde" | "amarillo" | "rojo";
+
+export function semaforoTermino(diasRestantes: number, estado: "pendiente" | "cumplido"): SemaforoColor {
+  if (estado === "cumplido") return "verde";
+  if (diasRestantes <= 0) return "rojo";
+  if (diasRestantes <= 3) return "amarillo";
+  return "verde";
 }

@@ -101,6 +101,13 @@ export interface MessageNewEvent extends EventoSSE {
   mensaje_id: string;
 }
 
+export interface ActuacionNuevaEvent extends EventoSSE {
+  type: "actuacion.nueva";
+  caso_id: string;
+  actuacion_id: string;
+  categoria: CategoriaActuacion;
+}
+
 // --- panel admin (roadmap S2) ----------------------------------------------
 export interface AdminUser {
   id: string;
@@ -136,4 +143,45 @@ export interface CostosResponse {
   limite_mensual_usd: number;
   aviso_80: boolean;
   confirmacion_100: boolean;
+}
+
+// --- Fase 2: actuaciones + términos (procesal/) ----------------------------
+export type CategoriaActuacion = "auto_admisorio" | "requerimiento" | "fallo" | "traslado" | "otro";
+
+// POST/GET /casos/{id}/actuaciones
+export interface Actuacion {
+  id: string;
+  caso_id: string;
+  created_by: string;
+  texto: string;
+  categoria: CategoriaActuacion;
+  confianza: number;
+  texto_bruto_clasificacion: string;
+  created_at: string;
+}
+
+export type EstadoTermino = "pendiente" | "cumplido";
+
+// POST/GET /casos/{id}/terminos -- fecha_vencimiento y dias_restantes los
+// calcula siempre el backend (ver core/terminos.py); nunca se proponen a mano.
+export interface Termino {
+  id: string;
+  caso_id: string;
+  created_by: string;
+  descripcion: string;
+  fecha_inicio: string;
+  dias_habiles: number;
+  fecha_vencimiento: string;
+  incluye_ventana_sin_confirmar: boolean;
+  actuacion_id: string | null;
+  estado: EstadoTermino;
+  created_at: string;
+  dias_restantes: number;
+}
+
+export interface CrearTerminoInput {
+  descripcion: string;
+  fecha_inicio: string;
+  dias_habiles: number;
+  actuacion_id?: string | null;
 }
