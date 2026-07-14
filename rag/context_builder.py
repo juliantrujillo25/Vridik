@@ -268,7 +268,28 @@ async def buscar_contexto(
     # de cliente prioritaria sobre cercanía marginal en el espacio de
     # embeddings.
     candidatos.sort(key=lambda c: c.score, reverse=True)
-    return candidatos[:top_k]
+    seleccionados = candidatos[:top_k]
+
+    # Sin esto, la única forma de ver qué (si algo) se recuperó para una
+    # pregunta dada era la caché SQLite local (rag/cache.py), no los logs
+    # de Railway -- no hay umbral de similitud acá (buscar_contexto SIEMPRE
+    # devuelve los top_k más cercanos que haya, por débil que sea la
+    # coincidencia), así que "0 candidatos" solo pasa con la tabla vacía o
+    # sin conexión; un "No tengo fuente suficiente" con candidatos > 0 es
+    # el prompt de JuliX rechazando fuentes topicamente insuficientes, no
+    # un fallo de recuperación -- este log distingue los dos casos en
+    # producción sin tener que inspeccionar la caché.
+    if seleccionados:
+        logger.info(
+            "Vridik/RAG: %s candidato(s) recuperados para %r — top: %s art. %s (score=%.3f, distancia=%.3f)",
+            len(seleccionados), pregunta[:80],
+            seleccionados[0].norma, seleccionados[0].articulo,
+            seleccionados[0].score, seleccionados[0].distancia,
+        )
+    else:
+        logger.info("Vridik/RAG: 0 candidatos recuperados para %r — tabla rag_chunks vacía", pregunta[:80])
+
+    return seleccionados
 
 
 def a_ranked_chunks(chunks: list[ChunkRecuperado]):
