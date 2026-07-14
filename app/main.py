@@ -43,12 +43,14 @@ import os
 import asyncpg
 
 from api.julix_endpoint import app
+from api.actuaciones_endpoint import router as actuaciones_router
 from api.admin_endpoint import router as admin_router
 from api.auth_endpoint import router as auth_router
 from api.case_documents_endpoint import router as case_documents_router
 from api.casos_endpoint import router as casos_router
 from api.events_endpoint import router as events_router
 from api.mensajes_endpoint import router as mensajes_router
+from api.terminos_endpoint import router as terminos_router
 from core.auth import ensure_auth_migration_005
 
 logger = logging.getLogger("vridik.app")
@@ -73,8 +75,17 @@ app.include_router(case_documents_router)
 # S11 (Fase A): mensajería real entre cliente/abogado sobre un caso.
 app.include_router(mensajes_router)
 
-# S11 (Fase B): canal SSE genérico, hoy usado por mensajería.
+# S11 (Fase B): canal SSE genérico, hoy usado por mensajería y (Fase 2)
+# por actuacion.nueva.
 app.include_router(events_router)
+
+# Fase 2 (Copiloto Procesal) — arranca sin proveedor de monitoreo de
+# procesos contratado (decisión de negocio pendiente, ver
+# procesal/__init__.py): actuaciones se registran a mano por ahora
+# (clasificación IA real sobre el texto), términos siempre con
+# vencimiento calculado por procesal/calendario_judicial.py, nunca a mano.
+app.include_router(actuaciones_router)
+app.include_router(terminos_router)
 
 
 @app.on_event("startup")
