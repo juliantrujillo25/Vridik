@@ -1,0 +1,17 @@
+# Vridik frontend — nixpacks.toml
+# Servicio Railway propio (root directory = frontend/), separado de
+# vridik-api. Build de producción de Vite + servido estático con `serve`
+# (modo SPA -- `-s`, reescribe cualquier ruta no encontrada a index.html,
+# necesario para que un reload en /casos/:id no dé 404 con React Router).
+
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm start"

@@ -1,12 +1,12 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
-  "_nota": "Railway.json oficial es una config POR SERVICIO (build/deploy de un único servicio). No existe un esquema público de Railway para declarar varios servicios en un solo archivo. Este archivo documenta los 3 servicios del proyecto Vridik como referencia de infraestructura-como-código; para aplicarlo de verdad en Railway hay que crear los 3 servicios en el proyecto (dashboard o `railway service create`) y copiar el bloque `build`/`deploy` correspondiente a cada uno (o un `railway.json`/`railway.toml` propio por servicio, si cada uno vive en su propio subdirectorio del repo). No se ejecutó ningún despliegue real para este entregable.",
+  "_nota": "Railway.json oficial es una config POR SERVICIO (build/deploy de un único servicio). No existe un esquema público de Railway para declarar varios servicios en un solo archivo. Este archivo documenta los 4 servicios del proyecto Vridik como referencia de infraestructura-como-código. vridik-api y vridik-frontend SÍ están desplegados de verdad en producción (confirmar contra `railway service list` antes de confiar en esto, cambia); vridik-postgres es el managed plugin real que ambos usan. vridik-pdf-worker sigue siendo solo documentación -- nunca se desplegó (ver su propia _nota abajo).",
   "project": "vridik",
   "environment": "production",
   "services": [
     {
       "name": "vridik-api",
-      "_nota": "API principal (FastAPI/JuliX). Único servicio con tráfico HTTP público en este archivo.",
+      "_nota": "API principal (FastAPI/JuliX). Desplegada de verdad en https://vridik-api-production.up.railway.app.",
       "build": {
         "builder": "NIXPACKS",
         "buildCommand": null,
@@ -26,9 +26,26 @@
         "DATABASE_URL": "${{vridik-postgres.DATABASE_URL}}",
         "USE_POSTGRES": "true",
         "JWT_SECRET": "${{secrets.JWT_SECRET}}",
-        "VRIDIK_ALLOWED_ORIGINS": "",
-        "_nota_hardening_s13": "JWT_SECRET debe venir SIEMPRE del vault de secretos de Railway (nunca vacío en producción — ver api/julix_endpoint.py, que ahora loggea CRITICAL si arranca vacío). VRIDIK_ALLOWED_ORIGINS es la lista de orígenes CORS autorizados del frontend de Vridik, separados por comas (p.ej. 'https://app.vridik.com'); vacío por defecto = CORS rechaza cualquier origen cross-origin (falla cerrado, no abierto) hasta que se configure explícitamente."
+        "VRIDIK_ALLOWED_ORIGINS": "https://vridik-frontend-production.up.railway.app",
+        "_nota_hardening_s13": "JWT_SECRET debe venir SIEMPRE del vault de secretos de Railway (nunca vacío en producción — ver api/julix_endpoint.py, que ahora loggea CRITICAL si arranca vacío). VRIDIK_ALLOWED_ORIGINS es la lista de orígenes CORS autorizados del frontend de Vridik, separados por comas; falla cerrado (rechaza todo origen cross-origin) si queda vacío. Seteada de verdad en producción el 14-jul-2026 al desplegar vridik-frontend -- antes de esa fecha estuvo vacía, así que ningún frontend en otro origen podía llamar a la API todavía."
       }
+    },
+    {
+      "name": "vridik-frontend",
+      "_nota": "SPA de React/Vite (frontend/) servida como archivos estáticos (`serve -s dist`, modo SPA -- reescribe cualquier ruta no encontrada a index.html para que React Router maneje el reload de rutas como /casos/:id). Desplegada de verdad en https://vridik-frontend-production.up.railway.app (14-jul-2026). Servicio propio con root directory = frontend/ (build subido con `railway up frontend --path-as-root`, NO desde la raíz del repo -- desde la raíz, nixpacks agarra por error el nixpacks.toml de la API y trata de construir el backend entero dentro de este servicio).",
+      "build": {
+        "builder": "NIXPACKS",
+        "buildCommand": null,
+        "_nota_build": "Nixpacks lee frontend/nixpacks.toml (nodejs_20 + npm ci + npm run build -- tsc -b && vite build). VITE_API_BASE viene de frontend/.env.production, apunta directo a vridik-api (sin proxy -- ese solo existe en el dev server de Vite)."
+      },
+      "deploy": {
+        "startCommand": "npm start",
+        "_nota_start": "package.json: \"start\": \"serve -s dist -l $PORT\". Sin healthcheckPath propio (estático, no hay endpoint /health) -- Railway igual espera que el proceso escuche en $PORT antes de enrutar tráfico.",
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 5,
+        "numReplicas": 1
+      },
+      "variables": {}
     },
     {
       "name": "vridik-postgres",
