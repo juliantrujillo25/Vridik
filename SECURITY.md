@@ -11,6 +11,7 @@ JWT secret con doble clave ensayada en staging (`SECURITY.md`)"*).
 | `JWT_SECRET` | Firma de los access tokens (15 min) y, derivada, de los temp tokens de 2FA (5 min). | SIEMPRE del vault de secretos de Railway, nunca vacío en producción (`api/julix_endpoint.py` loguea CRITICAL si arranca vacío). Rotable — ver abajo. |
 | `JWT_SECRET_PREVIOUS` | Solo existe DURANTE una rotación de `JWT_SECRET`. | Contiene la clave vieja mientras dura la ventana de rotación; se borra al cerrarla. |
 | `TOTP_ENCRYPTION_KEY` | Cifrado en reposo de `users.totp_secret` (Fernet). | Independiente de `JWT_SECRET` (desacoplada a propósito — ver más abajo). Rotar `JWT_SECRET` NO afecta el 2FA. |
+| `ANTHROPIC_API_KEY_PROD` / `ANTHROPIC_API_KEY_STAGING` | Cuál credencial de Anthropic usa cada llamada de JuliX, según `VRIDIK_ENVIRONMENT` (`julix/client.py::_resolve_api_key`). | **Corregido el 15-jul-2026**: `VRIDIK_ENVIRONMENT` nunca estuvo seteado en `vridik-api` (caía al default `"staging"` en todo el código), y solo existía `ANTHROPIC_API_KEY_STAGING` -- la key real de producción vivía ahí con el nombre equivocado, no había ninguna key separada de prod. Se copió el valor (nunca impreso, pipe directo `railway variable list --kv \| grep ... \| railway variable set --stdin`) a `ANTHROPIC_API_KEY_PROD` y recién después se seteó `VRIDIK_ENVIRONMENT=production`, para no dejar una ventana sin ninguna key resuelta. Verificado con una llamada real post-fix: ledger (`julix_calls`) etiqueta `environment='production'` como corresponde. |
 
 ### Qué NO depende de `JWT_SECRET`
 
