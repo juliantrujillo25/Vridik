@@ -302,6 +302,15 @@
 .semaforo-dot.rojo { background: var(--danger); }
 .actuacion-row { margin-bottom: 0.6rem; }
 
+/* --- cobro inteligente (Fase 3) --- */
+.cobro-resumen { padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: 0.7rem; align-items: flex-start; }
+.cobro-fila { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; width: 100%; font-size: 0.92rem; }
+.cobro-liquidado { padding-top: 0.5rem; border-top: 1px solid var(--hair); }
+.cobro-monto-liquidado { color: var(--good); font-weight: 600; }
+.cobro-nota { margin: 0; font-size: 0.8rem; }
+.cobro-form { padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: 0.9rem; margin-bottom: 0.9rem; }
+.cobro-liquidar-form { border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--hair)); }
+
 /* --- panel admin --- */
 .costos-widget { padding: 1.1rem 1.3rem; display: flex; flex-direction: column; gap: 0.7rem; margin-bottom: 1.4rem; }
 .costos-widget-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }

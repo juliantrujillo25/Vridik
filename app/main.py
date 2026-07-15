@@ -49,6 +49,7 @@ from api.admin_endpoint import router as admin_router
 from api.auth_endpoint import router as auth_router
 from api.case_documents_endpoint import router as case_documents_router
 from api.casos_endpoint import router as casos_router
+from api.cobro_endpoint import router as cobro_router
 from api.events_endpoint import router as events_router
 from api.mensajes_endpoint import router as mensajes_router
 from api.terminos_endpoint import router as terminos_router
@@ -99,6 +100,13 @@ app.include_router(events_router)
 # vencimiento calculado por procesal/calendario_judicial.py, nunca a mano.
 app.include_router(actuaciones_router)
 app.include_router(terminos_router)
+
+# Fase 3 (Cobro Inteligente) — arranca con lo que no depende de un
+# proveedor externo (core/cobro.py): valor en disputa + esquema de
+# honorarios con liquidación siempre calculada, nunca a mano. La factura
+# DIAN ("integrar, no construir") sigue bloqueada en la misma clase de
+# decisión de negocio que la ingesta de actuaciones de Fase 2.
+app.include_router(cobro_router)
 
 
 @app.on_event("startup")

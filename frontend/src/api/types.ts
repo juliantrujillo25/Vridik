@@ -204,3 +204,26 @@ export interface CrearTerminoInput {
   dias_habiles: number;
   actuacion_id?: string | null;
 }
+
+// --- Fase 3: cobro inteligente (valor en disputa + honorarios) -----------
+export type EsquemaHonorarios = "fijo" | "cuota_litis" | "mixto";
+
+// GET/PUT /casos/{id}/cobro -- honorarios_liquidados SIEMPRE lo calcula el
+// backend (core/cobro.py), nunca se propone desde acá.
+export interface Cobro {
+  caso_id: string;
+  valor_en_disputa: number | null;
+  esquema_honorarios: EsquemaHonorarios | null;
+  monto_fijo: number | null;
+  porcentaje_cuota_litis: number | null;
+  valor_recuperado: number | null;
+  honorarios_liquidados: number | null;
+  liquidado_en: string | null;
+}
+
+export interface SetCobroInput {
+  valor_en_disputa?: number | null;
+  esquema_honorarios?: EsquemaHonorarios | null;
+  monto_fijo?: number | null;
+  porcentaje_cuota_litis?: number | null;
+}

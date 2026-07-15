@@ -14,6 +14,7 @@ import type {
   AuthEvent,
   Caso,
   CaseDocument,
+  Cobro,
   CostosResponse,
   CrearDocumentoInput,
   CrearTerminoInput,
@@ -27,6 +28,7 @@ import type {
   RegenerarCodigosResponse,
   ResetPasswordResult,
   Role,
+  SetCobroInput,
   Setup2FAResponse,
   Termino,
   TokenPair,
@@ -388,6 +390,25 @@ class ApiClient {
     return this.request(`/casos/${casoId}/terminos/${terminoId}/estado`, {
       method: "PATCH",
       body: JSON.stringify({ estado }),
+    });
+  }
+
+  // --- Fase 3: cobro inteligente (valor en disputa + honorarios) -----------
+  getCobro(casoId: string): Promise<Cobro> {
+    return this.request(`/casos/${casoId}/cobro`);
+  }
+
+  /** Solo abogado asignado o admin (lo exige el backend) -- nunca el cliente. */
+  setCobro(casoId: string, input: SetCobroInput): Promise<Cobro> {
+    return this.request(`/casos/${casoId}/cobro`, { method: "PUT", body: JSON.stringify(input) });
+  }
+
+  /** honorarios_liquidados SIEMPRE lo calcula el backend a partir del
+   *  esquema ya configurado -- acá solo se manda valor_recuperado. */
+  liquidarCobro(casoId: string, valorRecuperado: number): Promise<Cobro> {
+    return this.request(`/casos/${casoId}/cobro/liquidar`, {
+      method: "POST",
+      body: JSON.stringify({ valor_recuperado: valorRecuperado }),
     });
   }
 

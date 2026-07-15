@@ -5,6 +5,7 @@ import type { AdminUser, Caso, CaseDocument, EstadoCaso } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { ESTADOS, ESTADO_LABEL, EstadoPill, fechaHora, separarAvisoRevisar } from "../ui";
 import { ActuacionesYTerminos } from "./ActuacionesYTerminos";
+import { CobroPanel } from "./Cobro";
 import { Mensajes } from "./Mensajes";
 
 export function CasoDetailPage() {
@@ -219,6 +220,12 @@ export function CasoDetailPage() {
       </section>
 
       <ActuacionesYTerminos casoId={id} onGenerarBorrador={onGenerarBorrador} />
+
+      <CobroPanel
+        casoId={id}
+        casoEstado={caso.estado}
+        puedeEditar={perfil?.role === "admin" || (perfil?.role === "abogado" && perfil.id === caso.abogado_id)}
+      />
 
       <section className="section">
         <h2 className="section-title">Generar documento con JuliX</h2>
