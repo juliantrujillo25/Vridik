@@ -311,6 +311,12 @@
 .cobro-form { padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: 0.9rem; margin-bottom: 0.9rem; }
 .cobro-liquidar-form { border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--hair)); }
 
+/* --- ahorro generado (Fase 3, Portal Cliente) --- */
+.ahorro-widget { padding: 1.1rem 1.3rem; display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 1.4rem; }
+.ahorro-widget-title { margin: 0; padding: 0; border: none; }
+.ahorro-widget-monto { font-size: 1.4rem; font-weight: 700; color: var(--good); }
+.ahorro-widget-nota { margin: 0; font-size: 0.85rem; }
+
 /* --- panel admin --- */
 .costos-widget { padding: 1.1rem 1.3rem; display: flex; flex-direction: column; gap: 0.7rem; margin-bottom: 1.4rem; }
 .costos-widget-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }

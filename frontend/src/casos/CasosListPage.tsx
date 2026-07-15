@@ -3,7 +3,9 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { SesionExpiradaError } from "../api/client";
 import type { Caso, MessageNewEvent, Termino, TerminoAlertaEvent } from "../api/types";
+import { useAuth } from "../auth/AuthContext";
 import { EstadoPill, fechaCorta, type SemaforoColor } from "../ui";
+import { AhorroWidget } from "./AhorroWidget";
 
 /** Solo vale la pena mostrar un badge en el dashboard cuando hay algo que
  *  amerita atención (roadmap Fase 2: "semáforo de vencimientos calculados
@@ -19,6 +21,7 @@ function peorSemaforoUrgente(terminos: Termino[]): { color: SemaforoColor; count
 
 export function CasosListPage() {
   const navigate = useNavigate();
+  const { perfil } = useAuth();
   const [casos, setCasos] = useState<Caso[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [noLeidos, setNoLeidos] = useState<Record<string, number>>({});
@@ -121,6 +124,8 @@ export function CasosListPage() {
           {mostrarForm ? "Cancelar" : "Nuevo caso"}
         </button>
       </div>
+
+      {perfil?.role === "cliente" && <AhorroWidget />}
 
       {error && <div className="alert error" role="alert">{error}</div>}
 

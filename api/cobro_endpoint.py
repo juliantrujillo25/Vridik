@@ -19,6 +19,16 @@ GET  /casos/{caso_id}/cobro            lee el estado de cobro del caso --
 POST /casos/{caso_id}/cobro/liquidar   liquida honorarios a partir de
                                         valor_recuperado -- solo abogado o
                                         admin, solo una vez.
+GET  /cobro/ahorro                     resumen agregado de ahorro
+                                        generado (valor_recuperado -
+                                        honorarios_liquidados, sumado
+                                        sobre todos los casos liquidados)
+                                        -- exclusivo del rol cliente,
+                                        siempre sobre SUS PROPIOS casos
+                                        (nunca recibe cliente_id como
+                                        parámetro). Roadmap: "Panel
+                                        'ahorro generado' en Portal
+                                        Cliente Vridik (55% → 90%)".
 
 Factura vía proveedor DIAN autorizado ("integrar, no construir", roadmap
 Fase 3) sigue bloqueada en la misma decisión de negocio que la ingesta de
@@ -43,7 +53,7 @@ from pydantic import BaseModel, Field
 from api.admin_endpoint import get_current_user
 from api.auth_endpoint import _get_db
 from core.case import ensure_casos_table, get_caso
-from core.cobro import ensure_cobro_table, get_cobro, liquidar_honorarios, set_cobro
+from core.cobro import ensure_cobro_table, get_cobro, liquidar_honorarios, resumen_ahorro_cliente, set_cobro
 
 router = APIRouter(tags=["cobro"])
 
@@ -141,3 +151,12 @@ async def liquidar_cobro_endpoint(
         return await liquidar_honorarios(conn, caso_id=caso_id, valor_recuperado=payload.valor_recuperado)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/cobro/ahorro")
+async def resumen_ahorro_endpoint(request: Request, current: dict = Depends(get_current_user)):
+    if current["role"] != "cliente":
+        raise HTTPException(status_code=403, detail="El panel de ahorro es exclusivo de la cuenta del cliente")
+    conn = _get_db(request)
+    await _preparar(conn)
+    return await resumen_ahorro_cliente(conn, cliente_id=str(current["id"]))

@@ -89,6 +89,20 @@ class _FakeCobroDB:
             registro["honorarios_liquidados"] = honorarios
             registro["liquidado_en"] = _ahora()
             return dict(registro)
+        if "casos_liquidados" in q:
+            (cliente_id,) = args
+            liquidados = [
+                c for c in self.cobros.values()
+                if c["liquidado_en"] is not None and self.casos.get(c["caso_id"], {}).get("cliente_id") == cliente_id
+            ]
+            total_recuperado = sum(c["valor_recuperado"] for c in liquidados) if liquidados else Decimal(0)
+            total_honorarios = sum(c["honorarios_liquidados"] for c in liquidados) if liquidados else Decimal(0)
+            return {
+                "casos_liquidados": len(liquidados),
+                "total_valor_recuperado": total_recuperado,
+                "total_honorarios_liquidados": total_honorarios,
+                "ahorro_generado": total_recuperado - total_honorarios,
+            }
         return None
 
 
@@ -307,3 +321,86 @@ def test_caso_inexistente_404(cdb, cclient):
 
     r = cclient.get(f"/casos/{uuid.uuid4()}/cobro", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /cobro/ahorro -- roadmap: "Panel 'ahorro generado' en Portal Cliente
+# Vridik". Ahorro = valor_recuperado - honorarios_liquidados, sumado sobre
+# los casos YA liquidados del cliente.
+# ---------------------------------------------------------------------------
+def test_resumen_ahorro_suma_solo_casos_liquidados(cdb, cclient):
+    cliente = cdb.seed_user(email="cliente13@vridik.local")
+    abogado = cdb.seed_user(email="abogado13@vridik.local", role="abogado")
+    token_cliente = _token_de(cliente)
+    token_abogado = _token_de(abogado)
+
+    caso_liquidado = cdb.seed_caso(cliente_id=cliente["id"], abogado_id=abogado["id"])
+    cclient.post(
+        f"/casos/{caso_liquidado['id']}/cobro",
+        json={"esquema_honorarios": "fijo", "monto_fijo": "1000000"},
+        headers={"Authorization": f"Bearer {token_abogado}"},
+    )
+    cclient.post(
+        f"/casos/{caso_liquidado['id']}/cobro/liquidar",
+        json={"valor_recuperado": "6000000"},
+        headers={"Authorization": f"Bearer {token_abogado}"},
+    )
+
+    # Un segundo caso del mismo cliente, configurado pero SIN liquidar --
+    # no debe sumar al ahorro todavía.
+    caso_sin_liquidar = cdb.seed_caso(cliente_id=cliente["id"], abogado_id=abogado["id"])
+    cclient.post(
+        f"/casos/{caso_sin_liquidar['id']}/cobro",
+        json={"esquema_honorarios": "cuota_litis", "porcentaje_cuota_litis": "20"},
+        headers={"Authorization": f"Bearer {token_abogado}"},
+    )
+
+    r = cclient.get("/cobro/ahorro", headers={"Authorization": f"Bearer {token_cliente}"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["casos_liquidados"] == 1
+    assert Decimal(str(body["total_valor_recuperado"])) == Decimal("6000000")
+    assert Decimal(str(body["total_honorarios_liquidados"])) == Decimal("1000000")
+    assert Decimal(str(body["ahorro_generado"])) == Decimal("5000000")
+
+
+def test_resumen_ahorro_sin_casos_liquidados_devuelve_ceros(cdb, cclient):
+    cliente = cdb.seed_user(email="cliente14@vridik.local")
+    token = _token_de(cliente)
+
+    r = cclient.get("/cobro/ahorro", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["casos_liquidados"] == 0
+    assert Decimal(str(body["ahorro_generado"])) == Decimal("0")
+
+
+def test_resumen_ahorro_solo_para_rol_cliente(cdb, cclient):
+    abogado = cdb.seed_user(email="abogado15@vridik.local", role="abogado")
+    token = _token_de(abogado)
+
+    r = cclient.get("/cobro/ahorro", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 403
+
+
+def test_resumen_ahorro_no_mezcla_casos_de_otro_cliente(cdb, cclient):
+    cliente1 = cdb.seed_user(email="cliente16@vridik.local")
+    cliente2 = cdb.seed_user(email="cliente17@vridik.local")
+    abogado = cdb.seed_user(email="abogado16@vridik.local", role="abogado")
+    token_abogado = _token_de(abogado)
+
+    caso_ajeno = cdb.seed_caso(cliente_id=cliente2["id"], abogado_id=abogado["id"])
+    cclient.post(
+        f"/casos/{caso_ajeno['id']}/cobro",
+        json={"esquema_honorarios": "fijo", "monto_fijo": "999999"},
+        headers={"Authorization": f"Bearer {token_abogado}"},
+    )
+    cclient.post(
+        f"/casos/{caso_ajeno['id']}/cobro/liquidar",
+        json={"valor_recuperado": "9999999"},
+        headers={"Authorization": f"Bearer {token_abogado}"},
+    )
+
+    r = cclient.get("/cobro/ahorro", headers={"Authorization": f"Bearer {_token_de(cliente1)}"})
+    assert r.status_code == 200, r.text
+    assert r.json()["casos_liquidados"] == 0

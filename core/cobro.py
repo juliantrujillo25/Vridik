@@ -144,3 +144,26 @@ async def liquidar_honorarios(db_connection, *, caso_id: str, valor_recuperado: 
         caso_id, valor_recuperado, honorarios,
     )
     return dict(fila)
+
+
+async def resumen_ahorro_cliente(db_connection, *, cliente_id: str) -> dict:
+    """Roadmap Fase 3: "Panel 'ahorro generado' en Portal Cliente Vridik".
+    Ahorro = valor_recuperado - honorarios_liquidados, sumado sobre todos
+    los casos YA liquidados del cliente -- lo que el cliente se queda neto
+    después de pagar honorarios, no una métrica de eficiencia del
+    despacho. Casos sin liquidar todavía no suman nada (ni a favor ni en
+    contra) hasta que tengan un resultado real."""
+    fila = await db_connection.fetchrow(
+        """
+        SELECT
+            COUNT(*) AS casos_liquidados,
+            COALESCE(SUM(cc.valor_recuperado), 0) AS total_valor_recuperado,
+            COALESCE(SUM(cc.honorarios_liquidados), 0) AS total_honorarios_liquidados,
+            COALESCE(SUM(cc.valor_recuperado - cc.honorarios_liquidados), 0) AS ahorro_generado
+        FROM cobro_caso cc
+        JOIN casos c ON c.id = cc.caso_id
+        WHERE c.cliente_id = $1 AND cc.liquidado_en IS NOT NULL
+        """,
+        cliente_id,
+    )
+    return dict(fila)

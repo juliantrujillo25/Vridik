@@ -27,6 +27,7 @@ import type {
   Perfil,
   RegenerarCodigosResponse,
   ResetPasswordResult,
+  ResumenAhorro,
   Role,
   SetCobroInput,
   Setup2FAResponse,
@@ -412,6 +413,12 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify({ valor_recuperado: valorRecuperado }),
     });
+  }
+
+  /** Exclusivo del rol cliente (lo exige el backend) -- 403 para
+   *  abogado/admin. */
+  resumenAhorro(): Promise<ResumenAhorro> {
+    return this.request("/cobro/ahorro");
   }
 
   // --- eventos en vivo (SSE, roadmap S11 Fase C) ---------------------------

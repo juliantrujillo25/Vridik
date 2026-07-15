@@ -208,7 +208,7 @@ export interface CrearTerminoInput {
 // --- Fase 3: cobro inteligente (valor en disputa + honorarios) -----------
 export type EsquemaHonorarios = "fijo" | "cuota_litis" | "mixto";
 
-// GET/PUT /casos/{id}/cobro -- honorarios_liquidados SIEMPRE lo calcula el
+// GET/POST /casos/{id}/cobro -- honorarios_liquidados SIEMPRE lo calcula el
 // backend (core/cobro.py), nunca se propone desde acá.
 export interface Cobro {
   caso_id: string;
@@ -226,4 +226,14 @@ export interface SetCobroInput {
   esquema_honorarios?: EsquemaHonorarios | null;
   monto_fijo?: number | null;
   porcentaje_cuota_litis?: number | null;
+}
+
+// GET /cobro/ahorro -- exclusivo del rol cliente, siempre sobre sus
+// propios casos liquidados (roadmap: "Panel 'ahorro generado' en Portal
+// Cliente Vridik").
+export interface ResumenAhorro {
+  casos_liquidados: number;
+  total_valor_recuperado: number;
+  total_honorarios_liquidados: number;
+  ahorro_generado: number;
 }
