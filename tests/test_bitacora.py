@@ -32,6 +32,7 @@ from core.auth_events import (
     EventoNoEncontradoError,
     NoEsDestinatarioError,
     confirmar_acuse,
+    ensure_bitacora_hash_chain,
     registrar_evento,
     verificar_cadena,
 )
@@ -43,9 +44,6 @@ from core.auth_events import (
 class _FakeBitacoraConn:
     def __init__(self):
         self.filas: list[dict] = []
-
-    async def execute(self, query: str, *args):
-        return "OK"  # advisory lock y ALTER TABLE -- no-op
 
     async def fetchrow(self, query: str, *args):
         q = query.strip()
@@ -68,13 +66,27 @@ class _FakeBitacoraConn:
         return None
 
     async def fetchval(self, query: str, *args):
+        q = query.strip()
         if "notificacion_acuse" in query and "evento_original_id" in query:
             (evento_id,) = args
             return any(
                 f["event_type"] == "notificacion_acuse" and json.loads(f["metadata"]).get("evento_original_id") == evento_id
                 for f in self.filas
             )
+        if q == "SELECT EXISTS(SELECT 1 FROM auth_events WHERE hash_actual IS NULL)":
+            return any(f["hash_actual"] is None for f in self.filas)
         return False
+
+    async def execute(self, query: str, *args):
+        q = query.strip()
+        if q.startswith("UPDATE auth_events SET hash_anterior"):
+            hash_anterior, hash_actual, evento_id = args
+            f = next((f for f in self.filas if f["id"] == evento_id), None)
+            if f is not None:
+                f["hash_anterior"] = hash_anterior
+                f["hash_actual"] = hash_actual
+            return "OK"
+        return "OK"  # advisory lock y ALTER TABLE -- no-op
 
     async def fetch(self, query: str, *args):
         return [dict(f) for f in self.filas]  # verificar_cadena, orden de inserción
@@ -135,6 +147,43 @@ async def test_verificar_cadena_detecta_una_fila_borrada_del_medio():
 
     resultado = await verificar_cadena(conn)
     assert resultado["integra"] is False
+
+
+@pytest.mark.asyncio
+async def test_ensure_bitacora_hash_chain_sella_retroactivamente_filas_viejas():
+    """Filas que ya existían en auth_events ANTES de que este módulo
+    tuviera hash chain (hash_actual IS NULL, como cualquier entorno con
+    historial previo) no deben marcarse como "ALTERADA" en el primer
+    chequeo -- ensure_bitacora_hash_chain() tiene que sellarlas
+    retroactivamente antes de que verificar_cadena() las mire."""
+    conn = _FakeBitacoraConn()
+    conn.filas = [
+        {
+            "id": 1, "user_id": "user-1", "actor_id": None, "event_type": "login_success",
+            "metadata": "{}", "ip_address": None, "user_agent": None,
+            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "hash_anterior": None, "hash_actual": None,
+        },
+        {
+            "id": 2, "user_id": "user-2", "actor_id": None, "event_type": "login_success",
+            "metadata": "{}", "ip_address": None, "user_agent": None,
+            "created_at": datetime(2026, 1, 2, tzinfo=timezone.utc),
+            "hash_anterior": None, "hash_actual": None,
+        },
+    ]
+
+    await ensure_bitacora_hash_chain(conn)
+
+    assert conn.filas[0]["hash_actual"] is not None
+    assert conn.filas[1]["hash_anterior"] == conn.filas[0]["hash_actual"]
+
+    resultado = await verificar_cadena(conn)
+    assert resultado == {"integra": True, "total_verificados": 2, "primera_ruptura_id": None}
+
+    # Nuevos eventos después del backfill siguen encadenando bien.
+    tercero = await registrar_evento(conn, event_type="login_success", user_id="user-3")
+    assert tercero["hash_anterior"] == conn.filas[1]["hash_actual"]
+    assert (await verificar_cadena(conn))["integra"] is True
 
 
 @pytest.mark.asyncio
@@ -341,3 +390,34 @@ async def test_hash_chain_real_contra_postgres(db):
 
     resultado = await verificar_cadena(db)
     assert resultado["integra"] is True
+
+
+@pytest.mark.asyncio
+async def test_ensure_bitacora_hash_chain_backfill_real_contra_postgres(db):
+    """Mismo escenario que test_ensure_bitacora_hash_chain_sella_
+    retroactivamente_filas_viejas pero contra SQL real: filas insertadas
+    ANTES de que existiera el hash chain (columnas todavía sin agregar)
+    no deben romper verificar_cadena() en el primer chequeo."""
+    await db.execute(
+        """
+        INSERT INTO auth_events (user_id, actor_id, event_type, metadata, ip_address, user_agent, created_at)
+        VALUES (NULL, NULL, 'login_success', '{}'::jsonb, NULL, NULL, now())
+        """
+    )
+    await db.execute(
+        """
+        INSERT INTO auth_events (user_id, actor_id, event_type, metadata, ip_address, user_agent, created_at)
+        VALUES (NULL, NULL, 'login_success', '{}'::jsonb, NULL, NULL, now())
+        """
+    )
+
+    await ensure_bitacora_hash_chain(db)
+
+    resultado = await verificar_cadena(db)
+    assert resultado["integra"] is True
+    assert resultado["total_verificados"] >= 2
+
+    # Sigue encadenando bien después del backfill.
+    nuevo = await registrar_evento(db, event_type="login_success", user_id=None)
+    assert nuevo["hash_anterior"] is not None
+    assert (await verificar_cadena(db))["integra"] is True

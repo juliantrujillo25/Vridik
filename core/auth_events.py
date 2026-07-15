@@ -83,9 +83,66 @@ def _calcular_hash(*, hash_anterior: str | None, contenido: str) -> str:
 async def ensure_bitacora_hash_chain(conn) -> None:
     """Migración aditiva: agrega las columnas del hash chain a
     `auth_events` si todavía no existen. Nunca borra ni reordena nada de
-    lo que ya había."""
+    lo que ya había.
+
+    También sella retroactivamente las filas que ya existían antes de que
+    este módulo tuviera hash chain -- sin esto, TODO entorno con historial
+    previo (o sea, cualquier entorno real, no solo uno nuevo) tendría
+    `hash_actual IS NULL` en sus filas más viejas, y `verificar_cadena()`
+    marcaría eso como "ALTERADA" en el primer chequeo: un falso positivo
+    permanente, no un incidente real."""
     await conn.execute("ALTER TABLE auth_events ADD COLUMN IF NOT EXISTS hash_anterior TEXT")
     await conn.execute("ALTER TABLE auth_events ADD COLUMN IF NOT EXISTS hash_actual TEXT")
+
+    async with _conexion_dedicada(conn) as conexion:
+        async with _transaccion_si_disponible(conexion):
+            await conexion.execute("SELECT pg_advisory_xact_lock(hashtext($1))", _LOCK_KEY_CADENA)
+            await _backfill_hash_chain(conexion)
+
+
+async def _backfill_hash_chain(conexion) -> None:
+    """Recorre `auth_events` en orden de `id` y calcula hash_anterior/
+    hash_actual para las filas que todavía no lo tienen (hash_actual IS
+    NULL) -- exactamente el mismo cálculo que si hubieran sido insertadas
+    con el hash chain ya activo. Las filas que ya tienen hash_actual
+    (selladas en un arranque anterior, o insertadas ya con la cadena
+    activa) se respetan tal cual, solo sirven de ancla para continuar la
+    cadena. Idempotente: si no hay ninguna fila pendiente, no toca nada."""
+    hay_pendientes = await conexion.fetchval(
+        "SELECT EXISTS(SELECT 1 FROM auth_events WHERE hash_actual IS NULL)"
+    )
+    if not hay_pendientes:
+        return
+
+    filas = await conexion.fetch(
+        """
+        SELECT id, user_id, actor_id, event_type, metadata, ip_address, user_agent,
+               created_at, hash_actual
+        FROM auth_events
+        ORDER BY id ASC
+        """
+    )
+
+    hash_previo: str | None = None
+    for fila in filas:
+        if fila["hash_actual"] is not None:
+            hash_previo = fila["hash_actual"]
+            continue
+
+        metadata = fila["metadata"]
+        if isinstance(metadata, str):
+            metadata = json.loads(metadata)
+        contenido = _contenido_canonico(
+            event_type=fila["event_type"], user_id=fila["user_id"], actor_id=fila["actor_id"],
+            metadata=metadata, ip_address=fila["ip_address"], user_agent=fila["user_agent"],
+            created_at=fila["created_at"],
+        )
+        hash_actual = _calcular_hash(hash_anterior=hash_previo, contenido=contenido)
+        await conexion.execute(
+            "UPDATE auth_events SET hash_anterior = $1, hash_actual = $2 WHERE id = $3",
+            hash_previo, hash_actual, fila["id"],
+        )
+        hash_previo = hash_actual
 
 
 @asynccontextmanager

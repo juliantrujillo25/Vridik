@@ -63,7 +63,19 @@ class _FakeActuacionesDB:
             self.notificaciones.append((canal, payload))
         elif q.startswith("SELECT pg_advisory_xact_lock"):
             pass  # advisory lock real de la bitácora (Fase 3) -- no-op en el fake
+        elif q.startswith("UPDATE auth_events SET hash_anterior"):
+            hash_anterior, hash_actual, evento_id = args
+            e = next((e for e in self.auth_events if e["id"] == evento_id), None)
+            if e is not None:
+                e["hash_anterior"] = hash_anterior
+                e["hash_actual"] = hash_actual
         return "OK"
+
+    async def fetchval(self, query: str, *args):
+        q = query.strip()
+        if q == "SELECT EXISTS(SELECT 1 FROM auth_events WHERE hash_actual IS NULL)":
+            return any(e["hash_actual"] is None for e in self.auth_events)
+        return False
 
     async def fetchrow(self, query: str, *args):
         q = query.strip()
