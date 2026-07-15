@@ -67,14 +67,22 @@ async def ensure_julix_calls_table(db_connection) -> None:
     el camino caliente de generación de documentos (cada llamada a JuliX
     pasa por acá). Nullable a propósito: filas sin `user_id` (o de un
     usuario borrado) simplemente no cuentan contra el límite mensual de
-    ningún despacho -- no hace falta un default inventado."""
+    ningún despacho -- no hace falta un default inventado.
+
+    `caso_id` es TEXT, no UUID (bug real encontrado el 15-jul-2026 corriendo
+    por primera vez el banco de evaluación de S5, eval/evaluador.py): esa
+    corrida identifica sus propias llamadas con IDs de caso de banco como
+    'UGPP-01'/'juez-UGPP-01', que nunca fueron UUIDs reales -- forzar el
+    tipo UUID rompía el INSERT en el primer caso. `caso_id` nunca tuvo FK a
+    `casos(id)` (gap de integridad pre-existente, documentado, no es nuevo
+    acá), así que ensanchar el tipo a TEXT no rompe ninguna garantía real."""
     await db_connection.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
     await db_connection.execute(
         """
         CREATE TABLE IF NOT EXISTS julix_calls (
             id              BIGSERIAL PRIMARY KEY,
             user_id         UUID REFERENCES users(id) ON DELETE SET NULL,
-            caso_id         UUID,
+            caso_id         TEXT,
             despacho_id     UUID,
             tarea           TEXT NOT NULL,
             model           TEXT NOT NULL,
@@ -96,6 +104,17 @@ async def ensure_julix_calls_table(db_connection) -> None:
     )
     # despacho_id pudo no existir si `julix_calls` ya estaba creada antes de Fase 4.
     await db_connection.execute("ALTER TABLE julix_calls ADD COLUMN IF NOT EXISTS despacho_id UUID")
+    # caso_id pudo haber quedado creada como UUID en un entorno anterior a
+    # este fix -- ALTER a TEXT es seguro de re-correr (no-op si ya es TEXT).
+    await db_connection.execute("ALTER TABLE julix_calls ALTER COLUMN caso_id TYPE TEXT")
+    # user_id: la tabla real de producción se creó ANTES de que este
+    # docstring describiera "nullable a propósito" -- el CREATE TABLE de
+    # arriba nunca corrió de verdad ahí (IF NOT EXISTS es no-op sobre una
+    # tabla ya creada con otra definición), así que quedó con NOT NULL.
+    # Bug real, encontrado el 15-jul-2026 en la primera corrida real del
+    # banco de evaluación de S5 (que corre sin user_id real). DROP NOT NULL
+    # es seguro de re-correr (no-op si ya admite NULL).
+    await db_connection.execute("ALTER TABLE julix_calls ALTER COLUMN user_id DROP NOT NULL")
     await db_connection.execute("CREATE INDEX IF NOT EXISTS ix_julix_calls_user_id ON julix_calls (user_id)")
     await db_connection.execute("CREATE INDEX IF NOT EXISTS ix_julix_calls_caso_id ON julix_calls (caso_id)")
     await db_connection.execute("CREATE INDEX IF NOT EXISTS ix_julix_calls_despacho_id ON julix_calls (despacho_id)")
@@ -139,7 +158,7 @@ def calcular_costo_usd(model: str, input_tokens: int, output_tokens: int) -> flo
 
 @dataclass
 class JuliXCallRecord:
-    user_id: str
+    user_id: str | None
     caso_id: str | None
     tarea: str
     model: str

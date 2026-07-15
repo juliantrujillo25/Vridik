@@ -283,8 +283,15 @@ class JuliXClient:
         latency_ms = int((time.monotonic() - started_at) * 1000)
 
         if self.db_connection is not None:
+            # `user_id` nunca se reemplaza por un string sentinel -- julix_
+            # calls.user_id es UUID con FK real a users(id) (nullable a
+            # propósito, ver ensure_julix_calls_table), así que un caller
+            # sin user_id real (como eval/evaluador.py, que corre como
+            # "sistema") debe dejarlo en None, nunca un texto inventado que
+            # rompería el INSERT (bug real, encontrado el 15-jul-2026 en la
+            # primera corrida real del banco de evaluación de S5).
             record = JuliXCallRecord(
-                user_id=user_id or "desconocido",
+                user_id=user_id,
                 caso_id=caso_id,
                 despacho_id=despacho_id,
                 tarea=tarea,

@@ -61,13 +61,18 @@ if str(REPO_ROOT) not in sys.path:
 from julix import prompts  # noqa: E402
 from julix.client import JuliXClient  # noqa: E402
 from julix.errors import JuliXError, JuliXInvalidFormatError  # noqa: E402
-from julix.ledger import obtener_ultima_llamada  # noqa: E402
 
 logger = logging.getLogger("vridik.julix.eval")
 
 UMBRAL_APROBACION_CASO_SCORE = 4  # score mínimo (0-5) para considerar un caso aprobado
 GATE_FASE1_PORCENTAJE = 0.80       # Gate de Fase 1: >=80% de casos aprobados
-USER_ID_BANCO = "banco_evaluacion_s5"
+# None, no un sentinel de texto: julix_calls.user_id es UUID con FK real a
+# users(id) -- el banco de evaluación no corre como ningún usuario real de
+# la app, así que NULL (nullable a propósito, ver julix/ledger.py::ensure_
+# julix_calls_table) es lo correcto, no un string inventado (bug real
+# encontrado el 15-jul-2026 en la primera corrida real de este script:
+# "banco_evaluacion_s5" no es un UUID válido, rompía el INSERT).
+USER_ID_BANCO = None
 
 TAREA_POR_AREA = {
     "UGPP": "ugpp_demanda",
@@ -261,18 +266,30 @@ async def registrar_resultado(db_connection, run_id: str, resultado: ResultadoCa
     )
 
 
+async def _costo_por_caso_id(db_connection, caso_id: str) -> float | None:
+    """Sustituye a julix.ledger.obtener_ultima_llamada() acá -- esa función
+    filtra por user_id (UUID real de `users`), pero el banco de evaluación
+    corre con USER_ID_BANCO=None (no hay usuario real asociado). caso_id
+    identifica la llamada sin ambigüedad en esta corrida (único por caso, o
+    'juez-{id}' para el juez), y desde el fix del 15-jul-2026 es TEXT, no
+    UUID, así que acepta los IDs del banco tal cual ('UGPP-01', etc.)."""
+    fila = await db_connection.fetchrow(
+        "SELECT costo_usd FROM julix_calls WHERE caso_id = $1 ORDER BY created_at DESC LIMIT 1",
+        caso_id,
+    )
+    return float(fila["costo_usd"]) if fila and fila["costo_usd"] is not None else None
+
+
 async def evaluar_caso(client: JuliXClient, db_connection, caso: CasoEval) -> ResultadoCaso:
     respuesta_julix, tarea = await generar_respuesta_julix(client, caso)
     costo_generacion = None
     if db_connection is not None:
-        ultima = await obtener_ultima_llamada(db_connection, USER_ID_BANCO)
-        costo_generacion = ultima["costo_usd"] if ultima else None
+        costo_generacion = await _costo_por_caso_id(db_connection, caso.id)
 
     calificacion = await calificar_con_juez(client, caso, respuesta_julix)
     costo_juez = None
     if db_connection is not None:
-        ultima = await obtener_ultima_llamada(db_connection, USER_ID_BANCO)
-        costo_juez = ultima["costo_usd"] if ultima else None
+        costo_juez = await _costo_por_caso_id(db_connection, f"juez-{caso.id}")
 
     return ResultadoCaso(
         caso_id=caso.id,
@@ -355,7 +372,7 @@ async def correr_banco(
     print(f"Casos con alucinación detectada: {len(con_alucinacion)}")
     print(
         f"GATE Fase 1 (>= {int(GATE_FASE1_PORCENTAJE * 100)}%): "
-        + ("APROBADO ✅" if gate_aprobado else "NO APROBADO ❌ — ver S6, iteración de prompts")
+        + ("APROBADO" if gate_aprobado else "NO APROBADO -- ver S6, iteración de prompts")
     )
     return resumen
 
