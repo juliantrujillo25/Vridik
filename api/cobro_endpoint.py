@@ -4,7 +4,7 @@ Fase 3 (Cobro Inteligente): valor en disputa + esquema de honorarios por
 caso, con liquidación automática (core/cobro.py -- honorarios_liquidados
 SIEMPRE calculado, nunca aceptado como input).
 
-PUT  /casos/{caso_id}/cobro            configura valor en disputa y
+POST /casos/{caso_id}/cobro            configura valor en disputa y
                                         esquema de honorarios -- SOLO
                                         abogado asignado o admin (nunca el
                                         cliente: es la negociación interna
@@ -23,7 +23,15 @@ POST /casos/{caso_id}/cobro/liquidar   liquida honorarios a partir de
 Factura vía proveedor DIAN autorizado ("integrar, no construir", roadmap
 Fase 3) sigue bloqueada en la misma decisión de negocio que la ingesta de
 actuaciones de Fase 2 -- no se construye acá.
-"""
+
+OJO (bug real encontrado al verificar en producción, 14-jul-2026): este
+endpoint de "configurar" arrancó como PUT, pero CORSMiddleware
+(api/julix_endpoint.py) solo permite GET/POST/PATCH/DELETE -- PUT nunca
+se agregó ahí. El navegador bloqueaba el preflight en silencio ("Failed
+to fetch", sin detalle en consola). Se cambió a POST acá en vez de tocar
+la lista de métodos permitidos del middleware global (superficie
+compartida por toda la API) -- también es lo consistente: ningún otro
+endpoint de Vridik usa PUT."""
 
 from __future__ import annotations
 
@@ -82,7 +90,7 @@ async def _preparar(conn) -> None:
     await ensure_cobro_table(conn)
 
 
-@router.put("/casos/{caso_id}/cobro")
+@router.post("/casos/{caso_id}/cobro")
 async def set_cobro_endpoint(
     caso_id: str, payload: SetCobroRequest, request: Request, current: dict = Depends(get_current_user),
 ):

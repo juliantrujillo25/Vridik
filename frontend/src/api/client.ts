@@ -398,9 +398,11 @@ class ApiClient {
     return this.request(`/casos/${casoId}/cobro`);
   }
 
-  /** Solo abogado asignado o admin (lo exige el backend) -- nunca el cliente. */
+  /** Solo abogado asignado o admin (lo exige el backend) -- nunca el
+   *  cliente. POST, no PUT -- CORSMiddleware solo permite GET/POST/PATCH/
+   *  DELETE (ver api/cobro_endpoint.py, bug real encontrado en producción). */
   setCobro(casoId: string, input: SetCobroInput): Promise<Cobro> {
-    return this.request(`/casos/${casoId}/cobro`, { method: "PUT", body: JSON.stringify(input) });
+    return this.request(`/casos/${casoId}/cobro`, { method: "POST", body: JSON.stringify(input) });
   }
 
   /** honorarios_liquidados SIEMPRE lo calcula el backend a partir del

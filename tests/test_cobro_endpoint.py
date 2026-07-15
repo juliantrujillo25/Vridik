@@ -131,7 +131,7 @@ def test_abogado_configura_esquema_cuota_litis(cdb, cclient):
     caso = cdb.seed_caso(cliente_id=cliente["id"], abogado_id=abogado["id"])
     token = _token_de(abogado)
 
-    r = cclient.put(
+    r = cclient.post(
         f"/casos/{caso['id']}/cobro",
         json={"valor_en_disputa": "50000000", "esquema_honorarios": "cuota_litis", "porcentaje_cuota_litis": "20"},
         headers={"Authorization": f"Bearer {token}"},
@@ -147,7 +147,7 @@ def test_cliente_no_puede_configurar_cobro(cdb, cclient):
     caso = cdb.seed_caso(cliente_id=cliente["id"])
     token = _token_de(cliente)
 
-    r = cclient.put(
+    r = cclient.post(
         f"/casos/{caso['id']}/cobro",
         json={"esquema_honorarios": "fijo", "monto_fijo": "1000000"},
         headers={"Authorization": f"Bearer {token}"},
@@ -162,7 +162,7 @@ def test_cliente_puede_leer_cobro(cdb, cclient):
     token_abogado = _token_de(abogado)
     token_cliente = _token_de(cliente)
 
-    cclient.put(
+    cclient.post(
         f"/casos/{caso['id']}/cobro",
         json={"esquema_honorarios": "fijo", "monto_fijo": "2000000"},
         headers={"Authorization": f"Bearer {token_abogado}"},
@@ -178,7 +178,7 @@ def test_configurar_cuota_litis_sin_porcentaje_da_422(cdb, cclient):
     caso = cdb.seed_caso(cliente_id=cdb.seed_user(email="cliente5@vridik.local")["id"], abogado_id=abogado["id"])
     token = _token_de(abogado)
 
-    r = cclient.put(
+    r = cclient.post(
         f"/casos/{caso['id']}/cobro",
         json={"esquema_honorarios": "cuota_litis"},
         headers={"Authorization": f"Bearer {token}"},
@@ -191,7 +191,7 @@ def test_liquidar_fijo_ignora_valor_recuperado_en_el_calculo(cdb, cclient):
     caso = cdb.seed_caso(cliente_id=cdb.seed_user(email="cliente6@vridik.local")["id"], abogado_id=abogado["id"])
     token = _token_de(abogado)
 
-    cclient.put(
+    cclient.post(
         f"/casos/{caso['id']}/cobro",
         json={"esquema_honorarios": "fijo", "monto_fijo": "3000000"},
         headers={"Authorization": f"Bearer {token}"},
@@ -210,7 +210,7 @@ def test_liquidar_cuota_litis_calcula_el_porcentaje(cdb, cclient):
     caso = cdb.seed_caso(cliente_id=cdb.seed_user(email="cliente7@vridik.local")["id"], abogado_id=abogado["id"])
     token = _token_de(abogado)
 
-    cclient.put(
+    cclient.post(
         f"/casos/{caso['id']}/cobro",
         json={"esquema_honorarios": "cuota_litis", "porcentaje_cuota_litis": "30"},
         headers={"Authorization": f"Bearer {token}"},
@@ -229,7 +229,7 @@ def test_liquidar_mixto_suma_fijo_mas_porcentaje(cdb, cclient):
     caso = cdb.seed_caso(cliente_id=cdb.seed_user(email="cliente8@vridik.local")["id"], abogado_id=abogado["id"])
     token = _token_de(abogado)
 
-    cclient.put(
+    cclient.post(
         f"/casos/{caso['id']}/cobro",
         json={"esquema_honorarios": "mixto", "monto_fijo": "1000000", "porcentaje_cuota_litis": "10"},
         headers={"Authorization": f"Bearer {token}"},
@@ -261,7 +261,7 @@ def test_liquidar_dos_veces_da_422_la_segunda(cdb, cclient):
     caso = cdb.seed_caso(cliente_id=cdb.seed_user(email="cliente10@vridik.local")["id"], abogado_id=abogado["id"])
     token = _token_de(abogado)
 
-    cclient.put(
+    cclient.post(
         f"/casos/{caso['id']}/cobro",
         json={"esquema_honorarios": "fijo", "monto_fijo": "500000"},
         headers={"Authorization": f"Bearer {token}"},
@@ -288,7 +288,7 @@ def test_liquidar_lo_hace_solo_abogado_o_admin_no_cliente(cdb, cclient):
     token_abogado = _token_de(abogado)
     token_cliente = _token_de(cliente)
 
-    cclient.put(
+    cclient.post(
         f"/casos/{caso['id']}/cobro",
         json={"esquema_honorarios": "fijo", "monto_fijo": "100"},
         headers={"Authorization": f"Bearer {token_abogado}"},
