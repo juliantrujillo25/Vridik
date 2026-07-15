@@ -35,6 +35,13 @@ export interface RegenerarCodigosResponse {
   codigos_respaldo: string[];
 }
 
+// POST /auth/password (self-service -- distinto del reset administrativo
+// de /admin/users/{id}/reset-password)
+export interface CambiarPasswordInput {
+  password_actual: string;
+  password_nueva: string;
+}
+
 export type Role = "admin" | "abogado" | "cliente";
 
 // GET /auth/me

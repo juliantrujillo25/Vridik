@@ -41,6 +41,15 @@ class _FakeAuthRefreshDB:
         if q.startswith("INSERT INTO user_credentials"):
             user_id, password_hash = args
             self.user_credentials[user_id] = {"user_id": user_id, "password_hash": password_hash}
+        elif q.startswith("UPDATE users SET hashed_password"):
+            user_id, password_hash = args
+            self.users[user_id]["hashed_password"] = password_hash
+        elif "UPDATE refresh_tokens SET revoked_at = now(), revoked_reason = $2" in q and "WHERE user_id = $1" in q:
+            user_id, motivo = args
+            for r in self.refresh_tokens.values():
+                if r["user_id"] == user_id and r["revoked_at"] is None:
+                    r["revoked_at"] = datetime.now(timezone.utc)
+                    r["revoked_reason"] = motivo
         elif "INSERT INTO refresh_tokens" in q:
             user_id, token_hash, family_id, expires_at = args
             rid = str(uuid.uuid4())
@@ -95,6 +104,13 @@ class _FakeAuthRefreshDB:
                 "id": u["id"], "is_active": u["is_active"], "totp_enabled": u["totp_enabled"],
                 "hashed_password": creds["password_hash"] if creds else None,
             }
+        if "LEFT JOIN user_credentials" in q and "WHERE u.id = $1" in q:
+            (user_id,) = args
+            u = self.users.get(user_id)
+            if u is None:
+                return None
+            creds = self.user_credentials.get(user_id)
+            return {"id": u["id"], "hashed_password": creds["password_hash"] if creds else None}
         if "SELECT id FROM users WHERE email" in q:
             (email,) = args
             return next(({"id": u["id"]} for u in self.users.values() if u["email"] == email), None)
@@ -278,3 +294,78 @@ def test_logout_revoca_el_refresh_token(db, client):
 def test_logout_es_idempotente(client):
     r = client.post("/auth/logout", json={"refresh_token": "no-existe"})
     assert r.status_code == 204
+
+
+# ---------------------------------------------------------------------------
+# Self-service: POST /auth/password (distinto de POST /admin/users/{id}/
+# reset-password, que es un admin reseteando la de OTRO usuario).
+# ---------------------------------------------------------------------------
+def test_cambiar_password_ok_y_permite_login_con_la_nueva(db, client):
+    reg = client.post("/auth/register", json={"email": "cambio1@vridik.local", "password": "ClaveVieja123"}).json()
+    token = reg["access_token"]
+
+    r = client.post(
+        "/auth/password",
+        json={"password_actual": "ClaveVieja123", "password_nueva": "ClaveNueva456"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ok": True}
+
+    # La vieja ya no sirve, la nueva sí.
+    r_vieja = client.post("/auth/login", json={"email": "cambio1@vridik.local", "password": "ClaveVieja123"})
+    assert r_vieja.status_code == 401
+
+    r_nueva = client.post("/auth/login", json={"email": "cambio1@vridik.local", "password": "ClaveNueva456"})
+    assert r_nueva.status_code == 200, r_nueva.text
+
+    assert any(e["event_type"] == "password_changed" for e in db.auth_events)
+
+
+def test_cambiar_password_actual_incorrecta_rechazado(db, client):
+    reg = client.post("/auth/register", json={"email": "cambio2@vridik.local", "password": "ClaveVieja123"}).json()
+    token = reg["access_token"]
+
+    r = client.post(
+        "/auth/password",
+        json={"password_actual": "esto-no-es", "password_nueva": "ClaveNueva456"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 401
+
+    # No cambió nada -- la vieja sigue sirviendo.
+    r_vieja = client.post("/auth/login", json={"email": "cambio2@vridik.local", "password": "ClaveVieja123"})
+    assert r_vieja.status_code == 200
+
+
+def test_cambiar_password_revoca_todas_las_sesiones(db, client):
+    reg = client.post("/auth/register", json={"email": "cambio3@vridik.local", "password": "ClaveVieja123"}).json()
+    token = reg["access_token"]
+    refresh_token_original = reg["refresh_token"]
+
+    r = client.post(
+        "/auth/password",
+        json={"password_actual": "ClaveVieja123", "password_nueva": "ClaveNueva456"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200, r.text
+
+    r_refresh = client.post("/auth/refresh", json={"refresh_token": refresh_token_original})
+    assert r_refresh.status_code == 401, "el refresh token de la sesión previa al cambio no debe sobrevivir"
+
+
+def test_cambiar_password_nueva_muy_corta_rechazado(client):
+    reg = client.post("/auth/register", json={"email": "cambio4@vridik.local", "password": "ClaveVieja123"}).json()
+    r = client.post(
+        "/auth/password",
+        json={"password_actual": "ClaveVieja123", "password_nueva": "corta"},
+        headers={"Authorization": f"Bearer {reg['access_token']}"},
+    )
+    assert r.status_code == 422
+
+
+def test_cambiar_password_sin_token_rechazado(client):
+    r = client.post(
+        "/auth/password", json={"password_actual": "x", "password_nueva": "ClaveNueva456"},
+    )
+    assert r.status_code == 401

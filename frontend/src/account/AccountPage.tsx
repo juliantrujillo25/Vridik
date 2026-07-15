@@ -8,7 +8,7 @@ type Paso = "cargando" | "inactivo" | "qr" | "codigos" | "activo" | "regenerar";
 
 export function AccountPage() {
   const navigate = useNavigate();
-  const { perfil, perfilCargando, perfilError, recargarPerfil } = useAuth();
+  const { perfil, perfilCargando, perfilError, recargarPerfil, logout } = useAuth();
   const [paso, setPaso] = useState<Paso>("cargando");
   const [error, setError] = useState<string | null>(null);
 
@@ -17,6 +17,12 @@ export function AccountPage() {
   const [verificando, setVerificando] = useState(false);
   const [codigosRespaldo, setCodigosRespaldo] = useState<string[] | null>(null);
   const [confirmoGuardar, setConfirmoGuardar] = useState(false);
+
+  const [passwordActual, setPasswordActual] = useState("");
+  const [passwordNueva, setPasswordNueva] = useState("");
+  const [passwordConfirmar, setPasswordConfirmar] = useState("");
+  const [cambiandoPassword, setCambiandoPassword] = useState(false);
+  const [errorPassword, setErrorPassword] = useState<string | null>(null);
 
   function manejarError(err: unknown, fallback: string) {
     if (err instanceof SesionExpiradaError) return navigate("/login", { replace: true });
@@ -75,6 +81,30 @@ export function AccountPage() {
     void recargarPerfil();
   }
 
+  async function onCambiarPassword(e: FormEvent) {
+    e.preventDefault();
+    setErrorPassword(null);
+    if (passwordNueva !== passwordConfirmar) {
+      setErrorPassword("La confirmación no coincide con la contraseña nueva.");
+      return;
+    }
+    setCambiandoPassword(true);
+    try {
+      await api.cambiarPassword({ password_actual: passwordActual, password_nueva: passwordNueva });
+      // El cambio revoca todas las sesiones (incluida esta) del lado del
+      // servidor -- cerramos sesión acá también para no dejar la UI en un
+      // estado a medias (con un access token que en minutos deja de poder
+      // renovarse).
+      await logout();
+      navigate("/login", { replace: true, state: { mensaje: "Contraseña actualizada. Iniciá sesión de nuevo." } });
+    } catch (err) {
+      if (err instanceof SesionExpiradaError) return navigate("/login", { replace: true });
+      setErrorPassword(err instanceof Error ? err.message : "No se pudo cambiar la contraseña.");
+    } finally {
+      setCambiandoPassword(false);
+    }
+  }
+
   if (perfilCargando || paso === "cargando") {
     return (
       <div className="page">
@@ -109,6 +139,55 @@ export function AccountPage() {
           <span className="mono">{perfil.role}</span>
         </div>
       </div>
+
+      <section className="section">
+        <h2 className="section-title">Cambiar contraseña</h2>
+        <form className="card twofa-setup" onSubmit={onCambiarPassword}>
+          {errorPassword && <div className="alert error" role="alert">{errorPassword}</div>}
+          <div className="field">
+            <label htmlFor="password-actual">Contraseña actual</label>
+            <input
+              id="password-actual"
+              className="input"
+              type="password"
+              autoComplete="current-password"
+              required
+              value={passwordActual}
+              onChange={(e) => setPasswordActual(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="password-nueva">Contraseña nueva</label>
+            <input
+              id="password-nueva"
+              className="input"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              value={passwordNueva}
+              onChange={(e) => setPasswordNueva(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="password-confirmar">Confirmar contraseña nueva</label>
+            <input
+              id="password-confirmar"
+              className="input"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={8}
+              value={passwordConfirmar}
+              onChange={(e) => setPasswordConfirmar(e.target.value)}
+            />
+          </div>
+          <button className="btn btn-primary" type="submit" disabled={cambiandoPassword}>
+            {cambiandoPassword ? <span className="spinner" /> : null}
+            {cambiandoPassword ? "Cambiando…" : "Cambiar contraseña"}
+          </button>
+        </form>
+      </section>
 
       <section className="section">
         <h2 className="section-title">Verificación en dos pasos</h2>

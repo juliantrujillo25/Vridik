@@ -182,6 +182,7 @@ h1, h2, h3 { letter-spacing: -0.01em; text-wrap: balance; }
 }
 .alert.error { background: var(--danger-bg); color: var(--danger); border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
 .alert.warn { background: var(--warn-bg); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+.alert.success { background: var(--good-bg); color: var(--good); border-color: color-mix(in srgb, var(--good) 30%, transparent); }
 
 /* --- utilidades --- */
 .mono { font-family: var(--mono); }

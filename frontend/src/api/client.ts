@@ -12,6 +12,7 @@ import type {
   AdjuntoSubido,
   AdminUser,
   AuthEvent,
+  CambiarPasswordInput,
   Caso,
   CaseDocument,
   Cobro,
@@ -236,6 +237,13 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify({ code }),
     });
+  }
+
+  /** Self-service: verifica la contraseña actual y revoca TODAS las
+   *  sesiones (incluida esta) -- el llamador debe cerrar sesión localmente
+   *  después de una respuesta OK y pedir volver a entrar. */
+  cambiarPassword(input: CambiarPasswordInput): Promise<{ ok: true }> {
+    return this.request("/auth/password", { method: "POST", body: JSON.stringify(input) });
   }
 
   // --- casos --------------------------------------------------------------

@@ -69,6 +69,7 @@ from core.refresh_tokens import (
     ReusoDetectado,
     emitir_refresh_token,
     revocar_refresh_token,
+    revocar_todas_las_sesiones,
     rotar_refresh_token,
 )
 from core.totp_2fa import (
@@ -125,6 +126,11 @@ class RefreshRequest(BaseModel):
 
 class LogoutRequest(BaseModel):
     refresh_token: str
+
+
+class CambiarPasswordRequest(BaseModel):
+    password_actual: str
+    password_nueva: str = Field(..., min_length=8)
 
 
 def _get_db(request: Request):
@@ -273,6 +279,57 @@ async def me(request: Request, authorization: str | None = Header(default=None))
     if fila is None:
         raise HTTPException(status_code=401, detail="Usuario del token no existe")
     return dict(fila)
+
+
+@router.post("/password")
+async def cambiar_password(
+    payload: CambiarPasswordRequest, request: Request, authorization: str | None = Header(default=None),
+):
+    """Self-service: el usuario cambia su propia contraseña (verificando la
+    actual) -- distinto de POST /admin/users/{id}/reset-password, que es
+    un admin generando una temporal para OTRO usuario. Mismo dual-write de
+    Fase B que register/reset (user_credentials es la fuente real que lee
+    POST /auth/login; users.hashed_password se sigue llenando también).
+
+    Revoca TODAS las sesiones activas (refresh tokens) del usuario, igual
+    que un reset administrativo -- una sesión abierta con la contraseña
+    vieja no debe sobrevivir al cambio, ni siquiera la que hizo el cambio
+    (el frontend cierra sesión localmente después de esta llamada y pide
+    volver a entrar con la contraseña nueva)."""
+    claims = _claims_de_bearer(authorization)
+    conn = _get_db(request)
+    user_id = claims["sub"]
+
+    fila = await conn.fetchrow(
+        """
+        SELECT u.id, uc.password_hash AS hashed_password
+        FROM users u
+        LEFT JOIN user_credentials uc ON uc.user_id = u.id
+        WHERE u.id = $1
+        """,
+        user_id,
+    )
+    if fila is None or not fila["hashed_password"] or not verify_password(payload.password_actual, fila["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Contraseña actual incorrecta")
+
+    nuevo_hash = hash_password(payload.password_nueva)
+    await conn.execute(
+        """
+        INSERT INTO user_credentials (user_id, password_hash, hash_algorithm, is_temporary, updated_by)
+        VALUES ($1, $2, 'bcrypt', false, $1)
+        ON CONFLICT (user_id) DO UPDATE
+        SET password_hash = $2, hash_algorithm = 'bcrypt', is_temporary = false, updated_at = now(), updated_by = $1
+        """,
+        user_id, nuevo_hash,
+    )
+    await conn.execute(
+        "UPDATE users SET hashed_password = $2, must_change = false, updated_at = now() WHERE id = $1",
+        user_id, nuevo_hash,
+    )
+    await revocar_todas_las_sesiones(conn, user_id=user_id, motivo="password_changed")
+    await registrar_evento(conn, event_type="password_changed", user_id=user_id, actor_id=user_id)
+
+    return {"ok": True}
 
 
 @router.post("/2fa/setup")

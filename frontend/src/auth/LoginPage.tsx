@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { requiere2FA } from "../api/types";
 import { useAuth } from "./AuthContext";
@@ -8,7 +8,10 @@ type Paso = "credenciales" | "2fa";
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { sesionActualizada } = useAuth();
+
+  const mensajeInicial = (location.state as { mensaje?: string } | null)?.mensaje ?? null;
 
   const [paso, setPaso] = useState<Paso>("credenciales");
   const [email, setEmail] = useState("");
@@ -17,6 +20,7 @@ export function LoginPage() {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
+  const [mensaje, setMensaje] = useState<string | null>(mensajeInicial);
 
   function entrar() {
     sesionActualizada();
@@ -26,6 +30,7 @@ export function LoginPage() {
   async function onCredenciales(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    setMensaje(null);
     setCargando(true);
     try {
       const res = await api.login(email.trim(), password);
@@ -71,6 +76,7 @@ export function LoginPage() {
             : "Ingresá el código de 6 dígitos de tu app de autenticación (o un código de respaldo)."}
         </p>
 
+        {mensaje && <div className="alert success" role="status">{mensaje}</div>}
         {error && <div className="alert error" role="alert">{error}</div>}
 
         {paso === "credenciales" ? (
