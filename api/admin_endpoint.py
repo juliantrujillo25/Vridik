@@ -41,6 +41,7 @@ from api.auth_endpoint import _claims_de_bearer, _get_db
 from core.admin import change_role, create_user, ensure_role_column, list_users
 from core.admin_users import UsuarioNoEncontradoError, actividad_usuario, resetear_password
 from core.auth import hash_password
+from core.despachos import ensure_despachos_table
 from core.totp_2fa import desactivar_totp, ensure_totp_columns
 from julix.ledger import (
     SOFT_MONTHLY_LIMIT_USD,
@@ -70,7 +71,13 @@ async def _resolver_usuario(request: Request, authorization: str | None) -> dict
 
     conn = _get_db(request)
     await ensure_role_column(conn)
-    fila = await conn.fetchrow("SELECT id, email, role FROM users WHERE id = $1", user_id)
+    await ensure_despachos_table(conn)
+    # Fase 4: despacho_id se resuelve fresco acá, igual que role -- nunca
+    # vive en el JWT, así que mover/desactivar un usuario toma efecto sin
+    # esperar a que su token expire. Único choke point real: todos los
+    # endpoints con acceso a casos dependen de get_current_admin/
+    # get_current_user, que pasan siempre por acá.
+    fila = await conn.fetchrow("SELECT id, email, role, despacho_id FROM users WHERE id = $1", user_id)
     if fila is None:
         raise HTTPException(status_code=401, detail="Usuario del token no existe")
     return dict(fila)
@@ -112,20 +119,27 @@ async def get_users(
     request: Request, skip: int = 0, limit: int = 20, admin: dict = Depends(get_current_admin),
 ):
     conn = _get_db(request)
-    return await list_users(conn, skip=skip, limit=limit)
+    return await list_users(conn, despacho_id=admin["despacho_id"], skip=skip, limit=limit)
 
 
 @router.post("/users", status_code=201)
 async def post_users(
     payload: CreateUserRequest, request: Request, admin: dict = Depends(get_current_admin),
 ):
+    """El usuario creado siempre hereda el despacho del admin que actúa
+    (Fase 4) -- nunca se acepta un despacho_id del cliente, mismo criterio
+    que `honorarios_liquidados` en core/cobro.py (un valor que el servidor
+    debe derivar, no confiar del request)."""
     conn = _get_db(request)
     existente = await conn.fetchrow("SELECT id FROM users WHERE email = $1", payload.email)
     if existente is not None:
         raise HTTPException(status_code=409, detail=f"Ya existe un usuario con email {payload.email!r}")
 
     password_hash = hash_password(payload.password)
-    return await create_user(conn, email=payload.email, password_hash=password_hash, role=payload.role)
+    return await create_user(
+        conn, email=payload.email, password_hash=password_hash, role=payload.role,
+        despacho_id=admin["despacho_id"],
+    )
 
 
 @router.patch("/users/{user_id}/role")
@@ -197,8 +211,8 @@ async def get_costos(request: Request, admin: dict = Depends(get_current_admin))
     quiere, vive en el flujo de generación, no acá)."""
     conn = _get_db(request)
     await ensure_julix_calls_table(conn)
-    gasto = await gasto_mensual_actual_usd(conn)
-    aviso_80, confirmacion_100 = await requiere_confirmacion(conn)
+    gasto = await gasto_mensual_actual_usd(conn, despacho_id=admin["despacho_id"])
+    aviso_80, confirmacion_100 = await requiere_confirmacion(conn, despacho_id=admin["despacho_id"])
     return {
         "gasto_mensual_usd": round(gasto, 2),
         "limite_mensual_usd": SOFT_MONTHLY_LIMIT_USD,

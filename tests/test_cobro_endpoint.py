@@ -36,16 +36,16 @@ class _FakeCobroDB:
         self.casos: dict[str, dict] = {}
         self.cobros: dict[str, dict] = {}  # keyed by caso_id
 
-    def seed_user(self, *, email: str, role: str = "cliente") -> dict:
+    def seed_user(self, *, email: str, role: str = "cliente", despacho_id: str = "despacho-1") -> dict:
         user_id = str(uuid.uuid4())
-        self.users[user_id] = {"id": user_id, "email": email, "role": role}
+        self.users[user_id] = {"id": user_id, "email": email, "role": role, "despacho_id": despacho_id}
         return self.users[user_id]
 
-    def seed_caso(self, *, cliente_id: str, abogado_id: str | None = None) -> dict:
+    def seed_caso(self, *, cliente_id: str, abogado_id: str | None = None, despacho_id: str = "despacho-1") -> dict:
         caso_id = str(uuid.uuid4())
         self.casos[caso_id] = {
-            "id": caso_id, "cliente_id": cliente_id, "abogado_id": abogado_id, "titulo": "caso",
-            "descripcion": None, "estado": "abierto", "created_at": _ahora(), "updated_at": _ahora(),
+            "id": caso_id, "cliente_id": cliente_id, "abogado_id": abogado_id, "despacho_id": despacho_id,
+            "titulo": "caso", "descripcion": None, "estado": "abierto", "created_at": _ahora(), "updated_at": _ahora(),
         }
         return self.casos[caso_id]
 
@@ -54,7 +54,7 @@ class _FakeCobroDB:
 
     async def fetchrow(self, query: str, *args):
         q = query.strip()
-        if "SELECT id, email, role FROM users WHERE id" in q:
+        if "SELECT id, email, role, despacho_id FROM users WHERE id" in q:
             (user_id,) = args
             u = self.users.get(user_id)
             return dict(u) if u else None

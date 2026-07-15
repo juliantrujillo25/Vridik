@@ -50,6 +50,15 @@ export interface Perfil {
   email: string;
   role: Role;
   totp_enabled: boolean;
+  despacho_id: string;
+  despacho_nombre: string;
+}
+
+// POST /auth/register (Fase 4: registrarse crea un despacho nuevo)
+export interface RegisterInput {
+  email: string;
+  password: string;
+  nombre_despacho: string;
 }
 
 export type EstadoCaso = "abierto" | "en_progreso" | "cerrado";

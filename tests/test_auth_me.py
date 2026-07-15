@@ -23,10 +23,13 @@ from core.auth import create_jwt
 class _FakeMeDB:
     def __init__(self):
         self.users: dict[str, dict] = {}
+        self.despachos: dict[str, dict] = {"despacho-1": {"id": "despacho-1", "nombre": "Despacho de prueba"}}
 
-    def seed_user(self, *, email: str, role: str = "cliente", totp_enabled: bool = False) -> dict:
+    def seed_user(self, *, email: str, role: str = "cliente", totp_enabled: bool = False, despacho_id: str = "despacho-1") -> dict:
         user_id = str(uuid.uuid4())
-        self.users[user_id] = {"id": user_id, "email": email, "role": role, "totp_enabled": totp_enabled}
+        self.users[user_id] = {
+            "id": user_id, "email": email, "role": role, "totp_enabled": totp_enabled, "despacho_id": despacho_id,
+        }
         return self.users[user_id]
 
     async def execute(self, query: str, *args):
@@ -34,10 +37,16 @@ class _FakeMeDB:
 
     async def fetchrow(self, query: str, *args):
         q = query.strip()
-        if q == "SELECT id, email, role, totp_enabled FROM users WHERE id = $1":
+        if "LEFT JOIN despachos" in q and "WHERE u.id = $1" in q:
             (user_id,) = args
             u = self.users.get(user_id)
-            return dict(u) if u else None
+            if u is None:
+                return None
+            despacho = self.despachos.get(u["despacho_id"])
+            return {
+                "id": u["id"], "email": u["email"], "role": u["role"], "totp_enabled": u["totp_enabled"],
+                "despacho_id": u["despacho_id"], "despacho_nombre": despacho["nombre"] if despacho else None,
+            }
         return None
 
 

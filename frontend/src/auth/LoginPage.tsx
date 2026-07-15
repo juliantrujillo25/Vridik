@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { requiere2FA } from "../api/types";
 import { useAuth } from "./AuthContext";
@@ -109,6 +109,9 @@ export function LoginPage() {
               {cargando ? <span className="spinner" /> : null}
               {cargando ? "Entrando…" : "Iniciar sesión"}
             </button>
+            <p className="muted login-sub-link">
+              ¿Primera vez? <Link to="/registro">Registrá tu despacho</Link>
+            </p>
           </form>
         ) : (
           <form className="login-form" onSubmit={on2fa}>

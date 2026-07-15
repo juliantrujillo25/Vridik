@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 import { AuthProvider } from "./auth/AuthContext";
 import { LoginPage } from "./auth/LoginPage";
+import { SignupPage } from "./auth/SignupPage";
 import { ProtectedLayout } from "./Layout";
 import { CasosListPage } from "./casos/CasosListPage";
 import { CasoDetailPage } from "./casos/CasoDetailPage";
@@ -13,6 +14,7 @@ import "./layout.css";
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
+  { path: "/registro", element: <SignupPage /> },
   {
     path: "/",
     element: <ProtectedLayout />,

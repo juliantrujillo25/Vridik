@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from api.admin_endpoint import get_current_admin, get_current_user
 from api.auth_endpoint import _get_db
 from core.case import (
+    AbogadoDespachoDistintoError,
     asignar_abogado,
     cambiar_estado,
     create_caso,
@@ -56,7 +57,9 @@ class CambiarEstadoRequest(BaseModel):
 
 
 def _exige_acceso_a_caso(caso: dict, current: dict) -> None:
-    if current["role"] == "admin":
+    # Fase 4: un admin ya no ve casos de otros despachos (antes, cualquier
+    # admin veía cualquier caso de la plataforma entera).
+    if current["role"] == "admin" and str(caso["despacho_id"]) == str(current["despacho_id"]):
         return
     if str(caso["cliente_id"]) == str(current["id"]):
         return
@@ -77,11 +80,23 @@ async def crear_caso(payload: CrearCasoRequest, request: Request, current: dict 
     conn = _get_db(request)
     await ensure_casos_table(conn)
 
-    if payload.cliente_id is not None and payload.cliente_id != str(current["id"]) and current["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Solo un admin puede crear un caso para otro cliente")
-
     cliente_id = payload.cliente_id or str(current["id"])
-    return await create_caso(conn, cliente_id=cliente_id, titulo=payload.titulo, descripcion=payload.descripcion)
+    if payload.cliente_id is not None and payload.cliente_id != str(current["id"]):
+        if current["role"] != "admin":
+            raise HTTPException(status_code=403, detail="Solo un admin puede crear un caso para otro cliente")
+        # Fase 4: el cliente para el que se crea el caso tiene que ser del
+        # mismo despacho que el admin que lo crea -- si no, el caso
+        # quedaría con cliente y despacho de tenants distintos.
+        cliente = await conn.fetchrow("SELECT despacho_id FROM users WHERE id = $1", cliente_id)
+        if cliente is None:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+        if str(cliente["despacho_id"]) != str(current["despacho_id"]):
+            raise HTTPException(status_code=403, detail="No podés crear un caso para un cliente de otro despacho")
+
+    return await create_caso(
+        conn, cliente_id=cliente_id, despacho_id=current["despacho_id"],
+        titulo=payload.titulo, descripcion=payload.descripcion,
+    )
 
 
 @router.get("")
@@ -89,7 +104,8 @@ async def listar_casos(request: Request, skip: int = 0, limit: int = 20, current
     conn = _get_db(request)
     await ensure_casos_table(conn)
     return await list_casos_for_user(
-        conn, user_id=str(current["id"]), is_admin=current["role"] == "admin", skip=skip, limit=limit,
+        conn, user_id=str(current["id"]), is_admin=current["role"] == "admin",
+        despacho_id=current["despacho_id"], skip=skip, limit=limit,
     )
 
 
@@ -108,8 +124,15 @@ async def asignar_abogado_endpoint(
 ):
     conn = _get_db(request)
     await ensure_casos_table(conn)
-    await _caso_o_404(conn, caso_id)
-    actualizado = await asignar_abogado(conn, caso_id=caso_id, abogado_id=payload.abogado_id)
+    caso = await _caso_o_404(conn, caso_id)
+    # Fase 4: un admin solo puede reasignar casos de SU despacho (antes
+    # get_current_admin por sí solo alcanzaba, sin importar de qué
+    # despacho fuera el caso).
+    _exige_acceso_a_caso(caso, admin)
+    try:
+        actualizado = await asignar_abogado(conn, caso_id=caso_id, abogado_id=payload.abogado_id)
+    except AbogadoDespachoDistintoError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return actualizado
 
 

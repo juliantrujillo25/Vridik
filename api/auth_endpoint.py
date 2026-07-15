@@ -64,6 +64,8 @@ from core.auth import (
     verify_password,
 )
 from core.auth_events import registrar_evento
+from core.db_utils import conexion_dedicada, transaccion_si_disponible
+from core.despachos import ensure_despachos_table
 from core.rate_limit import excede_limite_login, excede_limite_totp
 from core.refresh_tokens import (
     ReusoDetectado,
@@ -95,6 +97,11 @@ BYPASS_2FA_DEV = os.environ.get("BYPASS_2FA_DEV", "false").strip().lower() in ("
 class RegisterRequest(BaseModel):
     email: str = Field(..., min_length=3)
     password: str = Field(..., min_length=8)
+    # Fase 4 (multi-tenancy): registrarse crea un despacho nuevo -- quien se
+    # registra queda como su primer admin. Invitar a alguien a un despacho
+    # YA existente es POST /admin/users (hereda el despacho de quien invita),
+    # no este endpoint.
+    nombre_despacho: str = Field(..., min_length=1)
 
 
 class LoginRequest(BaseModel):
@@ -170,6 +177,20 @@ def _qr_base64(otpauth_uri: str) -> str:
 
 @router.post("/register", status_code=201)
 async def register(payload: RegisterRequest, request: Request):
+    """Fase 4 (multi-tenancy): registrarse crea un despacho NUEVO -- quien
+    se registra queda como su primer usuario, con `role='admin'` (antes
+    nacía 'cliente' sin ningún despacho, un comportamiento que ya no tiene
+    sentido: alguien que se registra por primera vez está dando de alta su
+    propio despacho, no uniéndose a uno existente). Invitar a alguien a un
+    despacho YA existente es `POST /admin/users` (core/admin.py::
+    create_user), que hereda el despacho de quien invita -- no hace falta
+    un sistema de invitaciones nuevo.
+
+    El INSERT de `despachos` + `users` va en una única transacción real
+    (una conexión dedicada del pool, no llamadas sueltas): si `conn` es el
+    `asyncpg.Pool` de producción, cada `.fetchrow()`/`.execute()` suelto
+    puede tomar una conexión física distinta, así que sin esto un fallo a
+    mitad de camino podría dejar un despacho sin usuario o viceversa."""
     conn = _get_db(request)
     await ensure_users_table(conn)
     # S6: sin esto, un self-registro nuevo nace con el default viejo de
@@ -177,30 +198,40 @@ async def register(payload: RegisterRequest, request: Request):
     # solo se disparaba antes desde los endpoints de admin/seller, nunca
     # desde /auth/register (el primer lugar donde en realidad se necesita).
     await ensure_role_column(conn)
+    await ensure_despachos_table(conn)
 
     existente = await conn.fetchrow("SELECT id FROM users WHERE email = $1", payload.email)
     if existente is not None:
         raise HTTPException(status_code=409, detail=f"Ya existe un usuario con email {payload.email!r}")
 
     password_hash = hash_password(payload.password)
-    fila = await conn.fetchrow(
-        """
-        INSERT INTO users (email, hashed_password, is_active)
-        VALUES ($1, $2, true)
-        RETURNING id
-        """,
-        payload.email, password_hash,
-    )
-    user_id = str(fila["id"])
 
-    # Fase B: dual-write a user_credentials (Fase A ya hizo el backfill de
-    # los usuarios existentes) -- users.hashed_password se sigue llenando
-    # también, el cutover completo es Fase C.
-    await conn.execute(
-        "INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING",
-        user_id, password_hash,
+    async with conexion_dedicada(conn) as conexion:
+        async with transaccion_si_disponible(conexion):
+            despacho_id = await conexion.fetchval(
+                "INSERT INTO despachos (nombre) VALUES ($1) RETURNING id", payload.nombre_despacho,
+            )
+            fila = await conexion.fetchrow(
+                """
+                INSERT INTO users (email, hashed_password, role, despacho_id, is_active)
+                VALUES ($1, $2, 'admin', $3, true)
+                RETURNING id
+                """,
+                payload.email, password_hash, despacho_id,
+            )
+            user_id = str(fila["id"])
+            # Fase B: dual-write a user_credentials (Fase A ya hizo el
+            # backfill de los usuarios existentes) -- users.hashed_password
+            # se sigue llenando también, el cutover completo es Fase C.
+            await conexion.execute(
+                "INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING",
+                user_id, password_hash,
+            )
+
+    await registrar_evento(
+        conn, event_type="user_created", user_id=user_id, actor_id=user_id,
+        metadata={"despacho_id": str(despacho_id)},
     )
-    await registrar_evento(conn, event_type="user_created", user_id=user_id, actor_id=user_id)
 
     token = create_jwt(sub=user_id, email=payload.email)
     refresh_token, _ = await emitir_refresh_token(conn, user_id=user_id)
@@ -272,9 +303,19 @@ async def me(request: Request, authorization: str | None = Header(default=None))
     conn = _get_db(request)
     await ensure_role_column(conn)
     await ensure_totp_columns(conn)
+    await ensure_despachos_table(conn)
 
+    # LEFT JOIN, no INNER (Fase 4) -- mismo criterio que el join a
+    # user_credentials en /auth/login: nunca dejar que un despacho faltante
+    # convierta una sesión válida en un 500.
     fila = await conn.fetchrow(
-        "SELECT id, email, role, totp_enabled FROM users WHERE id = $1", claims["sub"],
+        """
+        SELECT u.id, u.email, u.role, u.totp_enabled, u.despacho_id, d.nombre AS despacho_nombre
+        FROM users u
+        LEFT JOIN despachos d ON d.id = u.despacho_id
+        WHERE u.id = $1
+        """,
+        claims["sub"],
     )
     if fila is None:
         raise HTTPException(status_code=401, detail="Usuario del token no existe")

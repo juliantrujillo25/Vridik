@@ -25,6 +25,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from core.db_utils import conexion_dedicada, transaccion_si_disponible
+
+_LOCK_KEY_JULIX_CALLS_BACKFILL = "vridik_julix_calls_despacho_backfill"
+
 # ---------------------------------------------------------------------------
 # Tabla de precios 2026 (USD por millón de tokens).
 # Confirmado por el dev lead en la semana 5: Claude Sonnet 5 (modelo de
@@ -56,7 +60,14 @@ async def ensure_julix_calls_table(db_connection) -> None:
     `user_id` nullable (no NOT NULL como en el .sql de referencia): la FK
     es `ON DELETE SET NULL`, que exige que la columna admita NULL -- el
     .sql original tenía ambas cosas a la vez, una combinación que
-    Postgres rechazaría al aplicar un DELETE real."""
+    Postgres rechazaría al aplicar un DELETE real.
+
+    Fase 4 (multi-tenancy): `despacho_id` denormalizado -- igual criterio
+    que `casos.despacho_id` (core/case.py), evita un join contra `users` en
+    el camino caliente de generación de documentos (cada llamada a JuliX
+    pasa por acá). Nullable a propósito: filas sin `user_id` (o de un
+    usuario borrado) simplemente no cuentan contra el límite mensual de
+    ningún despacho -- no hace falta un default inventado."""
     await db_connection.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
     await db_connection.execute(
         """
@@ -64,6 +75,7 @@ async def ensure_julix_calls_table(db_connection) -> None:
             id              BIGSERIAL PRIMARY KEY,
             user_id         UUID REFERENCES users(id) ON DELETE SET NULL,
             caso_id         UUID,
+            despacho_id     UUID,
             tarea           TEXT NOT NULL,
             model           TEXT NOT NULL,
             prompt_version  INTEGER NOT NULL,
@@ -82,14 +94,38 @@ async def ensure_julix_calls_table(db_connection) -> None:
         )
         """
     )
+    # despacho_id pudo no existir si `julix_calls` ya estaba creada antes de Fase 4.
+    await db_connection.execute("ALTER TABLE julix_calls ADD COLUMN IF NOT EXISTS despacho_id UUID")
     await db_connection.execute("CREATE INDEX IF NOT EXISTS ix_julix_calls_user_id ON julix_calls (user_id)")
     await db_connection.execute("CREATE INDEX IF NOT EXISTS ix_julix_calls_caso_id ON julix_calls (caso_id)")
+    await db_connection.execute("CREATE INDEX IF NOT EXISTS ix_julix_calls_despacho_id ON julix_calls (despacho_id)")
     await db_connection.execute(
         "CREATE INDEX IF NOT EXISTS ix_julix_calls_created_at ON julix_calls (created_at DESC)"
     )
     await db_connection.execute(
         "CREATE INDEX IF NOT EXISTS ix_julix_calls_status ON julix_calls (status) WHERE status <> 'ok'"
     )
+
+
+async def ensure_julix_calls_despacho_backfill(db_connection) -> None:
+    """Nivel caro -- corre DESPUÉS de `core.despachos.ensure_despachos_
+    backfill` (depende de `users.despacho_id` ya poblado). Filas con
+    `user_id IS NULL` quedan con `despacho_id IS NULL` a propósito (ver
+    docstring de `ensure_julix_calls_table`)."""
+    await ensure_julix_calls_table(db_connection)
+    async with conexion_dedicada(db_connection) as conexion:
+        async with transaccion_si_disponible(conexion):
+            await conexion.execute("SELECT pg_advisory_xact_lock(hashtext($1))", _LOCK_KEY_JULIX_CALLS_BACKFILL)
+            hay_pendientes = await conexion.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM julix_calls WHERE despacho_id IS NULL AND user_id IS NOT NULL)"
+            )
+            if hay_pendientes:
+                await conexion.execute(
+                    """
+                    UPDATE julix_calls SET despacho_id = (SELECT despacho_id FROM users WHERE users.id = julix_calls.user_id)
+                    WHERE despacho_id IS NULL AND user_id IS NOT NULL
+                    """
+                )
 
 
 def calcular_costo_usd(model: str, input_tokens: int, output_tokens: int) -> float:
@@ -114,6 +150,7 @@ class JuliXCallRecord:
     latency_ms: int
     status: str  # 'ok' | 'timeout' | 'rate_limited' | 'overloaded_partial' | 'truncated' | 'invalid_format'
     environment: str  # 'staging' | 'production'
+    despacho_id: str | None = None  # Fase 4 -- ver docstring de ensure_julix_calls_table
     costo_usd: float | None = None
     created_at: datetime | None = None
 
@@ -129,30 +166,45 @@ async def registrar_llamada(db_connection, record: JuliXCallRecord) -> None:
     de conexiones de la app (asyncpg / SQLAlchemy async)."""
     query = """
         INSERT INTO julix_calls (
-            user_id, caso_id, tarea, model, prompt_version, prompt_hash,
+            user_id, caso_id, despacho_id, tarea, model, prompt_version, prompt_hash,
             input_tokens, output_tokens, costo_usd, latency_ms, status,
             environment, created_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
     """
     await db_connection.execute(
         query,
-        record.user_id, record.caso_id, record.tarea, record.model,
+        record.user_id, record.caso_id, record.despacho_id, record.tarea, record.model,
         record.prompt_version, record.prompt_hash, record.input_tokens,
         record.output_tokens, record.costo_usd, record.latency_ms,
         record.status, record.environment, record.created_at,
     )
 
 
-async def gasto_mensual_actual_usd(db_connection, environment: str = "production") -> float:
-    """Suma costo_usd del mes calendario en curso para TODO el entorno.
-    Alimenta el aviso del 80%/confirmación del 100% del límite blando."""
-    query = """
-        SELECT COALESCE(SUM(costo_usd), 0)
-        FROM julix_calls
-        WHERE environment = $1
-          AND created_at >= date_trunc('month', now())
-    """
-    row = await db_connection.fetchrow(query, environment)
+async def gasto_mensual_actual_usd(
+    db_connection, environment: str = "production", despacho_id: str | None = None,
+) -> float:
+    """Suma costo_usd del mes calendario en curso. Fase 4: si se pasa
+    `despacho_id`, el gasto queda acotado a ese despacho (cada uno tiene su
+    propio límite mensual, ver requiere_confirmacion); sin él, agrega TODO
+    el entorno (usado hoy solo internamente por el propio módulo, ningún
+    caller real deja de pasar despacho_id post Fase 4)."""
+    if despacho_id is not None:
+        query = """
+            SELECT COALESCE(SUM(costo_usd), 0)
+            FROM julix_calls
+            WHERE environment = $1
+              AND despacho_id = $2
+              AND created_at >= date_trunc('month', now())
+        """
+        row = await db_connection.fetchrow(query, environment, despacho_id)
+    else:
+        query = """
+            SELECT COALESCE(SUM(costo_usd), 0)
+            FROM julix_calls
+            WHERE environment = $1
+              AND created_at >= date_trunc('month', now())
+        """
+        row = await db_connection.fetchrow(query, environment)
     return float(row[0]) if row else 0.0
 
 
@@ -195,10 +247,16 @@ async def obtener_ultima_llamada(db_connection, user_id: str) -> dict | None:
     }
 
 
-async def requiere_confirmacion(db_connection, environment: str = "production") -> tuple[bool, bool]:
+async def requiere_confirmacion(
+    db_connection, environment: str = "production", despacho_id: str | None = None,
+) -> tuple[bool, bool]:
     """Retorna (mostrar_aviso_80, requiere_confirmacion_100). Nunca bloqueo duro:
-    al 100% el usuario puede seguir, pero debe confirmar explícitamente por documento."""
-    gasto = await gasto_mensual_actual_usd(db_connection, environment)
+    al 100% el usuario puede seguir, pero debe confirmar explícitamente por documento.
+
+    Fase 4: `despacho_id` acota el límite blando de $150/mes a UN despacho
+    (antes era un solo pozo compartido por toda la plataforma) -- sin esto,
+    un despacho podía quedar bloqueado por el gasto de otro."""
+    gasto = await gasto_mensual_actual_usd(db_connection, environment, despacho_id=despacho_id)
     ratio = gasto / SOFT_MONTHLY_LIMIT_USD if SOFT_MONTHLY_LIMIT_USD else 0
     return (ratio >= WARNING_THRESHOLD_RATIO, ratio >= 1.0)
 

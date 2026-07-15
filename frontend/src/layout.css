@@ -12,6 +12,7 @@
 .login-sub { margin: 0 0 1.5rem; font-size: 0.92rem; }
 .login-form { display: flex; flex-direction: column; gap: 1.1rem; margin-top: 1.2rem; }
 .login-form .alert { margin: 0; }
+.login-sub-link { margin: 0; font-size: 0.88rem; text-align: center; }
 
 /* --- app shell --- */
 .app-shell { min-height: 100%; display: flex; flex-direction: column; }

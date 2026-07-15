@@ -145,6 +145,7 @@ class JuliXService:
         caso_id: str,
         tarea: str,
         expediente_texto: str,
+        despacho_id: str | None = None,
         chunks_candidatos: list[RankedChunk] | None = None,
         pregunta: str | None = None,
         prompt_version: int | None = None,
@@ -174,8 +175,9 @@ class JuliXService:
             yield respuesta_cacheada
             return
 
-        # 1. Límite blando mensual — nunca bloqueo duro, solo aviso/confirmación
-        mostrar_aviso, requiere_confirm = await requiere_confirmacion(self.db)
+        # 1. Límite blando mensual — nunca bloqueo duro, solo aviso/confirmación.
+        #    Fase 4: por despacho, no un solo pozo compartido de la plataforma.
+        mostrar_aviso, requiere_confirm = await requiere_confirmacion(self.db, despacho_id=despacho_id)
         if requiere_confirm:
             yield "__JULIX_REQUIERE_CONFIRMACION__"  # el frontend intercepta este marcador
             return
@@ -213,6 +215,7 @@ class JuliXService:
                 user_content=contexto.user_content,
                 user_id=user_id,
                 caso_id=caso_id,
+                despacho_id=despacho_id,
                 prompt_version=prompt.version,
                 prompt_hash=prompt.hash,
             ):

@@ -38,16 +38,22 @@ class _FakeAdminDB:
         # 0 por default (mes sin llamadas registradas todavía).
         self.gasto_mensual_seed: float = 0.0
 
-    def seed(self, *, email: str, role: str = "abogado", is_active: bool = True, totp_enabled: bool = True) -> dict:
+    def seed(
+        self, *, email: str, role: str = "abogado", is_active: bool = True, totp_enabled: bool = True,
+        despacho_id: str = "despacho-1",
+    ) -> dict:
         # totp_enabled=True por default: la mayoría de estos tests seedean
         # un admin y esperan que get_current_admin lo deje pasar sin
         # pensar en 2FA -- el must_enroll de S12-13 se prueba aparte, con
         # totp_enabled=False explícito.
+        # despacho_id="despacho-1" por default (Fase 4): los tests de este
+        # archivo asumen que admin+seller comparten despacho salvo que se
+        # pase uno distinto a propósito (aislamiento cross-despacho).
         user_id = str(uuid.uuid4())
         self.users[user_id] = {
             "id": user_id, "email": email, "hashed_password": "x-hash",
             "role": role, "is_active": is_active, "created_at": "2026-01-01T00:00:00+00:00",
-            "deleted_at": None, "must_change": False, "totp_enabled": totp_enabled,
+            "deleted_at": None, "must_change": False, "totp_enabled": totp_enabled, "despacho_id": despacho_id,
         }
         return self.users[user_id]
 
@@ -93,10 +99,10 @@ class _FakeAdminDB:
             if not self.auth_events:
                 return None
             return {"hash_actual": self.auth_events[-1]["hash_actual"]}
-        if "SELECT id, email, role FROM users WHERE id" in q:
+        if "SELECT id, email, role, despacho_id FROM users WHERE id" in q:
             (user_id,) = args
             u = self.users.get(user_id)
-            return {"id": u["id"], "email": u["email"], "role": u["role"]} if u else None
+            return {"id": u["id"], "email": u["email"], "role": u["role"], "despacho_id": u["despacho_id"]} if u else None
         if "SELECT id FROM users WHERE email" in q:
             (email,) = args
             return next(({"id": u["id"]} for u in self.users.values() if u["email"] == email), None)
@@ -115,10 +121,10 @@ class _FakeAdminDB:
         if "SUM(costo_usd)" in q:
             return (self.gasto_mensual_seed,)
         if "INSERT INTO users" in q and "RETURNING" in q:
-            email, password_hash, role = args
-            nuevo = self.seed(email=email, role=role)
+            email, password_hash, role, despacho_id = args
+            nuevo = self.seed(email=email, role=role, despacho_id=despacho_id)
             nuevo["hashed_password"] = password_hash
-            return {k: nuevo[k] for k in ("id", "email", "role", "is_active", "created_at")}
+            return {k: nuevo[k] for k in ("id", "email", "role", "despacho_id", "is_active", "created_at")}
         if "UPDATE users SET role" in q:
             user_id, new_role = args
             u = self.users.get(user_id)
@@ -130,11 +136,14 @@ class _FakeAdminDB:
 
     async def fetch(self, query: str, *args):
         q = query.strip()
-        if "SELECT id, email, role, is_active, created_at" in q and "FROM users" in q:
-            skip, limit = args
-            filas = sorted(self.users.values(), key=lambda u: u["created_at"], reverse=True)
+        if "SELECT id, email, role, despacho_id, is_active, created_at" in q and "FROM users" in q:
+            despacho_id, skip, limit = args
+            filas = sorted(
+                (u for u in self.users.values() if u["despacho_id"] == despacho_id),
+                key=lambda u: u["created_at"], reverse=True,
+            )
             seleccion = filas[skip:skip + limit]
-            return [{k: u[k] for k in ("id", "email", "role", "is_active", "created_at")} for u in seleccion]
+            return [{k: u[k] for k in ("id", "email", "role", "despacho_id", "is_active", "created_at")} for u in seleccion]
         if q.startswith("SELECT id, event_type, metadata, ip_address, user_agent, created_at"):
             user_id, limite = args
             eventos = [e for e in self.auth_events if e.get("user_id") == user_id]
@@ -196,6 +205,27 @@ def test_admin_create_user(admin_db, admin_client):
     assert body["role"] == "abogado"
     assert "password" not in body
     assert "hashed_password" not in body
+    # Fase 4: el usuario creado hereda el despacho del admin que lo crea --
+    # nunca se acepta un despacho_id del cliente.
+    assert body["despacho_id"] == admin["despacho_id"]
+
+
+def test_admin_create_user_ignora_despacho_id_del_cliente(admin_db, admin_client):
+    """Aunque el request intente mandar un despacho_id, el servidor lo
+    ignora -- siempre hereda del admin que actúa."""
+    admin = admin_db.seed(email="admin2b@vridik.local", role="admin", despacho_id="despacho-real")
+    token = _token_de(admin)
+
+    r = admin_client.post(
+        "/admin/users",
+        json={
+            "email": "nuevo_seller2@vridik.local", "password": "Clave#Segura123", "role": "abogado",
+            "despacho_id": "despacho-ajeno",
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["despacho_id"] == "despacho-real"
 
 
 def test_admin_change_role(admin_db, admin_client):

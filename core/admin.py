@@ -33,27 +33,31 @@ async def ensure_role_column(db_connection) -> None:
     await db_connection.execute("ALTER TABLE users ALTER COLUMN role SET DEFAULT 'cliente'")
 
 
-async def list_users(db_connection, *, skip: int, limit: int) -> list[dict]:
+async def list_users(db_connection, *, despacho_id: str, skip: int, limit: int) -> list[dict]:
+    """Fase 4: acotado al despacho del admin que pide la lista -- antes
+    traía TODOS los usuarios de la plataforma sin importar de qué despacho
+    fueran (AUDITORIA)."""
     filas = await db_connection.fetch(
         """
-        SELECT id, email, role, is_active, created_at
+        SELECT id, email, role, despacho_id, is_active, created_at
         FROM users
+        WHERE despacho_id = $1
         ORDER BY created_at DESC
-        OFFSET $1 LIMIT $2
+        OFFSET $2 LIMIT $3
         """,
-        skip, limit,
+        despacho_id, skip, limit,
     )
     return [dict(f) for f in filas]
 
 
-async def create_user(db_connection, *, email: str, password_hash: str, role: str) -> dict:
+async def create_user(db_connection, *, email: str, password_hash: str, role: str, despacho_id: str) -> dict:
     fila = await db_connection.fetchrow(
         """
-        INSERT INTO users (email, hashed_password, role, is_active)
-        VALUES ($1, $2, $3, true)
-        RETURNING id, email, role, is_active, created_at
+        INSERT INTO users (email, hashed_password, role, despacho_id, is_active)
+        VALUES ($1, $2, $3, $4, true)
+        RETURNING id, email, role, despacho_id, is_active, created_at
         """,
-        email, password_hash, role,
+        email, password_hash, role, despacho_id,
     )
     # Fase C (S1-GAP-01): dual-write a user_credentials -- sin esto, un
     # usuario creado vía POST /admin/users (a diferencia de /auth/register,

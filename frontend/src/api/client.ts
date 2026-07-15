@@ -196,10 +196,13 @@ class ApiClient {
     return this.parse<TokenPair>(resp);
   }
 
-  async register(email: string, password: string): Promise<TokenPair> {
+  /** Fase 4: registrarse crea un despacho nuevo -- quien se registra queda
+   *  como su primer admin. Invitar a alguien a un despacho existente es
+   *  adminCrearUsuario(), no esto. */
+  async register(email: string, password: string, nombreDespacho: string): Promise<TokenPair> {
     const resp = await this.raw(
       "/auth/register",
-      { method: "POST", body: JSON.stringify({ email, password }) },
+      { method: "POST", body: JSON.stringify({ email, password, nombre_despacho: nombreDespacho }) },
       false,
     );
     return this.parse<TokenPair>(resp);

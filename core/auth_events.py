@@ -47,8 +47,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+
+from core.db_utils import conexion_dedicada as _conexion_dedicada
+from core.db_utils import transaccion_si_disponible as _transaccion_si_disponible
 
 _LOCK_KEY_CADENA = "vridik_auth_events_chain"
 
@@ -143,35 +145,6 @@ async def _backfill_hash_chain(conexion) -> None:
             hash_previo, hash_actual, fila["id"],
         )
         hash_previo = hash_actual
-
-
-@asynccontextmanager
-async def _conexion_dedicada(conn):
-    """`conn` acá puede ser un `asyncpg.Pool` (sin `.transaction()` propio
-    -- para sostener un lock+lectura+insert como una sola operación
-    atómica hace falta adquirir una conexión dedicada del pool primero),
-    una `Connection` individual ya adquirida (p.ej. dentro de
-    `app/main.py::_bucle_alertas_terminos`, que hace su propio
-    `pool.acquire()`), o un fake de test simple. Se detecta por duck
-    typing -- nunca se asume cuál de los dos es."""
-    if hasattr(conn, "acquire"):
-        async with conn.acquire() as conexion:
-            yield conexion
-    else:
-        yield conn
-
-
-@asynccontextmanager
-async def _transaccion_si_disponible(conexion):
-    """Los fakes de test (y, en teoría, cualquier conexión sin soporte
-    real de transacciones) no tienen `.transaction()` -- se degrada a
-    no-op ahí. Contra Postgres real (Connection de verdad) SIEMPRE hay
-    `.transaction()`, así que en producción esto nunca se salta."""
-    if hasattr(conexion, "transaction"):
-        async with conexion.transaction():
-            yield
-    else:
-        yield
 
 
 async def registrar_evento(

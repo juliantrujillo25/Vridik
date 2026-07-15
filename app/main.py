@@ -56,7 +56,10 @@ from api.mensajes_endpoint import router as mensajes_router
 from api.terminos_endpoint import router as terminos_router
 from core.auth import ensure_auth_migration_005
 from core.auth_events import ensure_bitacora_hash_chain
+from core.case import ensure_casos_despacho_backfill
+from core.despachos import ensure_despachos_backfill
 from core.terminos import ensure_terminos_table
+from julix.ledger import ensure_julix_calls_despacho_backfill
 from procesal.alertas_terminos import ejecutar_ronda_de_alertas
 
 logger = logging.getLogger("vridik.app")
@@ -169,6 +172,41 @@ async def _conectar_db() -> None:
             logger.critical(
                 "Vridik: no se pudo aplicar el bootstrap del hash chain de auth_events al arrancar -- "
                 "si las columnas hash_anterior/hash_actual ya existen esto no afecta nada.",
+                exc_info=True,
+            )
+
+        # Fase 4: fundación de multi-tenancy -- misma lógica de "una sola vez
+        # al arrancar" que los bloques de arriba. Orden importa: despachos
+        # primero (crea "Despacho por defecto" y puebla users.despacho_id),
+        # recién después casos/julix_calls (leen users.despacho_id ya
+        # poblado para heredarlo).
+        try:
+            async with app.state.db_connection.acquire() as conn:
+                await ensure_despachos_backfill(conn)
+        except Exception:
+            logger.critical(
+                "Vridik: no se pudo aplicar el backfill de despachos al arrancar -- si users.despacho_id "
+                "ya es NOT NULL esto no afecta nada; si no, register/casos van a fallar.",
+                exc_info=True,
+            )
+
+        try:
+            async with app.state.db_connection.acquire() as conn:
+                await ensure_casos_despacho_backfill(conn)
+        except Exception:
+            logger.critical(
+                "Vridik: no se pudo aplicar el backfill de despacho_id en casos al arrancar -- si "
+                "casos.despacho_id ya es NOT NULL esto no afecta nada.",
+                exc_info=True,
+            )
+
+        try:
+            async with app.state.db_connection.acquire() as conn:
+                await ensure_julix_calls_despacho_backfill(conn)
+        except Exception:
+            logger.critical(
+                "Vridik: no se pudo aplicar el backfill de despacho_id en julix_calls al arrancar -- "
+                "el límite mensual por despacho puede quedar mal calculado hasta el próximo arranque.",
                 exc_info=True,
             )
 

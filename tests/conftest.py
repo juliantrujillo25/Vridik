@@ -154,6 +154,29 @@ async def db(test_database_url, backend):
 
 
 @pytest_asyncio.fixture if pytest_asyncio else pytest.fixture
+async def make_despacho(db):
+    """Factory: crea un despacho ad hoc dentro de la transacción del test
+    (Fase 4, multi-tenancy). Uso: despacho = await make_despacho(nombre="Despacho X").
+    `despachos`/`users.despacho_id` no vienen en schema_semana1_vridik.sql
+    (aplicado por CI antes de la suite) -- se asegura acá, igual que otros
+    tests reales de Postgres aseguran su propia tabla antes de usarla."""
+    from core.despachos import ensure_despachos_table
+
+    await ensure_despachos_table(db)
+
+    async def _make(*, nombre: str | None = None) -> str:
+        despacho_id = str(uuid.uuid4())
+        nombre = nombre or f"Despacho de prueba {despacho_id[:8]}"
+        await db.execute(
+            "INSERT INTO despachos (id, nombre) VALUES ($1, $2)",
+            despacho_id, nombre,
+        )
+        return despacho_id
+
+    return _make
+
+
+@pytest_asyncio.fixture if pytest_asyncio else pytest.fixture
 async def seed_roles(db):
     for codigo, role_id in ROLE_IDS.items():
         await db.execute(
@@ -168,21 +191,32 @@ async def seed_roles(db):
 
 
 @pytest_asyncio.fixture if pytest_asyncio else pytest.fixture
-async def seeded_users(db, seed_roles):
+async def seeded_users(db, seed_roles, make_despacho):
     """Aplica el mismo contenido de db/seed_railway.sql dentro de la
-    transacción del test actual."""
+    transacción del test actual. Fase 4: los 4 usuarios seed comparten UN
+    despacho (representan el despacho único que Vridik tenía antes de
+    multi-tenancy -- necesitan poder interactuar entre sí, p.ej. julian
+    como admin gestionando casos de cliente1)."""
     if bcrypt is None:
         pytest.skip("bcrypt no instalado — ver requirements-test.txt")
 
+    despacho_id = await make_despacho(nombre="Despacho seed")
+
     creados = []
     for u in SEED_USERS:
+        # ON CONFLICT DO UPDATE (no DO NOTHING) para despacho_id -- estos 4
+        # usuarios ya existen en la base ANTES de que corra la suite (CI
+        # aplica db/seed_railway.sql una sola vez, fuera de la transacción
+        # por-test), con despacho_id todavía NULL (ese seed no conocía la
+        # columna). Sin el UPDATE, quedarían sin despacho dentro de la
+        # transacción rollback de este test.
         await db.execute(
             """
-            INSERT INTO users (id, email, nombre_completo, role_id, legacy_username, must_change, is_active)
-            VALUES ($1, $2, $3, $4, $5, true, true)
-            ON CONFLICT (id) DO NOTHING
+            INSERT INTO users (id, email, nombre_completo, role_id, despacho_id, legacy_username, must_change, is_active)
+            VALUES ($1, $2, $3, $4, $5, $6, true, true)
+            ON CONFLICT (id) DO UPDATE SET despacho_id = EXCLUDED.despacho_id
             """,
-            u["id"], u["email"], u["legacy_username"].capitalize(), ROLE_IDS[u["role"]], u["legacy_username"],
+            u["id"], u["email"], u["legacy_username"].capitalize(), ROLE_IDS[u["role"]], despacho_id, u["legacy_username"],
         )
         password_hash = bcrypt.hashpw(u["password"].encode(), bcrypt.gensalt(rounds=4)).decode()  # rounds bajos: velocidad en tests
         await db.execute(
@@ -193,26 +227,37 @@ async def seeded_users(db, seed_roles):
             """,
             u["id"], password_hash,
         )
-        creados.append(u)
+        creados.append({**u, "despacho_id": despacho_id})
     return creados
 
 
 @pytest_asyncio.fixture if pytest_asyncio else pytest.fixture
-async def make_user(db, seed_roles):
+async def make_user(db, seed_roles, make_despacho):
     """Factory: crea un usuario ad hoc dentro de la transacción del test.
-    Uso: user = await make_user(role='cliente', password='Clave#Test1')"""
+    Uso: user = await make_user(role='cliente', password='Clave#Test1').
 
-    async def _make(*, role: str = "cliente", password: str = "Clave#Test123!", email: str | None = None):
+    Fase 4: `despacho_id` es opcional -- si no se pasa, el usuario recibe
+    un despacho propio nuevo. Dos usuarios que necesiten interactuar en el
+    mismo caso (cliente + abogado asignado, p.ej.) DEBEN pasar el MISMO
+    despacho_id explícito, o la validación cross-despacho de
+    `core.case.asignar_abogado` los va a rechazar."""
+
+    async def _make(
+        *, role: str = "cliente", password: str = "Clave#Test123!",
+        email: str | None = None, despacho_id: str | None = None,
+    ):
         if bcrypt is None:
             pytest.skip("bcrypt no instalado — ver requirements-test.txt")
+        if despacho_id is None:
+            despacho_id = await make_despacho()
         user_id = str(uuid.uuid4())
         email = email or f"user-{user_id[:8]}@vridik.local"
         await db.execute(
             """
-            INSERT INTO users (id, email, nombre_completo, role_id, must_change, is_active)
-            VALUES ($1, $2, $3, $4, false, true)
+            INSERT INTO users (id, email, nombre_completo, role_id, despacho_id, must_change, is_active)
+            VALUES ($1, $2, $3, $4, $5, false, true)
             """,
-            user_id, email, "Usuario de prueba", ROLE_IDS[role],
+            user_id, email, "Usuario de prueba", ROLE_IDS[role], despacho_id,
         )
         password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4)).decode()
         await db.execute(
@@ -222,7 +267,7 @@ async def make_user(db, seed_roles):
             """,
             user_id, password_hash,
         )
-        return {"id": user_id, "email": email, "role": role, "password": password}
+        return {"id": user_id, "email": email, "role": role, "password": password, "despacho_id": despacho_id}
 
     return _make
 

@@ -55,7 +55,8 @@ class CambiarEstadoTerminoRequest(BaseModel):
 
 
 def _exige_acceso_a_caso(caso: dict, current: dict) -> None:
-    if current["role"] == "admin":
+    # Fase 4: un admin ya no ve casos de otros despachos.
+    if current["role"] == "admin" and str(caso["despacho_id"]) == str(current["despacho_id"]):
         return
     if str(caso["cliente_id"]) == str(current["id"]):
         return

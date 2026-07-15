@@ -70,7 +70,8 @@ class LiquidarRequest(BaseModel):
 
 
 def _exige_lectura(caso: dict, current: dict) -> None:
-    if current["role"] == "admin":
+    # Fase 4: un admin ya no ve casos de otros despachos.
+    if current["role"] == "admin" and str(caso["despacho_id"]) == str(current["despacho_id"]):
         return
     if str(caso["cliente_id"]) == str(current["id"]):
         return
@@ -81,7 +82,8 @@ def _exige_lectura(caso: dict, current: dict) -> None:
 
 def _exige_escritura(caso: dict, current: dict) -> None:
     """Nunca el cliente -- ver docstring del módulo."""
-    if current["role"] == "admin":
+    # Fase 4: un admin ya no ve casos de otros despachos.
+    if current["role"] == "admin" and str(caso["despacho_id"]) == str(current["despacho_id"]):
         return
     if caso["abogado_id"] is not None and str(caso["abogado_id"]) == str(current["id"]):
         return

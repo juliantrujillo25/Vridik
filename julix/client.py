@@ -190,6 +190,7 @@ class JuliXClient:
         user_content: str,
         user_id: str | None = None,
         caso_id: str | None = None,
+        despacho_id: str | None = None,
         prompt_version: int = 0,
         prompt_hash: str = "",
     ):
@@ -285,6 +286,7 @@ class JuliXClient:
             record = JuliXCallRecord(
                 user_id=user_id or "desconocido",
                 caso_id=caso_id,
+                despacho_id=despacho_id,
                 tarea=tarea,
                 model=model,
                 prompt_version=prompt_version,

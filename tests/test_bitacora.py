@@ -250,19 +250,20 @@ class _FakeBitacoraHttpConn(_FakeBitacoraConn):
         super().__init__()
         self.users: dict[str, dict] = {}
 
-    def seed_user(self, *, role: str = "cliente", totp_enabled: bool = True) -> dict:
+    def seed_user(self, *, role: str = "cliente", totp_enabled: bool = True, despacho_id: str = "despacho-1") -> dict:
         user_id = str(uuid.uuid4())
         self.users[user_id] = {
             "id": user_id, "email": f"{user_id}@vridik.local", "role": role, "totp_enabled": totp_enabled,
+            "despacho_id": despacho_id,
         }
         return self.users[user_id]
 
     async def fetchrow(self, query: str, *args):
         q = query.strip()
-        if "SELECT id, email, role FROM users WHERE id" in q:
+        if "SELECT id, email, role, despacho_id FROM users WHERE id" in q:
             (user_id,) = args
             u = self.users.get(user_id)
-            return {"id": u["id"], "email": u["email"], "role": u["role"]} if u else None
+            return {"id": u["id"], "email": u["email"], "role": u["role"], "despacho_id": u["despacho_id"]} if u else None
         if q.strip() == "SELECT totp_enabled FROM users WHERE id = $1":
             (user_id,) = args
             u = self.users.get(user_id)

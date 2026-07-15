@@ -135,6 +135,10 @@ export function AccountPage() {
           <span className="mono">{perfil.email}</span>
         </div>
         <div className="account-row">
+          <span className="muted">Despacho</span>
+          <span className="mono">{perfil.despacho_nombre}</span>
+        </div>
+        <div className="account-row">
           <span className="muted">Rol</span>
           <span className="mono">{perfil.role}</span>
         </div>

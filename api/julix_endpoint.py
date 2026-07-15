@@ -300,12 +300,22 @@ async def julix_query(
     service = get_service(request)
     chunks_candidatos = [RankedChunk(**c.model_dump()) for c in payload.chunks]
 
+    # Fase 4: el límite blando mensual de JuliX es por despacho, no un pozo
+    # compartido de toda la plataforma -- este endpoint no hacía ninguna
+    # consulta a la base antes de generar, así que esta es la primera.
+    db_connection = getattr(request.app.state, "db_connection", None)
+    despacho_id = None
+    if db_connection is not None:
+        fila_despacho = await db_connection.fetchrow("SELECT despacho_id FROM users WHERE id = $1", user_id)
+        despacho_id = str(fila_despacho["despacho_id"]) if fila_despacho and fila_despacho["despacho_id"] else None
+
     documento = ""
     async for fragmento in service.generar_documento(
         user_id=user_id,
         caso_id=payload.caso_id,
         tarea=payload.tarea,
         expediente_texto=payload.expediente_texto,
+        despacho_id=despacho_id,
         chunks_candidatos=chunks_candidatos or None,
         pregunta=payload.pregunta,
         prompt_version=payload.prompt_version,
@@ -313,7 +323,6 @@ async def julix_query(
         documento += fragmento
 
     ultima_llamada = None
-    db_connection = getattr(request.app.state, "db_connection", None)
     if db_connection is not None:
         ultima_llamada = await obtener_ultima_llamada(db_connection, user_id)
 
@@ -365,6 +374,7 @@ async def _generar_stream_sse(
     expediente_texto: str,
     pregunta: str | None,
     prompt_version: int | None,
+    despacho_id: str | None = None,
 ):
     """Generador de eventos SSE (S11): traduce cada fragmento que produce
     JuliXService.generar_documento() a un evento `chunk`, y cierra con
@@ -382,6 +392,7 @@ async def _generar_stream_sse(
             caso_id=caso_id,
             tarea=tarea,
             expediente_texto=expediente_texto,
+            despacho_id=despacho_id,
             pregunta=pregunta,
             prompt_version=prompt_version,
         ):
@@ -426,6 +437,15 @@ async def julix_stream(
     )
 
     service = get_service(request)
+
+    # Fase 4: mismo motivo que POST /julix/query -- el límite blando
+    # mensual es por despacho.
+    despacho_id = None
+    db_connection = getattr(request.app.state, "db_connection", None)
+    if db_connection is not None:
+        fila_despacho = await db_connection.fetchrow("SELECT despacho_id FROM users WHERE id = $1", user_id)
+        despacho_id = str(fila_despacho["despacho_id"]) if fila_despacho and fila_despacho["despacho_id"] else None
+
     generador = _generar_stream_sse(
         request,
         service,
@@ -433,6 +453,7 @@ async def julix_stream(
         caso_id=caso_id,
         tarea=tarea,
         expediente_texto=expediente_texto,
+        despacho_id=despacho_id,
         pregunta=pregunta,
         prompt_version=prompt_version,
     )

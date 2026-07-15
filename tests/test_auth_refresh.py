@@ -35,6 +35,14 @@ class _FakeAuthRefreshDB:
         self.user_credentials: dict[str, dict] = {}
         self.refresh_tokens: dict[str, dict] = {}
         self.auth_events: list[dict] = []
+        self.despachos: dict[str, dict] = {}
+
+    # register() adquiere una conexión dedicada del "pool" y abre una
+    # transacción real -- este fake no es ni Pool ni Connection, así que
+    # ninguno de los dos hasattr() (core.db_utils.conexion_dedicada/
+    # transaccion_si_disponible) matchea, y ambos helpers degradan a
+    # no-op (yield self / yield sin abrir nada). Mismo objeto de siempre,
+    # ninguna conexión "distinta" que simular.
 
     async def execute(self, query: str, *args):
         q = query.strip()
@@ -86,11 +94,14 @@ class _FakeAuthRefreshDB:
             if not self.auth_events:
                 return None
             return {"hash_actual": self.auth_events[-1]["hash_actual"]}
-        if "INSERT INTO users" in q and "RETURNING id" in q:
-            email, password_hash = args
+        if q.startswith("INSERT INTO users") and "RETURNING id" in q:
+            # Fase 4: register() manda (email, password_hash, despacho_id) --
+            # role='admin' y is_active=true son literales en el SQL, no args.
+            email, password_hash, despacho_id = args
             user_id = str(uuid.uuid4())
             self.users[user_id] = {
                 "id": user_id, "email": email, "hashed_password": password_hash,
+                "role": "admin", "despacho_id": despacho_id,
                 "is_active": True, "totp_enabled": False,
             }
             return {"id": user_id}
@@ -142,6 +153,11 @@ class _FakeAuthRefreshDB:
         de Postgres para ip_address (acá alcanza con == de Python, None
         incluido)."""
         q = query.strip()
+        if q.startswith("INSERT INTO despachos"):
+            (nombre,) = args
+            despacho_id = str(uuid.uuid4())
+            self.despachos[despacho_id] = {"id": despacho_id, "nombre": nombre}
+            return despacho_id
         if "auth_events" in q and "event_type = 'login_failed'" in q and "metadata->>'email'" in q:
             email, ip_address, _ventana = args
             return sum(
@@ -176,7 +192,7 @@ def client(db):
 
 
 def test_register_emite_access_y_refresh_token(db, client):
-    r = client.post("/auth/register", json={"email": "nueva@vridik.local", "password": "ClaveSegura123"})
+    r = client.post("/auth/register", json={"email": "nueva@vridik.local", "password": "ClaveSegura123", "nombre_despacho": "Despacho de prueba"})
     assert r.status_code == 201, r.text
     body = r.json()
     assert "access_token" in body and "refresh_token" in body
@@ -185,9 +201,36 @@ def test_register_emite_access_y_refresh_token(db, client):
     assert user_id in db.user_credentials
     assert any(e["event_type"] == "user_created" for e in db.auth_events)
 
+    # Fase 4: registrarse crea un despacho nuevo, y el registrante queda
+    # como su primer admin (no 'cliente').
+    assert db.users[user_id]["role"] == "admin"
+    assert db.users[user_id]["despacho_id"] in db.despachos
+
+
+def test_dos_registros_crean_despachos_distintos(db, client):
+    """Fase 4: cada /auth/register da de alta un despacho NUEVO -- dos
+    registros no deben terminar en el mismo despacho ni ver los datos del
+    otro."""
+    r1 = client.post(
+        "/auth/register",
+        json={"email": "despacho-a@vridik.local", "password": "ClaveSegura123", "nombre_despacho": "Despacho A"},
+    ).json()
+    r2 = client.post(
+        "/auth/register",
+        json={"email": "despacho-b@vridik.local", "password": "ClaveSegura123", "nombre_despacho": "Despacho B"},
+    ).json()
+
+    user_a = next(u for u in db.users.values() if u["email"] == "despacho-a@vridik.local")
+    user_b = next(u for u in db.users.values() if u["email"] == "despacho-b@vridik.local")
+
+    assert user_a["despacho_id"] != user_b["despacho_id"]
+    assert db.despachos[user_a["despacho_id"]]["nombre"] == "Despacho A"
+    assert db.despachos[user_b["despacho_id"]]["nombre"] == "Despacho B"
+    assert r1["access_token"] != r2["access_token"]
+
 
 def test_login_emite_refresh_token_y_registra_evento(db, client):
-    client.post("/auth/register", json={"email": "login1@vridik.local", "password": "ClaveSegura123"})
+    client.post("/auth/register", json={"email": "login1@vridik.local", "password": "ClaveSegura123", "nombre_despacho": "Despacho de prueba"})
     r = client.post("/auth/login", json={"email": "login1@vridik.local", "password": "ClaveSegura123"})
     assert r.status_code == 200, r.text
     assert "refresh_token" in r.json()
@@ -195,7 +238,7 @@ def test_login_emite_refresh_token_y_registra_evento(db, client):
 
 
 def test_login_fallido_registra_evento(db, client):
-    client.post("/auth/register", json={"email": "login2@vridik.local", "password": "ClaveSegura123"})
+    client.post("/auth/register", json={"email": "login2@vridik.local", "password": "ClaveSegura123", "nombre_despacho": "Despacho de prueba"})
     r = client.post("/auth/login", json={"email": "login2@vridik.local", "password": "incorrecta"})
     assert r.status_code == 401
     assert any(e["event_type"] == "login_failed" for e in db.auth_events)
@@ -208,7 +251,7 @@ def test_login_bloqueado_tras_MAX_FALLOS_LOGIN_intentos(db, client):
     verificarla)."""
     email = "login3@vridik.local"
     password = "ClaveSegura123"
-    client.post("/auth/register", json={"email": email, "password": password})
+    client.post("/auth/register", json={"email": email, "password": password, "nombre_despacho": "Despacho de prueba"})
 
     for _ in range(MAX_FALLOS_LOGIN):
         r = client.post("/auth/login", json={"email": email, "password": "incorrecta"})
@@ -221,8 +264,8 @@ def test_login_bloqueado_tras_MAX_FALLOS_LOGIN_intentos(db, client):
 def test_login_email_distinto_no_comparte_el_limite(db, client):
     """El límite es por email+IP -- fallar 10 veces con un email no debe
     bloquear el login (correcto) de otro email desde la misma IP."""
-    client.post("/auth/register", json={"email": "login4a@vridik.local", "password": "ClaveSegura123"})
-    client.post("/auth/register", json={"email": "login4b@vridik.local", "password": "ClaveSegura123"})
+    client.post("/auth/register", json={"email": "login4a@vridik.local", "password": "ClaveSegura123", "nombre_despacho": "Despacho de prueba"})
+    client.post("/auth/register", json={"email": "login4b@vridik.local", "password": "ClaveSegura123", "nombre_despacho": "Despacho de prueba"})
 
     for _ in range(MAX_FALLOS_LOGIN):
         client.post("/auth/login", json={"email": "login4a@vridik.local", "password": "incorrecta"})
@@ -232,7 +275,7 @@ def test_login_email_distinto_no_comparte_el_limite(db, client):
 
 
 def test_refresh_rota_el_token_y_emite_access_token_nuevo(db, client):
-    reg = client.post("/auth/register", json={"email": "refresh1@vridik.local", "password": "ClaveSegura123"}).json()
+    reg = client.post("/auth/register", json={"email": "refresh1@vridik.local", "password": "ClaveSegura123", "nombre_despacho": "Despacho de prueba"}).json()
     r = client.post("/auth/refresh", json={"refresh_token": reg["refresh_token"]})
     assert r.status_code == 200, r.text
     body = r.json()
@@ -246,7 +289,7 @@ def test_refresh_token_invalido_devuelve_401(client):
 
 
 def test_reuso_de_refresh_token_revoca_toda_la_familia(db, client):
-    reg = client.post("/auth/register", json={"email": "reuso@vridik.local", "password": "ClaveSegura123"}).json()
+    reg = client.post("/auth/register", json={"email": "reuso@vridik.local", "password": "ClaveSegura123", "nombre_despacho": "Despacho de prueba"}).json()
     original = reg["refresh_token"]
 
     # Simular que ya pasó la ventana de gracia de 10s antes del reuso, para
@@ -269,7 +312,7 @@ def test_reuso_de_refresh_token_revoca_toda_la_familia(db, client):
 def test_reuso_dentro_de_la_ventana_de_gracia_no_revoca(db, client):
     """Carrera de dos pestañas: reusar el token original a los pocos
     segundos (dentro de los 10s de gracia) no debe tratarse como ataque."""
-    reg = client.post("/auth/register", json={"email": "gracia@vridik.local", "password": "ClaveSegura123"}).json()
+    reg = client.post("/auth/register", json={"email": "gracia@vridik.local", "password": "ClaveSegura123", "nombre_despacho": "Despacho de prueba"}).json()
     original = reg["refresh_token"]
 
     r1 = client.post("/auth/refresh", json={"refresh_token": original})
@@ -281,7 +324,7 @@ def test_reuso_dentro_de_la_ventana_de_gracia_no_revoca(db, client):
 
 
 def test_logout_revoca_el_refresh_token(db, client):
-    reg = client.post("/auth/register", json={"email": "logout1@vridik.local", "password": "ClaveSegura123"}).json()
+    reg = client.post("/auth/register", json={"email": "logout1@vridik.local", "password": "ClaveSegura123", "nombre_despacho": "Despacho de prueba"}).json()
 
     r = client.post("/auth/logout", json={"refresh_token": reg["refresh_token"]})
     assert r.status_code == 204
@@ -301,7 +344,7 @@ def test_logout_es_idempotente(client):
 # reset-password, que es un admin reseteando la de OTRO usuario).
 # ---------------------------------------------------------------------------
 def test_cambiar_password_ok_y_permite_login_con_la_nueva(db, client):
-    reg = client.post("/auth/register", json={"email": "cambio1@vridik.local", "password": "ClaveVieja123"}).json()
+    reg = client.post("/auth/register", json={"email": "cambio1@vridik.local", "password": "ClaveVieja123", "nombre_despacho": "Despacho de prueba"}).json()
     token = reg["access_token"]
 
     r = client.post(
@@ -323,7 +366,7 @@ def test_cambiar_password_ok_y_permite_login_con_la_nueva(db, client):
 
 
 def test_cambiar_password_actual_incorrecta_rechazado(db, client):
-    reg = client.post("/auth/register", json={"email": "cambio2@vridik.local", "password": "ClaveVieja123"}).json()
+    reg = client.post("/auth/register", json={"email": "cambio2@vridik.local", "password": "ClaveVieja123", "nombre_despacho": "Despacho de prueba"}).json()
     token = reg["access_token"]
 
     r = client.post(
@@ -339,7 +382,7 @@ def test_cambiar_password_actual_incorrecta_rechazado(db, client):
 
 
 def test_cambiar_password_revoca_todas_las_sesiones(db, client):
-    reg = client.post("/auth/register", json={"email": "cambio3@vridik.local", "password": "ClaveVieja123"}).json()
+    reg = client.post("/auth/register", json={"email": "cambio3@vridik.local", "password": "ClaveVieja123", "nombre_despacho": "Despacho de prueba"}).json()
     token = reg["access_token"]
     refresh_token_original = reg["refresh_token"]
 
@@ -355,7 +398,7 @@ def test_cambiar_password_revoca_todas_las_sesiones(db, client):
 
 
 def test_cambiar_password_nueva_muy_corta_rechazado(client):
-    reg = client.post("/auth/register", json={"email": "cambio4@vridik.local", "password": "ClaveVieja123"}).json()
+    reg = client.post("/auth/register", json={"email": "cambio4@vridik.local", "password": "ClaveVieja123", "nombre_despacho": "Despacho de prueba"}).json()
     r = client.post(
         "/auth/password",
         json={"password_actual": "ClaveVieja123", "password_nueva": "corta"},
