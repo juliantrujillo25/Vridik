@@ -108,6 +108,13 @@ export function CasoDetailPage() {
     }
   }
 
+  function onGenerarBorrador(preguntaSugerida: string) {
+    setPregunta(preguntaSugerida);
+    const campo = document.getElementById("pregunta");
+    campo?.scrollIntoView({ behavior: "smooth", block: "center" });
+    (campo as HTMLTextAreaElement | null)?.focus();
+  }
+
   async function abrirDoc(docId: string) {
     setCargandoDoc(true);
     try {
@@ -189,7 +196,7 @@ export function CasoDetailPage() {
         {perfil && <Mensajes casoId={id} miId={perfil.id} />}
       </section>
 
-      <ActuacionesYTerminos casoId={id} />
+      <ActuacionesYTerminos casoId={id} onGenerarBorrador={onGenerarBorrador} />
 
       <section className="section">
         <h2 className="section-title">Generar documento con JuliX</h2>

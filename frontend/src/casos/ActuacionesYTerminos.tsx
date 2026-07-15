@@ -18,7 +18,21 @@ function etiquetaDiasRestantes(t: Termino): string {
   return `${t.dias_restantes}d restantes`;
 }
 
-export function ActuacionesYTerminos({ casoId }: { casoId: string }) {
+function sugerenciaBorrador(a: Actuacion): string {
+  return `Redactá una respuesta a la siguiente actuación (${CATEGORIA_LABEL[a.categoria]}):\n\n${a.texto}`;
+}
+
+interface Props {
+  casoId: string;
+  /** Roadmap Fase 2: "Borrador automático vía JuliX con el expediente del
+   *  caso" -- no dispara la generación acá (eso sigue siendo una llamada
+   *  paga que el usuario confirma en el formulario existente), solo le
+   *  pasa al padre una pregunta sugerida a partir de la actuación para
+   *  precargar ese formulario. */
+  onGenerarBorrador?: (preguntaSugerida: string) => void;
+}
+
+export function ActuacionesYTerminos({ casoId, onGenerarBorrador }: Props) {
   const [actuaciones, setActuaciones] = useState<Actuacion[] | null>(null);
   const [terminos, setTerminos] = useState<Termino[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -288,6 +302,15 @@ export function ActuacionesYTerminos({ casoId }: { casoId: string }) {
                   <div className="doc-row-meta">
                     <span className="faint mono">{Math.round(a.confianza * 100)}%</span>
                     <span className="faint mono">{fechaHora(a.created_at)}</span>
+                    {onGenerarBorrador && (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        type="button"
+                        onClick={() => onGenerarBorrador(sugerenciaBorrador(a))}
+                      >
+                        Generar borrador
+                      </button>
+                    )}
                   </div>
                 </div>
               </li>
