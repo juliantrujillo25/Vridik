@@ -28,6 +28,7 @@ import pytest
 import julix.service as julix_service_module
 from julix import prompts
 from julix.client import JuliXClient
+from julix.errors import JuliXInvalidFormatError
 from julix.context_builder import (
     ContextBudget,
     RankedChunk,
@@ -81,6 +82,41 @@ def test_prompts_carga_laboral_consulta_enfocado_en_cst():
     assert prompt.tarea == "laboral_consulta"
     assert prompt.archivo == "v2_laboral_consulta.md"
     assert "CST" in prompt.contenido
+
+
+# ---------------------------------------------------------------------------
+# validar_json (bug real de producción, 15-jul-2026: ver julix/client.py)
+# ---------------------------------------------------------------------------
+def test_validar_json_acepta_json_plano_sin_envoltorio():
+    assert JuliXClient.validar_json('{"categoria": "otro", "confianza": 0.5}') == {
+        "categoria": "otro", "confianza": 0.5,
+    }
+
+
+def test_validar_json_pela_code_fence_con_etiqueta_json():
+    texto = '```json\n{"categoria": "auto_admisorio", "confianza": 0.91}\n```'
+    assert JuliXClient.validar_json(texto) == {"categoria": "auto_admisorio", "confianza": 0.91}
+
+
+def test_validar_json_pela_code_fence_sin_etiqueta():
+    texto = '```\n{"categoria": "fallo", "confianza": 0.8}\n```'
+    assert JuliXClient.validar_json(texto) == {"categoria": "fallo", "confianza": 0.8}
+
+
+def test_validar_json_json_realmente_invalido_sigue_fallando():
+    """El fence-stripping no disfraza un JSON de verdad roto -- solo pela
+    el envoltorio de markdown, nunca corrige el contenido."""
+    with pytest.raises(JuliXInvalidFormatError):
+        JuliXClient.validar_json("esto no es JSON en absoluto")
+
+
+def test_validar_json_conserva_el_texto_original_en_el_error():
+    """partial_text del error es el texto CRUDO (con fences y todo), para
+    que quede completo si alguna vez se audita -- no la versión pelada."""
+    texto = "```json\nesto sigue sin ser json\n```"
+    with pytest.raises(JuliXInvalidFormatError) as exc_info:
+        JuliXClient.validar_json(texto)
+    assert exc_info.value.partial_text == texto
 
 
 # ---------------------------------------------------------------------------

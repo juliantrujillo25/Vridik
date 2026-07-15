@@ -63,6 +63,21 @@ async def test_clasificar_actuacion_registra_en_el_ledger():
 
 
 @pytest.mark.asyncio
+async def test_clasificar_actuacion_tolera_json_envuelto_en_code_fence():
+    """Bug real de producción (15-jul-2026): Claude Haiku envolvió la
+    respuesta en ```json ... ``` a pesar de que el prompt pide "solo el
+    JSON, sin texto alrededor" -- json.loads() crudo fallaba con
+    "Expecting value: line 1 column 1" en el 100% de las clasificaciones
+    reales. Ver julix/client.py::validar_json (fix real, no solo el test)."""
+    client, _ = _cliente_con_respuesta('```json\n{"categoria": "traslado", "confianza": 0.88}\n```')
+
+    resultado = await clasificar_actuacion(client, texto_actuacion="texto de prueba", user_id="user-1")
+
+    assert resultado.categoria == "traslado"
+    assert resultado.confianza == pytest.approx(0.88)
+
+
+@pytest.mark.asyncio
 async def test_clasificar_actuacion_rechaza_json_invalido():
     client, _ = _cliente_con_respuesta("esto no es JSON")
 

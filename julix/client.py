@@ -29,6 +29,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 
@@ -111,6 +112,10 @@ MAX_TOKENS_BY_TASK: dict[str, int] = {
 REQUEST_TIMEOUT_SECONDS = 30.0
 MAX_RETRIES = 3
 BACKOFF_BASE_SECONDS = 2
+
+# Envoltorio de markdown code fence (```json ... ``` o ``` ... ```) que
+# Claude agrega con frecuencia en salidas "solo JSON" -- ver validar_json().
+_MARCADOR_CODE_FENCE = re.compile(r"^```(?:json)?\s*\n?|\n?```$", re.IGNORECASE)
 
 
 def _resolve_api_key(environment: str) -> str:
@@ -307,9 +312,18 @@ class JuliXClient:
     @staticmethod
     def validar_json(texto: str) -> dict:
         """Helper para tareas de clasificación (S4/Fase 2): valida que la
-        salida sea el JSON esperado. Nunca corrige en silencio — si el
-        formato es inválido, se marca y se propaga (ver errors.py)."""
+        salida sea el JSON esperado. Nunca corrige en silencio EL CONTENIDO
+        (una categoría inventada, por ejemplo, sigue rechazándose tal cual
+        en el llamador) -- pero sí tolera el envoltorio de code fence
+        (```json ... ```) que Claude agrega con frecuencia incluso cuando
+        el prompt pide explícitamente "solo el JSON, sin texto alrededor"
+        (confirmado en producción, 15-jul-2026: clasificación de
+        actuaciones fallaba 100% de las veces con "Expecting value: line 1
+        column 1" -- el output_tokens del ledger no era cero, el JSON
+        estaba ahí, solo envuelto en backticks que json.loads() no puede
+        interpretar como el inicio de un valor)."""
+        candidato = _MARCADOR_CODE_FENCE.sub("", texto.strip()).strip()
         try:
-            return json.loads(texto)
+            return json.loads(candidato)
         except json.JSONDecodeError as exc:
             raise JuliXInvalidFormatError(f"Salida no es JSON válido: {exc}", partial_text=texto) from exc
