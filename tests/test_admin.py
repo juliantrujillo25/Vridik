@@ -64,15 +64,8 @@ class _FakeAdminDB:
         if q.startswith("INSERT INTO user_credentials"):
             user_id, password_hash, *_resto = args
             self.user_credentials[user_id] = {"user_id": user_id, "password_hash": password_hash}
-        elif q.startswith("INSERT INTO auth_events"):
-            # core/admin_users.py tiene su propia _registrar_evento() (4
-            # columnas, sin ip_address/user_agent) separada de
-            # core/auth_events.py::registrar_evento() (6 columnas) -- este
-            # fake atiende a los dos llamadores según cuántos args mandaron.
-            user_id, actor_id, event_type, metadata = args[:4]
-            self.auth_events.append(
-                {"user_id": user_id, "actor_id": actor_id, "event_type": event_type, "metadata": metadata},
-            )
+        elif q.startswith("SELECT pg_advisory_xact_lock"):
+            pass  # advisory lock real (concurrencia de la bitácora) -- no-op en el fake
         elif q.startswith("UPDATE users SET hashed_password"):
             user_id, password_hash = args
             self.users[user_id]["hashed_password"] = password_hash
@@ -86,6 +79,20 @@ class _FakeAdminDB:
 
     async def fetchrow(self, query: str, *args):
         q = query.strip()
+        if q.startswith("INSERT INTO auth_events"):
+            user_id, actor_id, event_type, metadata, ip_address, user_agent, created_at, hash_anterior, hash_actual = args
+            evento_id = len(self.auth_events) + 1
+            evento = {
+                "id": evento_id, "user_id": user_id, "actor_id": actor_id, "event_type": event_type,
+                "metadata": metadata, "ip_address": ip_address, "user_agent": user_agent,
+                "created_at": created_at, "hash_anterior": hash_anterior, "hash_actual": hash_actual,
+            }
+            self.auth_events.append(evento)
+            return dict(evento)
+        if q == "SELECT hash_actual FROM auth_events ORDER BY id DESC LIMIT 1":
+            if not self.auth_events:
+                return None
+            return {"hash_actual": self.auth_events[-1]["hash_actual"]}
         if "SELECT id, email, role FROM users WHERE id" in q:
             (user_id,) = args
             u = self.users.get(user_id)

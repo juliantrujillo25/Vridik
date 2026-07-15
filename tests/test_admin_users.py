@@ -81,6 +81,28 @@ class FakeAdminDB:
                 return None
             return {"id": user_id}
 
+        if query.strip().startswith("INSERT INTO auth_events"):
+            user_id, actor_id, event_type, metadata, ip_address, user_agent, _created_at, hash_anterior, hash_actual = args
+            self._contador_evento = getattr(self, "_contador_evento", 0) + 1
+            evento = {
+                # created_at propio, estrictamente creciente por inserción --
+                # el datetime.now() real que manda registrar_evento() puede
+                # empatar entre dos eventos muy seguidos (resolución de
+                # reloj), lo que volvía no determinístico el orden "más
+                # reciente primero" que prueban estos tests.
+                "id": self._contador_evento, "user_id": user_id, "actor_id": actor_id,
+                "event_type": event_type, "metadata": metadata, "ip_address": ip_address,
+                "user_agent": user_agent, "created_at": self._contador_evento,
+                "hash_anterior": hash_anterior, "hash_actual": hash_actual,
+            }
+            self.auth_events.append(evento)
+            return dict(evento)
+
+        if query.strip() == "SELECT hash_actual FROM auth_events ORDER BY id DESC LIMIT 1":
+            if not self.auth_events:
+                return None
+            return {"hash_actual": self.auth_events[-1]["hash_actual"]}
+
         raise AssertionError(f"fetchrow no manejado en el fake: {query!r} args={args}")
 
     async def fetch(self, query: str, *args):
@@ -113,14 +135,8 @@ class FakeAdminDB:
                 "password_hash": password_hash, "hash_algorithm": "bcrypt",
                 "is_temporary": True, "updated_by": actor_id,
             }
-        elif "INSERT INTO auth_events" in query:
-            user_id, actor_id, event_type, metadata = args
-            self._contador_evento = getattr(self, "_contador_evento", 0) + 1
-            self.auth_events.append({
-                "id": self._contador_evento, "user_id": user_id, "actor_id": actor_id,
-                "event_type": event_type, "metadata": metadata,
-                "ip_address": None, "user_agent": None, "created_at": self._contador_evento,
-            })
+        elif query.strip().startswith("SELECT pg_advisory_xact_lock"):
+            pass  # advisory lock real (concurrencia de la bitácora) -- no-op en el fake
         elif "UPDATE users SET nombre_completo" in query:
             user_id, nombre_completo = args
             self.users[user_id]["nombre_completo"] = nombre_completo

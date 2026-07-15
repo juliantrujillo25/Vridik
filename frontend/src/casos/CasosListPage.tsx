@@ -6,6 +6,7 @@ import type { Caso, MessageNewEvent, Termino, TerminoAlertaEvent } from "../api/
 import { useAuth } from "../auth/AuthContext";
 import { EstadoPill, fechaCorta, type SemaforoColor } from "../ui";
 import { AhorroWidget } from "./AhorroWidget";
+import { NotificacionesWidget } from "./NotificacionesWidget";
 
 /** Solo vale la pena mostrar un badge en el dashboard cuando hay algo que
  *  amerita atención (roadmap Fase 2: "semáforo de vencimientos calculados
@@ -126,6 +127,7 @@ export function CasosListPage() {
       </div>
 
       {perfil?.role === "cliente" && <AhorroWidget />}
+      {perfil && <NotificacionesWidget />}
 
       {error && <div className="alert error" role="alert">{error}</div>}
 

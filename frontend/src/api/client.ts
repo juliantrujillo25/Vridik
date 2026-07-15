@@ -22,8 +22,10 @@ import type {
   EstadoCaso,
   EstadoTermino,
   EventoSSE,
+  IntegridadBitacora,
   LoginResponse,
   Mensaje,
+  Notificacion,
   Perfil,
   RegenerarCodigosResponse,
   ResetPasswordResult,
@@ -419,6 +421,20 @@ class ApiClient {
    *  abogado/admin. */
   resumenAhorro(): Promise<ResumenAhorro> {
     return this.request("/cobro/ahorro");
+  }
+
+  // --- Fase 3: bitácora sellada (hash encadenado + acuse) -------------------
+  misNotificaciones(): Promise<Notificacion[]> {
+    return this.request("/bitacora/mis-notificaciones");
+  }
+
+  confirmarAcuse(eventoId: number): Promise<Notificacion> {
+    return this.request(`/bitacora/eventos/${eventoId}/acuse`, { method: "POST" });
+  }
+
+  /** Solo admin (lo exige el backend). */
+  verificarBitacora(): Promise<IntegridadBitacora> {
+    return this.request("/bitacora/verificar");
   }
 
   // --- eventos en vivo (SSE, roadmap S11 Fase C) ---------------------------

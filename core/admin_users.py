@@ -38,10 +38,11 @@ pruebas unitarias sobre un fake de conexión (ver tests/test_admin_users.py).
 
 from __future__ import annotations
 
-import json
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+
+from core.auth_events import registrar_evento as _registrar_evento
 
 try:
     import bcrypt
@@ -97,18 +98,6 @@ def generar_password_temporal() -> str:
 def _hash_password(password_plain: str) -> str:
     _requiere_bcrypt()
     return bcrypt.hashpw(password_plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-
-async def _registrar_evento(
-    conn, *, user_id: str | None, actor_id: str | None, event_type: str, metadata: dict | None = None
-) -> None:
-    await conn.execute(
-        """
-        INSERT INTO auth_events (user_id, actor_id, event_type, metadata)
-        VALUES ($1, $2, $3, $4::jsonb)
-        """,
-        user_id, actor_id, event_type, json.dumps(metadata or {}),
-    )
 
 
 async def _revocar_refresh_tokens(conn, *, user_id: str, motivo: str) -> None:

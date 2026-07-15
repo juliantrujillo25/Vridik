@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from api.admin_endpoint import get_current_user
 from api.auth_endpoint import _get_db
 from core.actuaciones import ensure_actuaciones_table, insert_actuacion, list_actuaciones
+from core.auth_events import ensure_bitacora_hash_chain, registrar_evento
 from core.case import ensure_casos_table, get_caso
 from core.events import notificar_evento
 from julix.client import JuliXClient
@@ -63,6 +64,7 @@ async def _caso_con_acceso(conn, caso_id: str, current: dict) -> dict:
 async def _preparar(conn) -> None:
     await ensure_casos_table(conn)
     await ensure_actuaciones_table(conn)
+    await ensure_bitacora_hash_chain(conn)
 
 
 @router.post("/casos/{caso_id}/actuaciones", status_code=201)
@@ -93,6 +95,16 @@ async def crear_actuacion_endpoint(
         await notificar_evento(
             conn, user_id=user_id, tipo="actuacion.nueva",
             payload={"caso_id": caso_id, "actuacion_id": actuacion["id"], "categoria": actuacion["categoria"]},
+        )
+        # Fase 3: además del aviso en vivo por SSE (arriba, se pierde si
+        # nadie está conectado en ese momento), deja un registro SELLADO
+        # y encadenado en la bitácora -- es lo que el cliente puede
+        # confirmar después con /bitacora/eventos/{id}/acuse, y lo que
+        # queda como prueba de que se le notificó, aunque nunca haya
+        # estado con la app abierta.
+        await registrar_evento(
+            conn, event_type="actuacion_notificada", user_id=user_id, actor_id=autor_id,
+            metadata={"caso_id": caso_id, "actuacion_id": actuacion["id"], "categoria": actuacion["categoria"]},
         )
 
     return actuacion

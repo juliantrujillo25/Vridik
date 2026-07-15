@@ -25,7 +25,6 @@ Vridik (FastAPI) en la implementación final.
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 from typing import Awaitable, Callable
@@ -34,6 +33,8 @@ try:
     import bcrypt
 except ImportError:  # pragma: no cover
     bcrypt = None  # type: ignore
+
+from core.auth_events import registrar_evento
 
 
 def use_postgres() -> bool:
@@ -122,12 +123,9 @@ async def _registrar_legacy_fallback(conn, *, username: str, motivo_postgres: st
     """Deja constancia en auth_events de que se usó el camino legacy mientras
     USE_POSTGRES=true. Esta es la métrica que decide el corte de S1: cuando
     pasan 48h sin filas nuevas de este tipo, se apaga el fallback."""
-    await conn.execute(
-        """
-        INSERT INTO auth_events (user_id, actor_id, event_type, metadata)
-        VALUES (NULL, NULL, 'legacy_fallback', $1::jsonb)
-        """,
-        json.dumps({"legacy_username": username, "motivo_postgres": motivo_postgres}),
+    await registrar_evento(
+        conn, event_type="legacy_fallback",
+        metadata={"legacy_username": username, "motivo_postgres": motivo_postgres},
     )
 
 

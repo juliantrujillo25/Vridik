@@ -51,9 +51,11 @@ from api.case_documents_endpoint import router as case_documents_router
 from api.casos_endpoint import router as casos_router
 from api.cobro_endpoint import router as cobro_router
 from api.events_endpoint import router as events_router
+from api.bitacora_endpoint import router as bitacora_router
 from api.mensajes_endpoint import router as mensajes_router
 from api.terminos_endpoint import router as terminos_router
 from core.auth import ensure_auth_migration_005
+from core.auth_events import ensure_bitacora_hash_chain
 from core.terminos import ensure_terminos_table
 from procesal.alertas_terminos import ejecutar_ronda_de_alertas
 
@@ -108,6 +110,10 @@ app.include_router(terminos_router)
 # decisión de negocio que la ingesta de actuaciones de Fase 2.
 app.include_router(cobro_router)
 
+# Fase 3: bitácora sellada de notificaciones con acuse -- crece sobre
+# auth_events + hash encadenado (ver core/auth_events.py).
+app.include_router(bitacora_router)
+
 
 @app.on_event("startup")
 async def _conectar_db() -> None:
@@ -149,6 +155,20 @@ async def _conectar_db() -> None:
                 "Vridik: no se pudo aplicar el bootstrap de migrations/005_auth_roles_refresh_tokens.sql "
                 "al arrancar -- si las tablas refresh_tokens/auth_events/user_credentials ya existen "
                 "(caso esperado en producción hoy) esto no afecta nada; si no existen, auth va a fallar.",
+                exc_info=True,
+            )
+
+        # Fase 3: hash chain de la bitácora sellada (core/auth_events.py) --
+        # migración aditiva (dos columnas nuevas), misma lógica de "una
+        # sola vez al arrancar" que la migración 005 de arriba: agregar
+        # dos ALTER TABLE al camino de cada login/logout no vale la pena.
+        try:
+            async with app.state.db_connection.acquire() as conn:
+                await ensure_bitacora_hash_chain(conn)
+        except Exception:
+            logger.critical(
+                "Vridik: no se pudo aplicar el bootstrap del hash chain de auth_events al arrancar -- "
+                "si las columnas hash_anterior/hash_actual ya existen esto no afecta nada.",
                 exc_info=True,
             )
 

@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, SesionExpiradaError } from "../api/client";
-import type { AdminUser, AuthEvent, CostosResponse, Role } from "../api/types";
+import type { AdminUser, AuthEvent, CostosResponse, IntegridadBitacora, Role } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { fechaHora } from "../ui";
 
@@ -31,6 +31,10 @@ export function AdminPage() {
 
   const [costos, setCostos] = useState<CostosResponse | null>(null);
   const [errorCostos, setErrorCostos] = useState<string | null>(null);
+
+  const [integridad, setIntegridad] = useState<IntegridadBitacora | null>(null);
+  const [verificando, setVerificando] = useState(false);
+  const [errorIntegridad, setErrorIntegridad] = useState<string | null>(null);
 
   function manejarError(err: unknown, fallback: string) {
     if (err instanceof SesionExpiradaError) return navigate("/login", { replace: true });
@@ -66,6 +70,19 @@ export function AdminPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfil?.role]);
+
+  async function onVerificarIntegridad() {
+    setVerificando(true);
+    setErrorIntegridad(null);
+    try {
+      setIntegridad(await api.verificarBitacora());
+    } catch (err) {
+      if (err instanceof SesionExpiradaError) return navigate("/login", { replace: true });
+      setErrorIntegridad(err instanceof Error ? err.message : "No se pudo verificar la bitácora.");
+    } finally {
+      setVerificando(false);
+    }
+  }
 
   async function onCargarMas() {
     setCargandoMas(true);
@@ -185,6 +202,23 @@ export function AdminPage() {
           )}
         </div>
       )}
+
+      <div className="card bitacora-widget">
+        <div className="bitacora-widget-head">
+          <span className="section-title bitacora-widget-title">Bitácora sellada (hash encadenado)</span>
+          <button className="btn btn-ghost btn-sm" onClick={onVerificarIntegridad} disabled={verificando}>
+            {verificando ? "Verificando…" : "Verificar integridad"}
+          </button>
+        </div>
+        {errorIntegridad && <div className="alert error" role="alert">{errorIntegridad}</div>}
+        {integridad && (
+          <p className={`bitacora-resultado ${integridad.integra ? "bitacora-ok" : "bitacora-rota"}`}>
+            {integridad.integra
+              ? `Íntegra -- ${integridad.total_verificados} eventos verificados, sin alteraciones.`
+              : `ALTERADA -- la cadena se rompe en el evento #${integridad.primera_ruptura_id}.`}
+          </p>
+        )}
+      </div>
 
       {error && <div className="alert error" role="alert">{error}</div>}
 

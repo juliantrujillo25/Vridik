@@ -317,6 +317,31 @@
 .ahorro-widget-monto { font-size: 1.4rem; font-weight: 700; color: var(--good); }
 .ahorro-widget-nota { margin: 0; font-size: 0.85rem; }
 
+/* --- notificaciones con acuse (Fase 3, bitácora sellada) --- */
+.notificaciones-widget { padding: 1.1rem 1.3rem; display: flex; flex-direction: column; gap: 0.8rem; margin-bottom: 1.4rem; }
+.notificaciones-widget-title { margin: 0; padding: 0; border: none; }
+.notificaciones-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.notificaciones-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--hair);
+}
+.notificaciones-row:last-child { border-bottom: none; padding-bottom: 0; }
+.notificaciones-row-main { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.9rem; }
+.notificaciones-row-actions { display: flex; align-items: center; gap: 0.5rem; }
+
+/* --- bitácora sellada, panel admin (Fase 3) --- */
+.bitacora-widget { padding: 1.1rem 1.3rem; display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 1.4rem; }
+.bitacora-widget-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.bitacora-widget-title { margin: 0; padding: 0; border: none; }
+.bitacora-resultado { margin: 0; font-size: 0.88rem; }
+.bitacora-ok { color: var(--good); }
+.bitacora-rota { color: var(--danger); font-weight: 600; }
+
 /* --- panel admin --- */
 .costos-widget { padding: 1.1rem 1.3rem; display: flex; flex-direction: column; gap: 0.7rem; margin-bottom: 1.4rem; }
 .costos-widget-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }

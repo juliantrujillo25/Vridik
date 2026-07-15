@@ -237,3 +237,20 @@ export interface ResumenAhorro {
   total_honorarios_liquidados: number;
   ahorro_generado: number;
 }
+
+// --- Fase 3: bitácora sellada (hash encadenado + acuse) -------------------
+// GET /bitacora/mis-notificaciones
+export interface Notificacion {
+  id: number;
+  event_type: string;
+  metadata: { caso_id?: string; actuacion_id?: string; categoria?: string; [key: string]: unknown };
+  created_at: string;
+  acuse_en: string | null;
+}
+
+// GET /bitacora/verificar (admin) -- integridad del hash chain completo.
+export interface IntegridadBitacora {
+  integra: boolean;
+  total_verificados: number;
+  primera_ruptura_id: number | null;
+}
