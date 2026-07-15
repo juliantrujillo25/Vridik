@@ -39,8 +39,7 @@ pruebas unitarias sobre un fake de conexión (ver tests/test_admin_users.py).
 from __future__ import annotations
 
 import secrets
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
 
 from core.auth_events import registrar_evento as _registrar_evento
 
