@@ -55,7 +55,13 @@ class LocalStorageBackend(ObjectStorageBackend):
     entregas anteriores): el PDF ya está en disco local
     (`PDF_WORKER_OUTPUT_DIR`) y `pdf_url` es simplemente esa ruta local —
     suficiente para un único servicio API sirviendo el archivo, no para
-    múltiples réplicas (ver nota de S11-extra-6/7/8)."""
+    múltiples réplicas (ver nota de S11-extra-6/7/8).
+
+    Esa ruta cruda NUNCA se expone directo al navegador (ver
+    api/case_documents_endpoint.py::descargar_pdf_de_documento) -- exponerla
+    por HTTP sin control de acceso sería servir documentos legales
+    potencialmente confidenciales a quien tenga la URL, sin el mismo
+    chequeo de ownership que protege el resto de `case_documents`."""
 
     async def upload_pdf(self, ruta_local: Path, *, key: str) -> str:
         return str(ruta_local)

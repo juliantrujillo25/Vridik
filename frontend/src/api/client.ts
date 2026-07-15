@@ -128,6 +128,21 @@ class ApiClient {
     return this.parse<T>(resp);
   }
 
+  /** Igual que request(), pero para binarios (PDF) -- nunca intenta
+   *  JSON.parse() sobre la respuesta. Mismo criterio de auth que todo lo
+   *  demás: el PDF nunca se sirve por un link público sin token (ver
+   *  api/case_documents_endpoint.py::descargar_pdf_de_documento). */
+  private async requestBlob(path: string): Promise<Blob> {
+    let resp = await this.raw(path, {}, true);
+    if (resp.status === 401 && this.refreshToken) {
+      const ok = await this.renovar();
+      if (!ok) throw new SesionExpiradaError();
+      resp = await this.raw(path, {}, true);
+    }
+    if (!resp.ok) throw new ApiError(resp.status, `Error ${resp.status}`);
+    return resp.blob();
+  }
+
   /** Comparte una única renovación entre requests concurrentes que fallen 401. */
   private async renovar(): Promise<boolean> {
     if (!this.refreshEnCurso) {
@@ -251,6 +266,10 @@ class ApiClient {
 
   getDocumento(casoId: string, docId: string): Promise<CaseDocument> {
     return this.request(`/casos/${casoId}/documents/${docId}`);
+  }
+
+  descargarPdf(casoId: string, docId: string): Promise<Blob> {
+    return this.requestBlob(`/casos/${casoId}/documents/${docId}/pdf`);
   }
 
   /** OJO: dispara una llamada real a Anthropic (cuesta dinero) y puede

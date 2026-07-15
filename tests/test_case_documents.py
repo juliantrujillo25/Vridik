@@ -87,6 +87,19 @@ class _FakeCaseDocumentsDB:
             return [{k: v for k, v in f.items() if k != "contenido"} for f in filas]
         return []
 
+    def seed_document(
+        self, *, caso_id: str, created_by: str, tarea: str = "tarea", pregunta: str = "pregunta",
+        contenido: str = "contenido", pdf_url: str | None = None,
+    ) -> dict:
+        doc_id = str(uuid.uuid4())
+        documento = {
+            "id": doc_id, "caso_id": caso_id, "created_by": created_by, "tarea": tarea,
+            "pregunta": pregunta, "contenido": contenido, "pdf_url": pdf_url,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }
+        self.case_documents[doc_id] = documento
+        return documento
+
 
 class _FakeJuliXServiceOK:
     def __init__(self, **kwargs):
@@ -195,3 +208,81 @@ def test_caso_not_found_returns_404(cd_db, cd_client):
         f"/casos/{uuid.uuid4()}/documents", json={"pregunta": "texto"}, headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET .../pdf -- bug real de producción (15-jul-2026): pdf_url del backend
+# local es una ruta de filesystem del contenedor, nunca una URL pública sin
+# auth (ver storage/object_storage.py). Esta ruta exige el mismo ownership
+# que el resto del router y sirve/redirige según corresponda.
+# ---------------------------------------------------------------------------
+def test_descargar_pdf_backend_local_sirve_el_archivo(cd_db, cd_client, tmp_path):
+    cliente = cd_db.seed_user(email="cliente_pdf1@vridik.local")
+    caso = cd_db.seed_caso(cliente_id=cliente["id"])
+    ruta_pdf = tmp_path / "documento.pdf"
+    ruta_pdf.write_bytes(b"%PDF-fake-content")
+    documento = cd_db.seed_document(caso_id=caso["id"], created_by=cliente["id"], pdf_url=str(ruta_pdf))
+    token = _token_de(cliente)
+
+    r = cd_client.get(
+        f"/casos/{caso['id']}/documents/{documento['id']}/pdf", headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/pdf"
+    assert r.content == b"%PDF-fake-content"
+
+
+def test_descargar_pdf_backend_s3_redirige_a_la_url_real(cd_db, cd_client):
+    cliente = cd_db.seed_user(email="cliente_pdf2@vridik.local")
+    caso = cd_db.seed_caso(cliente_id=cliente["id"])
+    url_s3 = "https://vridik-pdfs.s3.amazonaws.com/documento.pdf?signed=1"
+    documento = cd_db.seed_document(caso_id=caso["id"], created_by=cliente["id"], pdf_url=url_s3)
+    token = _token_de(cliente)
+
+    r = cd_client.get(
+        f"/casos/{caso['id']}/documents/{documento['id']}/pdf",
+        headers={"Authorization": f"Bearer {token}"}, follow_redirects=False,
+    )
+    assert r.status_code in (302, 307)
+    assert r.headers["location"] == url_s3
+
+
+def test_descargar_pdf_archivo_perdido_por_almacenamiento_efimero_da_404(cd_db, cd_client):
+    cliente = cd_db.seed_user(email="cliente_pdf3@vridik.local")
+    caso = cd_db.seed_caso(cliente_id=cliente["id"])
+    documento = cd_db.seed_document(
+        caso_id=caso["id"], created_by=cliente["id"], pdf_url="/tmp/vridik-pdf-jobs/ya-no-existe.pdf",
+    )
+    token = _token_de(cliente)
+
+    r = cd_client.get(
+        f"/casos/{caso['id']}/documents/{documento['id']}/pdf", headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 404
+
+
+def test_descargar_pdf_documento_sin_pdf_da_404(cd_db, cd_client):
+    cliente = cd_db.seed_user(email="cliente_pdf4@vridik.local")
+    caso = cd_db.seed_caso(cliente_id=cliente["id"])
+    documento = cd_db.seed_document(caso_id=caso["id"], created_by=cliente["id"], pdf_url=None)
+    token = _token_de(cliente)
+
+    r = cd_client.get(
+        f"/casos/{caso['id']}/documents/{documento['id']}/pdf", headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 404
+
+
+def test_descargar_pdf_usuario_sin_relacion_al_caso_forbidden(cd_db, cd_client, tmp_path):
+    cliente = cd_db.seed_user(email="cliente_pdf5@vridik.local")
+    otro = cd_db.seed_user(email="otro_pdf5@vridik.local")
+    caso = cd_db.seed_caso(cliente_id=cliente["id"])
+    ruta_pdf = tmp_path / "documento.pdf"
+    ruta_pdf.write_bytes(b"%PDF-fake")
+    documento = cd_db.seed_document(caso_id=caso["id"], created_by=cliente["id"], pdf_url=str(ruta_pdf))
+    token = _token_de(otro)
+
+    r = cd_client.get(
+        f"/casos/{caso['id']}/documents/{documento['id']}/pdf", headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403

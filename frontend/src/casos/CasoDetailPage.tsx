@@ -28,6 +28,7 @@ export function CasoDetailPage() {
   // visor de documento
   const [docAbierto, setDocAbierto] = useState<CaseDocument | null>(null);
   const [cargandoDoc, setCargandoDoc] = useState(false);
+  const [descargandoPdf, setDescargandoPdf] = useState(false);
 
   function manejarError(err: unknown, fallback: string) {
     if (err instanceof SesionExpiradaError) {
@@ -123,6 +124,27 @@ export function CasoDetailPage() {
       manejarError(err, "No se pudo abrir el documento.");
     } finally {
       setCargandoDoc(false);
+    }
+  }
+
+  /** El PDF nunca es un link público directo (ver
+   *  api/case_documents_endpoint.py::descargar_pdf_de_documento) -- hay que
+   *  pedirlo autenticado y abrirlo como blob. Se abre una pestaña en blanco
+   *  DE FORMA SÍNCRONA en el click (antes del await) porque los bloqueadores
+   *  de pop-ups dejan pasar `window.open` solo si ocurre directo en el gesto
+   *  del usuario; recién cuando el blob está listo se le asigna la URL. */
+  async function onAbrirPdf(docId: string) {
+    const pestaña = window.open("", "_blank");
+    setDescargandoPdf(true);
+    try {
+      const blob = await api.descargarPdf(id, docId);
+      const url = URL.createObjectURL(blob);
+      if (pestaña) pestaña.location.href = url;
+    } catch (err) {
+      pestaña?.close();
+      manejarError(err, "No se pudo abrir el PDF.");
+    } finally {
+      setDescargandoPdf(false);
     }
   }
 
@@ -280,9 +302,15 @@ export function CasoDetailPage() {
               })()
             )}
             {docAbierto.pdf_url && (
-              <a className="btn btn-ghost btn-sm doc-pdf-link" href={docAbierto.pdf_url} target="_blank" rel="noreferrer">
-                Abrir PDF
-              </a>
+              <button
+                className="btn btn-ghost btn-sm doc-pdf-link"
+                type="button"
+                disabled={descargandoPdf}
+                onClick={() => onAbrirPdf(docAbierto.id)}
+              >
+                {descargandoPdf ? <span className="spinner" /> : null}
+                {descargandoPdf ? "Abriendo…" : "Abrir PDF"}
+              </button>
             )}
           </div>
         </div>

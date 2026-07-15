@@ -30,6 +30,7 @@ import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from api.admin_endpoint import get_current_user
@@ -158,3 +159,42 @@ async def detalle_documento_de_caso(
     if documento is None or str(documento["caso_id"]) != caso_id:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
     return documento
+
+
+@router.get("/casos/{caso_id}/documents/{document_id}/pdf")
+async def descargar_pdf_de_documento(
+    caso_id: str, document_id: str, request: Request, current: dict = Depends(get_current_user),
+):
+    """Bug real de producción (15-jul-2026): con OBJECT_STORAGE_BACKEND=local
+    (default), `pdf_url` es una ruta de filesystem del CONTENEDOR, no una URL
+    que el navegador pueda abrir directo -- el intento original de arreglarlo
+    exponiendo esa carpeta por un mount público sin auth se descartó (sería
+    servir documentos legales potencialmente confidenciales a quien tuviera
+    la URL, sin el mismo control de acceso que protege el resto de
+    case_documents). Esta ruta exige el mismo ownership que el resto del
+    router y sirve el archivo desde acá -- el frontend la pide con
+    fetch+Authorization (api.descargarPdf), nunca como link público directo.
+
+    Con el backend S3 (no activado hoy en producción, ver storage/
+    object_storage.py), `pdf_url` YA es una URL http(s) real (firmada o
+    pública) -- ahí alcanza con redirigir."""
+    conn = _get_db(request)
+    await ensure_casos_table(conn)
+    await ensure_case_documents_table(conn)
+    caso = await _caso_o_404(conn, caso_id)
+    _exige_acceso_a_caso(caso, current)
+
+    documento = await get_case_document(conn, document_id)
+    if documento is None or str(documento["caso_id"]) != caso_id or not documento["pdf_url"]:
+        raise HTTPException(status_code=404, detail="PDF no encontrado")
+
+    pdf_url = documento["pdf_url"]
+    if pdf_url.startswith("http://") or pdf_url.startswith("https://"):
+        return RedirectResponse(pdf_url)
+
+    ruta = Path(pdf_url)
+    if not ruta.is_file():
+        # Almacenamiento efímero del backend local (ver storage/object_storage.py)
+        # -- el archivo se pierde en cada redeploy del contenedor.
+        raise HTTPException(status_code=404, detail="El PDF ya no está disponible (almacenamiento efímero)")
+    return FileResponse(ruta, media_type="application/pdf", filename=f"{documento['tarea']}.pdf")
