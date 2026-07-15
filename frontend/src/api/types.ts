@@ -81,8 +81,17 @@ export interface Mensaje {
   autor_id: string;
   texto: string;
   adjunto_url: string | null;
+  adjunto_nombre: string | null;
   borrado: boolean;
   created_at: string;
+}
+
+// POST /casos/{id}/mensajes/adjuntos -- adjunto_url NUNCA es un link
+// público (ver api/mensajes_endpoint.py::descargar_adjunto_endpoint), se
+// pasa tal cual a POST /mensajes y se descarga autenticado después.
+export interface AdjuntoSubido {
+  adjunto_url: string;
+  adjunto_nombre: string;
 }
 
 // GET /api/events/stream (SSE) -- cada evento trae al menos id/type; el

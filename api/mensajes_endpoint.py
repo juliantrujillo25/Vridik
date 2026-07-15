@@ -29,7 +29,12 @@ DELETE /casos/{caso_id}/mensajes/{id}            soft delete -- solo el
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+import os
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from api.admin_endpoint import get_current_user
@@ -40,6 +45,7 @@ from core.mensajes import (
     borrar_mensaje,
     crear_mensaje,
     ensure_mensajes_tables,
+    get_mensaje,
     get_or_create_conversacion,
     listar_mensajes,
     marcar_leido,
@@ -48,10 +54,22 @@ from core.mensajes import (
 
 router = APIRouter(tags=["mensajes"])
 
+# Adjuntos de mensajes (roadmap S11: "Chat interno con adjuntos") -- mismo
+# almacenamiento efímero que storage/object_storage.py backend "local"
+# (se pierde en cada redeploy del contenedor; no se reusa esa clase porque
+# está nombrada/pensada específicamente para PDFs de JuliX -- acá el
+# archivo lo sube el usuario directo, sin pasar por generación de JuliX).
+DIRECTORIO_ADJUNTOS = Path(os.environ.get("MENSAJES_ADJUNTOS_DIR", "/tmp/vridik-mensajes-adjuntos"))
+TAMANO_MAXIMO_ADJUNTO_BYTES = 10 * 1024 * 1024  # 10 MB
+EXTENSIONES_PERMITIDAS = frozenset({
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".txt",
+})
+
 
 class CrearMensajeRequest(BaseModel):
     texto: str = Field(..., min_length=1)
     adjunto_url: str | None = None
+    adjunto_nombre: str | None = None
 
 
 def _exige_acceso_a_caso(caso: dict, current: dict) -> None:
@@ -88,7 +106,7 @@ async def crear_mensaje_endpoint(
     conversacion = await get_or_create_conversacion(conn, caso_id=caso_id)
     mensaje = await crear_mensaje(
         conn, conversacion_id=conversacion["id"], autor_id=str(current["id"]),
-        texto=payload.texto, adjunto_url=payload.adjunto_url,
+        texto=payload.texto, adjunto_url=payload.adjunto_url, adjunto_nombre=payload.adjunto_nombre,
     )
 
     autor_id = str(current["id"])
@@ -152,3 +170,75 @@ async def borrar_mensaje_endpoint(
     if not borrado:
         raise HTTPException(status_code=403, detail="Solo el autor puede borrar su propio mensaje")
     return None
+
+
+@router.post("/casos/{caso_id}/mensajes/adjuntos", status_code=201)
+async def subir_adjunto_endpoint(
+    caso_id: str, request: Request, archivo: UploadFile, current: dict = Depends(get_current_user),
+):
+    """Sube el archivo a disco local y devuelve {adjunto_url, adjunto_nombre}
+    para pasarlos tal cual a POST /mensajes -- separado de crear_mensaje_
+    endpoint porque el archivo se sube ANTES de que el usuario termine de
+    escribir el texto del mensaje (mismo flujo que cualquier chat con
+    adjuntos: elegís el archivo, después mandás).
+
+    `adjunto_url` nunca es un link público -- ver descargar_adjunto_
+    endpoint más abajo, mismo criterio que api/case_documents_endpoint.py::
+    descargar_pdf_de_documento (bug real de producción encontrado hoy con
+    los PDF de JuliX: una ruta de filesystem del contenedor nunca es una
+    URL que el navegador pueda abrir sola, y exponerla sin auth sería
+    servir archivos de un caso legal a quien tuviera el link)."""
+    conn = _get_db(request)
+    await _preparar(conn)
+    await _caso_con_acceso(conn, caso_id, current)
+
+    nombre_original = archivo.filename or "adjunto"
+    extension = Path(nombre_original).suffix.lower()
+    if extension not in EXTENSIONES_PERMITIDAS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Tipo de archivo no permitido ({extension or 'sin extensión'}). "
+            f"Permitidos: {', '.join(sorted(EXTENSIONES_PERMITIDAS))}",
+        )
+
+    contenido = await archivo.read()
+    if len(contenido) > TAMANO_MAXIMO_ADJUNTO_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"El archivo supera el máximo de {TAMANO_MAXIMO_ADJUNTO_BYTES // (1024 * 1024)} MB",
+        )
+    if not contenido:
+        raise HTTPException(status_code=422, detail="El archivo está vacío")
+
+    # Nombre de archivo en disco SIEMPRE generado acá (UUID + extensión ya
+    # validada) -- nunca se usa `nombre_original` para construir la ruta,
+    # para no depender de que el cliente no mande algo como "../../etc/passwd".
+    DIRECTORIO_ADJUNTOS.mkdir(parents=True, exist_ok=True)
+    nombre_en_disco = f"{uuid.uuid4()}{extension}"
+    ruta = DIRECTORIO_ADJUNTOS / nombre_en_disco
+    ruta.write_bytes(contenido)
+
+    return {"adjunto_url": str(ruta), "adjunto_nombre": nombre_original}
+
+
+@router.get("/casos/{caso_id}/mensajes/{mensaje_id}/adjunto")
+async def descargar_adjunto_endpoint(
+    caso_id: str, mensaje_id: str, request: Request, current: dict = Depends(get_current_user),
+):
+    conn = _get_db(request)
+    await _preparar(conn)
+    await _caso_con_acceso(conn, caso_id, current)
+
+    conversacion = await get_or_create_conversacion(conn, caso_id=caso_id)
+    mensaje = await get_mensaje(conn, mensaje_id)
+    if (
+        mensaje is None
+        or str(mensaje["conversacion_id"]) != str(conversacion["id"])
+        or not mensaje["adjunto_url"]
+    ):
+        raise HTTPException(status_code=404, detail="Adjunto no encontrado")
+
+    ruta = Path(mensaje["adjunto_url"])
+    if not ruta.is_file():
+        raise HTTPException(status_code=404, detail="El adjunto ya no está disponible (almacenamiento efímero)")
+    return FileResponse(ruta, filename=mensaje["adjunto_nombre"] or ruta.name)

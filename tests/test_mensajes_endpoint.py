@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 os.environ.setdefault("JWT_SECRET", "vridik-test-secret-nunca-usar-en-produccion")
 
@@ -20,6 +21,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import api.mensajes_endpoint as mensajes_module
 from api.mensajes_endpoint import router as mensajes_router
 from core.auth import create_jwt
 
@@ -94,11 +96,12 @@ class _FakeMensajesDB:
             self.conversaciones[conv_id] = conv
             return dict(conv)
         if q.startswith("INSERT INTO mensajes"):
-            conversacion_id, autor_id, texto, adjunto_url = args
+            conversacion_id, autor_id, texto, adjunto_url, adjunto_nombre = args
             msg_id = str(uuid.uuid4())
             msg = {
                 "id": msg_id, "conversacion_id": conversacion_id, "autor_id": autor_id, "texto": texto,
-                "adjunto_url": adjunto_url, "borrado": False, "created_at": _ahora(),
+                "adjunto_url": adjunto_url, "adjunto_nombre": adjunto_nombre, "borrado": False,
+                "created_at": _ahora(),
             }
             self.mensajes[msg_id] = msg
             return dict(msg)
@@ -297,5 +300,160 @@ def test_otro_usuario_no_puede_borrar_mensaje_ajeno(mdb, mclient):
 
     r = mclient.delete(
         f"/casos/{caso['id']}/mensajes/{creado['id']}", headers={"Authorization": f"Bearer {token_abogado}"},
+    )
+    assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Adjuntos (roadmap S11: "Chat interno con adjuntos") -- POST .../adjuntos
+# sube el archivo, GET .../{mensaje_id}/adjunto lo descarga autenticado
+# (mismo criterio que api/case_documents_endpoint.py::descargar_pdf_de_
+# documento, bug real de producción encontrado y corregido el mismo día:
+# la ruta de disco NUNCA es un link público sin auth).
+# ---------------------------------------------------------------------------
+def test_subir_adjunto_guarda_el_archivo_y_devuelve_url_y_nombre(mdb, mclient, tmp_path, monkeypatch):
+    monkeypatch.setattr(mensajes_module, "DIRECTORIO_ADJUNTOS", tmp_path)
+    cliente = mdb.seed_user(email="cliente_adj1@vridik.local")
+    caso = mdb.seed_caso(cliente_id=cliente["id"])
+    token = _token_de(cliente)
+
+    r = mclient.post(
+        f"/casos/{caso['id']}/mensajes/adjuntos",
+        files={"archivo": ("contrato.pdf", b"%PDF-fake-content", "application/pdf")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["adjunto_nombre"] == "contrato.pdf"
+    ruta_guardada = Path(body["adjunto_url"])
+    assert ruta_guardada.is_file()
+    assert ruta_guardada.read_bytes() == b"%PDF-fake-content"
+    assert ruta_guardada.suffix == ".pdf"
+    # El nombre en disco nunca es el nombre original tal cual (evita path
+    # traversal / colisiones) -- ver subir_adjunto_endpoint.
+    assert ruta_guardada.name != "contrato.pdf"
+
+
+def test_subir_adjunto_extension_no_permitida_da_422(mdb, mclient, tmp_path, monkeypatch):
+    monkeypatch.setattr(mensajes_module, "DIRECTORIO_ADJUNTOS", tmp_path)
+    cliente = mdb.seed_user(email="cliente_adj2@vridik.local")
+    caso = mdb.seed_caso(cliente_id=cliente["id"])
+    token = _token_de(cliente)
+
+    r = mclient.post(
+        f"/casos/{caso['id']}/mensajes/adjuntos",
+        files={"archivo": ("script.exe", b"MZ...", "application/octet-stream")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 422
+
+
+def test_subir_adjunto_supera_tamano_maximo_da_413(mdb, mclient, tmp_path, monkeypatch):
+    monkeypatch.setattr(mensajes_module, "DIRECTORIO_ADJUNTOS", tmp_path)
+    monkeypatch.setattr(mensajes_module, "TAMANO_MAXIMO_ADJUNTO_BYTES", 10)
+    cliente = mdb.seed_user(email="cliente_adj3@vridik.local")
+    caso = mdb.seed_caso(cliente_id=cliente["id"])
+    token = _token_de(cliente)
+
+    r = mclient.post(
+        f"/casos/{caso['id']}/mensajes/adjuntos",
+        files={"archivo": ("foto.png", b"x" * 100, "image/png")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 413
+
+
+def test_subir_adjunto_usuario_sin_relacion_al_caso_forbidden(mdb, mclient, tmp_path, monkeypatch):
+    monkeypatch.setattr(mensajes_module, "DIRECTORIO_ADJUNTOS", tmp_path)
+    cliente = mdb.seed_user(email="cliente_adj4@vridik.local")
+    otro = mdb.seed_user(email="otro_adj4@vridik.local")
+    caso = mdb.seed_caso(cliente_id=cliente["id"])
+    token = _token_de(otro)
+
+    r = mclient.post(
+        f"/casos/{caso['id']}/mensajes/adjuntos",
+        files={"archivo": ("foto.png", b"contenido", "image/png")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403
+
+
+def test_mensaje_con_adjunto_de_punta_a_punta(mdb, mclient, tmp_path, monkeypatch):
+    monkeypatch.setattr(mensajes_module, "DIRECTORIO_ADJUNTOS", tmp_path)
+    cliente = mdb.seed_user(email="cliente_adj5@vridik.local")
+    caso = mdb.seed_caso(cliente_id=cliente["id"])
+    token = _token_de(cliente)
+
+    subida = mclient.post(
+        f"/casos/{caso['id']}/mensajes/adjuntos",
+        files={"archivo": ("foto.png", b"imagen-fake", "image/png")},
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()
+
+    r = mclient.post(
+        f"/casos/{caso['id']}/mensajes",
+        json={"texto": "mirá esto", "adjunto_url": subida["adjunto_url"], "adjunto_nombre": subida["adjunto_nombre"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 201, r.text
+    mensaje = r.json()
+    assert mensaje["adjunto_nombre"] == "foto.png"
+
+    r = mclient.get(
+        f"/casos/{caso['id']}/mensajes/{mensaje['id']}/adjunto", headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    assert r.content == b"imagen-fake"
+
+
+def test_descargar_adjunto_mensaje_sin_adjunto_da_404(mdb, mclient):
+    cliente = mdb.seed_user(email="cliente_adj6@vridik.local")
+    caso = mdb.seed_caso(cliente_id=cliente["id"])
+    token = _token_de(cliente)
+
+    mensaje = mclient.post(
+        f"/casos/{caso['id']}/mensajes", json={"texto": "sin adjunto"}, headers={"Authorization": f"Bearer {token}"},
+    ).json()
+
+    r = mclient.get(
+        f"/casos/{caso['id']}/mensajes/{mensaje['id']}/adjunto", headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 404
+
+
+def test_descargar_adjunto_archivo_perdido_por_almacenamiento_efimero_da_404(mdb, mclient):
+    cliente = mdb.seed_user(email="cliente_adj7@vridik.local")
+    caso = mdb.seed_caso(cliente_id=cliente["id"])
+    token = _token_de(cliente)
+
+    mensaje = mclient.post(
+        f"/casos/{caso['id']}/mensajes",
+        json={"texto": "x", "adjunto_url": "/tmp/vridik-mensajes-adjuntos/ya-no-existe.png", "adjunto_nombre": "y.png"},
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()
+
+    r = mclient.get(
+        f"/casos/{caso['id']}/mensajes/{mensaje['id']}/adjunto", headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 404
+
+
+def test_descargar_adjunto_usuario_sin_relacion_al_caso_forbidden(mdb, mclient, tmp_path):
+    cliente = mdb.seed_user(email="cliente_adj8@vridik.local")
+    otro = mdb.seed_user(email="otro_adj8@vridik.local")
+    caso = mdb.seed_caso(cliente_id=cliente["id"])
+    token_cliente = _token_de(cliente)
+    token_otro = _token_de(otro)
+
+    ruta = tmp_path / "archivo.png"
+    ruta.write_bytes(b"contenido")
+    mensaje = mclient.post(
+        f"/casos/{caso['id']}/mensajes",
+        json={"texto": "x", "adjunto_url": str(ruta), "adjunto_nombre": "archivo.png"},
+        headers={"Authorization": f"Bearer {token_cliente}"},
+    ).json()
+
+    r = mclient.get(
+        f"/casos/{caso['id']}/mensajes/{mensaje['id']}/adjunto", headers={"Authorization": f"Bearer {token_otro}"},
     )
     assert r.status_code == 403

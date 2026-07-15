@@ -37,3 +37,8 @@ reportlab==4.2.5
 
 # S3-GAP-01 (AUDITORIA_PARA_CLAUDE.md): gate de cobertura ≥60% en CI.
 pytest-cov==5.0.0
+
+# Adjuntos de mensajes (roadmap S11): api/mensajes_endpoint.py::subir_adjunto_endpoint
+# usa UploadFile -- FastAPI necesita python-multipart para parsear
+# multipart/form-data, tanto en runtime real como en TestClient.
+python-multipart==0.0.20

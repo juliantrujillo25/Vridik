@@ -9,6 +9,7 @@
 
 import type {
   Actuacion,
+  AdjuntoSubido,
   AdminUser,
   AuthEvent,
   Caso,
@@ -96,7 +97,9 @@ class ApiClient {
   // --- núcleo de fetch ----------------------------------------------------
   private async raw(path: string, init: RequestInit, conAuth: boolean): Promise<Response> {
     const headers = new Headers(init.headers);
-    if (init.body && !headers.has("Content-Type")) {
+    // FormData (subida de adjuntos): el navegador arma su propio boundary
+    // en el Content-Type -- setearlo a mano acá lo rompería.
+    if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
     if (conAuth && this.accessToken) {
@@ -286,11 +289,27 @@ class ApiClient {
     return this.request(`/casos/${casoId}/mensajes?limit=${limit}`);
   }
 
-  crearMensaje(casoId: string, texto: string, adjuntoUrl?: string): Promise<Mensaje> {
+  crearMensaje(casoId: string, texto: string, adjunto?: AdjuntoSubido): Promise<Mensaje> {
     return this.request(`/casos/${casoId}/mensajes`, {
       method: "POST",
-      body: JSON.stringify({ texto, adjunto_url: adjuntoUrl ?? null }),
+      body: JSON.stringify({
+        texto,
+        adjunto_url: adjunto?.adjunto_url ?? null,
+        adjunto_nombre: adjunto?.adjunto_nombre ?? null,
+      }),
     });
+  }
+
+  /** adjunto_url de la respuesta NUNCA es un link público directo -- se
+   *  pasa tal cual a crearMensaje() y se descarga con descargarAdjunto(). */
+  subirAdjunto(casoId: string, archivo: File): Promise<AdjuntoSubido> {
+    const formData = new FormData();
+    formData.append("archivo", archivo);
+    return this.request(`/casos/${casoId}/mensajes/adjuntos`, { method: "POST", body: formData });
+  }
+
+  descargarAdjunto(casoId: string, mensajeId: string): Promise<Blob> {
+    return this.requestBlob(`/casos/${casoId}/mensajes/${mensajeId}/adjunto`);
   }
 
   marcarLeido(casoId: string, mensajeId: string): Promise<void> {

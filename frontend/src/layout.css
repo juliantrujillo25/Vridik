@@ -248,8 +248,41 @@
   padding: 0 0.15rem;
 }
 .mensaje-borrar:hover { color: var(--danger, #b3432b); }
-.mensajes-form { display: flex; gap: 0.6rem; border-top: 1px solid var(--hair); padding-top: 0.9rem; }
+.mensaje-adjunto {
+  align-self: flex-start;
+  border: 1px solid var(--hair);
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+  color: inherit;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mensaje-adjunto:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--hair)); }
+.mensajes-form { display: flex; align-items: center; gap: 0.6rem; border-top: 1px solid var(--hair); padding-top: 0.9rem; }
 .mensajes-form .input { flex: 1; }
+.mensajes-file-input { display: none; }
+.mensajes-adjuntar { flex: none; font-size: 1rem; padding: 0.5rem 0.65rem; }
+.mensajes-archivo-elegido {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: -0.3rem 0 0;
+  font-size: 0.8rem;
+}
+.mensajes-quitar-archivo {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 0.78rem;
+  padding: 0;
+  text-decoration: underline;
+}
 
 /* --- términos / actuaciones (Fase 2) --- */
 .termino-form, .actuacion-form { padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: 0.9rem; margin-bottom: 0.9rem; }

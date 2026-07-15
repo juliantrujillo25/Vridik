@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from core.case import ensure_casos_table
 
-_COLUMNAS_MENSAJE = "id, conversacion_id, autor_id, texto, adjunto_url, borrado, created_at"
+_COLUMNAS_MENSAJE = "id, conversacion_id, autor_id, texto, adjunto_url, adjunto_nombre, borrado, created_at"
 
 
 async def ensure_mensajes_tables(db_connection) -> None:
@@ -61,6 +61,13 @@ async def ensure_mensajes_tables(db_connection) -> None:
     await db_connection.execute(
         "CREATE INDEX IF NOT EXISTS ix_mensajes_conversacion_id ON mensajes (conversacion_id, created_at)"
     )
+    # Migración aditiva: `adjunto_url` (siempre existió) guarda dónde está
+    # el archivo (ruta local del backend "local", ver storage/
+    # object_storage.py, o una URL real si algún día se activa S3) --
+    # `adjunto_nombre` es el nombre ORIGINAL que subió el usuario, solo
+    # para mostrar/nombrar la descarga (nunca se usa para construir ninguna
+    # ruta de disco -- ver api/mensajes_endpoint.py::subir_adjunto_endpoint).
+    await db_connection.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS adjunto_nombre TEXT")
     await db_connection.execute(
         """
         CREATE TABLE IF NOT EXISTS conversation_reads (
@@ -91,15 +98,16 @@ async def get_or_create_conversacion(db_connection, *, caso_id: str) -> dict:
 
 
 async def crear_mensaje(
-    db_connection, *, conversacion_id: str, autor_id: str, texto: str, adjunto_url: str | None = None,
+    db_connection, *, conversacion_id: str, autor_id: str, texto: str,
+    adjunto_url: str | None = None, adjunto_nombre: str | None = None,
 ) -> dict:
     fila = await db_connection.fetchrow(
         f"""
-        INSERT INTO mensajes (conversacion_id, autor_id, texto, adjunto_url)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO mensajes (conversacion_id, autor_id, texto, adjunto_url, adjunto_nombre)
+        VALUES ($1, $2, $3, $4, $5)
         RETURNING {_COLUMNAS_MENSAJE}
         """,
-        conversacion_id, autor_id, texto, adjunto_url,
+        conversacion_id, autor_id, texto, adjunto_url, adjunto_nombre,
     )
     return dict(fila)
 
