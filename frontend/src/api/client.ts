@@ -34,6 +34,7 @@ import type {
   Perfil,
   Plan,
   RegenerarCodigosResponse,
+  ReporteRiesgo,
   ResetPasswordResult,
   ResumenAhorro,
   Role,
@@ -485,6 +486,15 @@ class ApiClient {
   /** Exclusivo de abogado/admin -- nunca el propio cliente (lo exige el backend). */
   setMatrizRiesgo(clienteId: string, input: SetMatrizRiesgoInput): Promise<MatrizRiesgo> {
     return this.request(`/clientes/${clienteId}/riesgo`, { method: "POST", body: JSON.stringify(input) });
+  }
+
+  /** Insumo del informe del oficial de cumplimiento -- exclusivo abogado/admin. */
+  reporteRiesgo(): Promise<ReporteRiesgo> {
+    return this.request("/clientes/riesgo/reporte");
+  }
+
+  descargarReporteRiesgoCsv(): Promise<Blob> {
+    return this.requestBlob("/clientes/riesgo/reporte?formato=csv");
   }
 
   // --- eventos en vivo (SSE, roadmap S11 Fase C) ---------------------------

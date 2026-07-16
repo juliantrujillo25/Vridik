@@ -102,7 +102,33 @@ class _FakeClientesDB:
                 dict(c) for c in self.casos.values()
                 if c["cliente_id"] == cliente_id and c["despacho_id"] == despacho_id
             ]
+        if "FROM matriz_riesgo m" in q:
+            (despacho_id,) = args
+            filas = []
+            for m in self.matrices.values():
+                if m["despacho_id"] != despacho_id:
+                    continue
+                cliente = self.users.get(m["cliente_id"])
+                evaluador = self.users.get(m["evaluado_por"])
+                filas.append({
+                    "cliente_id": m["cliente_id"], "email": cliente["email"],
+                    "tipo_persona": m["tipo_persona"], "actividad_economica_riesgo": m["actividad_economica_riesgo"],
+                    "jurisdiccion_riesgo": m["jurisdiccion_riesgo"], "canal": m["canal"], "es_pep": m["es_pep"],
+                    "nivel_riesgo_calculado": m["nivel_riesgo_calculado"],
+                    "evaluado_por_email": evaluador["email"] if evaluador else None,
+                    "updated_at": m["updated_at"],
+                })
+            orden = {"alto": 0, "medio": 1, "bajo": 2}
+            filas.sort(key=lambda f: (orden[f["nivel_riesgo_calculado"]], f["email"]))
+            return filas
         return []
+
+    async def fetchval(self, query: str, *args):
+        q = query.strip()
+        if q == "SELECT count(*) FROM users WHERE despacho_id = $1 AND role = 'cliente'":
+            (despacho_id,) = args
+            return sum(1 for u in self.users.values() if u["despacho_id"] == despacho_id and u["role"] == "cliente")
+        return None
 
 
 @pytest.fixture
@@ -248,3 +274,59 @@ def test_riesgo_sin_evaluar_todavia_devuelve_null_no_404(cdb, cclient):
     r = cclient.get(f"/clientes/{cliente['id']}/riesgo", headers={"Authorization": f"Bearer {_token_de(abogado)}"})
     assert r.status_code == 200, r.text
     assert r.json() is None
+
+
+# ---------------------------------------------------------------------------
+# GET /clientes/riesgo/reporte
+# ---------------------------------------------------------------------------
+def test_cliente_no_puede_ver_el_reporte_de_riesgo(cdb, cclient):
+    cliente = cdb.seed_user(email="cliente10@vridik.local")
+    r = cclient.get("/clientes/riesgo/reporte", headers={"Authorization": f"Bearer {_token_de(cliente)}"})
+    assert r.status_code == 403
+
+
+def test_reporte_de_riesgo_resume_y_ordena_por_nivel(cdb, cclient):
+    abogado = cdb.seed_user(email="abogado8@vridik.local", role="abogado")
+    cliente_bajo = cdb.seed_user(email="cliente-bajo@vridik.local")
+    cliente_alto = cdb.seed_user(email="cliente-alto@vridik.local")
+    cdb.seed_user(email="cliente-sin-evaluar@vridik.local")  # nunca evaluado
+
+    for cliente, es_pep in ((cliente_bajo, False), (cliente_alto, True)):
+        cclient.post(
+            f"/clientes/{cliente['id']}/riesgo",
+            json={
+                "tipo_persona": "natural", "actividad_economica_riesgo": "bajo",
+                "jurisdiccion_riesgo": "bajo", "canal": "presencial", "es_pep": es_pep,
+            },
+            headers={"Authorization": f"Bearer {_token_de(abogado)}"},
+        )
+
+    r = cclient.get("/clientes/riesgo/reporte", headers={"Authorization": f"Bearer {_token_de(abogado)}"})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["total_clientes"] == 3
+    assert data["total_evaluados"] == 2
+    assert data["total_sin_evaluar"] == 1
+    assert data["total_pep"] == 1
+    assert [c["email"] for c in data["clientes"]] == ["cliente-alto@vridik.local", "cliente-bajo@vridik.local"]
+
+
+def test_reporte_de_riesgo_como_csv(cdb, cclient):
+    abogado = cdb.seed_user(email="abogado9@vridik.local", role="abogado")
+    cliente = cdb.seed_user(email="cliente-csv@vridik.local")
+    cclient.post(
+        f"/clientes/{cliente['id']}/riesgo",
+        json={
+            "tipo_persona": "natural", "actividad_economica_riesgo": "bajo",
+            "jurisdiccion_riesgo": "bajo", "canal": "presencial", "es_pep": False,
+        },
+        headers={"Authorization": f"Bearer {_token_de(abogado)}"},
+    )
+
+    r = cclient.get(
+        "/clientes/riesgo/reporte?formato=csv", headers={"Authorization": f"Bearer {_token_de(abogado)}"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("text/csv")
+    assert "attachment" in r.headers["content-disposition"]
+    assert "cliente-csv@vridik.local" in r.text

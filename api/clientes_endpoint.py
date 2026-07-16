@@ -16,11 +16,22 @@ POST /clientes/{cliente_id}/riesgo crea/actualiza la matriz -- exclusivo de
                                     su propio riesgo, mismo principio que
                                     "el cliente nunca configura su propio
                                     cobro" en core/cobro.py).
+GET  /clientes/riesgo/reporte      resumen + detalle de la matriz de riesgo
+                                    del despacho (insumo del informe del
+                                    oficial de cumplimiento) -- abogado/admin.
+                                    `?formato=csv` descarga el detalle como
+                                    archivo. Ruta de DOS segmentos a propósito
+                                    (/riesgo/reporte, no /reporte-riesgo) para
+                                    no colisionar con /{cliente_id}.
 """
 
 from __future__ import annotations
 
+import csv
+import io
+
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from api.admin_endpoint import get_current_user
@@ -30,6 +41,7 @@ from core.cumplimiento import (
     ClienteDeOtroDespachoError,
     FactorInvalidoError,
     ensure_matriz_riesgo_table,
+    generar_reporte_riesgo,
     obtener_matriz_riesgo,
     set_matriz_riesgo,
 )
@@ -115,3 +127,41 @@ async def set_matriz_riesgo_endpoint(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FactorInvalidoError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+_ENCABEZADOS_CSV = (
+    "email", "tipo_persona", "nivel_riesgo_calculado", "es_pep",
+    "actividad_economica_riesgo", "jurisdiccion_riesgo", "canal",
+    "evaluado_por_email", "updated_at",
+)
+
+
+def _reporte_a_csv(reporte: dict) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(_ENCABEZADOS_CSV)
+    for c in reporte["clientes"]:
+        writer.writerow(
+            [c["email"], c["tipo_persona"], c["nivel_riesgo_calculado"], c["es_pep"],
+             c["actividad_economica_riesgo"], c["jurisdiccion_riesgo"], c["canal"],
+             c["evaluado_por_email"] or "", c["updated_at"]]
+        )
+    return buffer.getvalue()
+
+
+@router.get("/riesgo/reporte")
+async def get_reporte_riesgo_endpoint(
+    request: Request, formato: str = "json", current: dict = Depends(get_current_user),
+):
+    _exige_abogado_o_admin(current)
+    conn = _get_db(request)
+    await _preparar(conn)
+    reporte = await generar_reporte_riesgo(conn, despacho_id=current["despacho_id"])
+
+    if formato == "csv":
+        return Response(
+            content=_reporte_a_csv(reporte),
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="reporte_riesgo.csv"'},
+        )
+    return reporte

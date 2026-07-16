@@ -332,3 +332,30 @@ export interface SetMatrizRiesgoInput {
   canal: Canal;
   es_pep: boolean;
 }
+
+// GET /clientes/riesgo/reporte -- insumo del informe periódico del oficial
+// de cumplimiento (roadmap Fase 4: "reportes Supersociedades"). NO es el
+// formato oficial exacto que exige la Superintendencia -- ver disclaimer en
+// core/cumplimiento.py y en ReporteRiesgoPage.tsx.
+export interface ClienteEnReporte {
+  cliente_id: string;
+  email: string;
+  tipo_persona: TipoPersona;
+  actividad_economica_riesgo: NivelRiesgo;
+  jurisdiccion_riesgo: NivelRiesgo;
+  canal: Canal;
+  es_pep: boolean;
+  nivel_riesgo_calculado: NivelRiesgo;
+  evaluado_por_email: string | null;
+  updated_at: string;
+}
+
+export interface ReporteRiesgo {
+  generado_en: string;
+  total_clientes: number;
+  total_evaluados: number;
+  total_sin_evaluar: number;
+  conteo_por_nivel: Record<NivelRiesgo, number>;
+  total_pep: number;
+  clientes: ClienteEnReporte[];
+}

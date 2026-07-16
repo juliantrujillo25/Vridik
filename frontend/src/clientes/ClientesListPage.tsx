@@ -51,6 +51,7 @@ export function ClientesListPage() {
           <p className="eyebrow">Clientes</p>
           <h1 className="page-title">Clientes del despacho</h1>
         </div>
+        <Link className="btn btn-ghost btn-sm" to="/clientes/reporte-riesgo">Reporte de riesgo</Link>
       </div>
 
       {error && (

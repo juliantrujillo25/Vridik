@@ -31,6 +31,8 @@ que no vale la pena resolver por join en este momento).
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from core.despachos import ensure_despachos_table
 
 _COLUMNAS = (
@@ -197,3 +199,56 @@ async def obtener_matriz_riesgo(db_connection, *, cliente_id: str, despacho_id: 
         cliente_id, despacho_id,
     )
     return dict(fila) if fila is not None else None
+
+
+async def generar_reporte_riesgo(db_connection, *, despacho_id: str) -> dict:
+    """Insumo para el informe periódico del oficial de cumplimiento (SAGRILAFT
+    lite, roadmap Fase 4: "reportes Supersociedades") -- resume la matriz de
+    riesgo del despacho: cuántos clientes hay, cuántos ya se evaluaron, y el
+    detalle completo ordenado de mayor a menor riesgo (los de riesgo "alto"
+    y/o PEP son los que requieren debida diligencia intensificada).
+
+    Esto NO es una presentación en el formato oficial exacto que exige la
+    Superintendencia de Sociedades (ese formato no está definido en esta
+    pasada) -- es la documentación de respaldo que el oficial de cumplimiento
+    del despacho usaría para prepararlo. Mismo disclaimer que el resto del
+    módulo: herramienta de apoyo, no un motor de compliance certificado."""
+    total_clientes = await db_connection.fetchval(
+        "SELECT count(*) FROM users WHERE despacho_id = $1 AND role = 'cliente'",
+        despacho_id,
+    )
+
+    filas = await db_connection.fetch(
+        """
+        SELECT
+            u.id AS cliente_id, u.email, m.tipo_persona, m.actividad_economica_riesgo,
+            m.jurisdiccion_riesgo, m.canal, m.es_pep, m.nivel_riesgo_calculado,
+            ev.email AS evaluado_por_email, m.updated_at
+        FROM matriz_riesgo m
+        JOIN users u ON u.id = m.cliente_id
+        LEFT JOIN users ev ON ev.id = m.evaluado_por
+        WHERE m.despacho_id = $1
+        ORDER BY
+            CASE m.nivel_riesgo_calculado WHEN 'alto' THEN 0 WHEN 'medio' THEN 1 ELSE 2 END,
+            u.email
+        """,
+        despacho_id,
+    )
+    clientes = [dict(f) for f in filas]
+
+    conteo_por_nivel = {"bajo": 0, "medio": 0, "alto": 0}
+    total_pep = 0
+    for c in clientes:
+        conteo_por_nivel[c["nivel_riesgo_calculado"]] += 1
+        if c["es_pep"]:
+            total_pep += 1
+
+    return {
+        "generado_en": datetime.now(timezone.utc),
+        "total_clientes": total_clientes,
+        "total_evaluados": len(clientes),
+        "total_sin_evaluar": total_clientes - len(clientes),
+        "conteo_por_nivel": conteo_por_nivel,
+        "total_pep": total_pep,
+        "clientes": clientes,
+    }

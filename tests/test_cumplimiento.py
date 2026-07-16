@@ -18,6 +18,7 @@ from core.cumplimiento import (
     FactorInvalidoError,
     calcular_nivel_riesgo,
     ensure_matriz_riesgo_table,
+    generar_reporte_riesgo,
     obtener_matriz_riesgo,
     set_matriz_riesgo,
 )
@@ -152,3 +153,74 @@ async def test_ensure_matriz_riesgo_table_es_idempotente(db):
     await ensure_despachos_table(db)
     await ensure_matriz_riesgo_table(db)
     await ensure_matriz_riesgo_table(db)  # segunda corrida -- no debe romper nada
+
+
+# ---------------------------------------------------------------------------
+# generar_reporte_riesgo (roadmap Fase 4: "reportes Supersociedades")
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_reporte_riesgo_cuenta_evaluados_y_sin_evaluar(db, make_despacho, make_user):
+    despacho_id = await make_despacho()
+    abogado = await make_user(role="abogado", despacho_id=despacho_id)
+    evaluado = await make_user(role="cliente", despacho_id=despacho_id)
+    await make_user(role="cliente", despacho_id=despacho_id)  # sin evaluar
+
+    await set_matriz_riesgo(
+        db, cliente_id=evaluado["id"], despacho_id=despacho_id, actor_id=abogado["id"],
+        tipo_persona="natural", actividad_economica_riesgo="bajo",
+        jurisdiccion_riesgo="bajo", canal="presencial", es_pep=False,
+    )
+
+    reporte = await generar_reporte_riesgo(db, despacho_id=despacho_id)
+    assert reporte["total_clientes"] == 2
+    assert reporte["total_evaluados"] == 1
+    assert reporte["total_sin_evaluar"] == 1
+    assert reporte["conteo_por_nivel"] == {"bajo": 1, "medio": 0, "alto": 0}
+    assert reporte["total_pep"] == 0
+    assert len(reporte["clientes"]) == 1
+    assert reporte["clientes"][0]["cliente_id"] == uuid.UUID(evaluado["id"])
+    assert reporte["clientes"][0]["evaluado_por_email"] == abogado["email"]
+
+
+@pytest.mark.asyncio
+async def test_reporte_riesgo_ordena_de_mayor_a_menor_riesgo(db, make_despacho, make_user):
+    despacho_id = await make_despacho()
+    abogado = await make_user(role="abogado", despacho_id=despacho_id)
+    cliente_bajo = await make_user(role="cliente", despacho_id=despacho_id)
+    cliente_alto = await make_user(role="cliente", despacho_id=despacho_id)
+    cliente_medio = await make_user(role="cliente", despacho_id=despacho_id)
+
+    for cliente, canal, es_pep in (
+        (cliente_bajo, "presencial", False),
+        (cliente_alto, "presencial", True),
+        (cliente_medio, "no_presencial", False),
+    ):
+        await set_matriz_riesgo(
+            db, cliente_id=cliente["id"], despacho_id=despacho_id, actor_id=abogado["id"],
+            tipo_persona="natural", actividad_economica_riesgo="bajo",
+            jurisdiccion_riesgo="bajo", canal=canal, es_pep=es_pep,
+        )
+
+    reporte = await generar_reporte_riesgo(db, despacho_id=despacho_id)
+    niveles = [c["nivel_riesgo_calculado"] for c in reporte["clientes"]]
+    assert niveles == ["alto", "medio", "bajo"]
+    assert reporte["total_pep"] == 1
+    assert reporte["conteo_por_nivel"] == {"bajo": 1, "medio": 1, "alto": 1}
+
+
+@pytest.mark.asyncio
+async def test_reporte_riesgo_no_mezcla_clientes_de_otro_despacho(db, make_despacho, make_user):
+    despacho_a = await make_despacho()
+    despacho_b = await make_despacho()
+    abogado_b = await make_user(role="abogado", despacho_id=despacho_b)
+    cliente_b = await make_user(role="cliente", despacho_id=despacho_b)
+
+    await set_matriz_riesgo(
+        db, cliente_id=cliente_b["id"], despacho_id=despacho_b, actor_id=abogado_b["id"],
+        tipo_persona="natural", actividad_economica_riesgo="alto",
+        jurisdiccion_riesgo="alto", canal="presencial", es_pep=True,
+    )
+
+    reporte_a = await generar_reporte_riesgo(db, despacho_id=despacho_a)
+    assert reporte_a["total_clientes"] == 0
+    assert reporte_a["clientes"] == []

@@ -12,6 +12,7 @@ import { AdminPage } from "./admin/AdminPage";
 import { PlatformPage } from "./platform/PlatformPage";
 import { ClientesListPage } from "./clientes/ClientesListPage";
 import { ClienteDetailPage } from "./clientes/ClienteDetailPage";
+import { ReporteRiesgoPage } from "./clientes/ReporteRiesgoPage";
 import "./index.css";
 import "./layout.css";
 
@@ -26,6 +27,7 @@ const router = createBrowserRouter([
       { path: "casos", element: <CasosListPage /> },
       { path: "casos/:id", element: <CasoDetailPage /> },
       { path: "clientes", element: <ClientesListPage /> },
+      { path: "clientes/reporte-riesgo", element: <ReporteRiesgoPage /> },
       { path: "clientes/:id", element: <ClienteDetailPage /> },
       { path: "cuenta", element: <AccountPage /> },
       { path: "admin", element: <AdminPage /> },
