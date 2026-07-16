@@ -2,6 +2,11 @@
    proyecto: papel neutro frío, acento pino "verificado/legal", sans de
    sistema + monoespaciada para datos. Ambos temas. */
 
+/* Serif editorial -- uso selectivo (títulos de expediente, cuerpo del
+   documento en CasoDetailPage), nunca para texto de UI general, que sigue
+   en --sans. */
+@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&display=swap");
+
 :root {
   --paper: #f6f7f6;
   --surface: #ffffff;
@@ -24,6 +29,8 @@
   --shadow: 0 1px 2px rgba(20, 30, 28, 0.05), 0 8px 24px rgba(20, 30, 28, 0.04);
   --mono: "Cascadia Code", "SF Mono", "JetBrains Mono", "Roboto Mono", Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --serif: "Cormorant Garamond", Georgia, serif;
+  --gold: #c5a880;
   --radius: 10px;
 }
 

@@ -1,12 +1,24 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, SesionExpiradaError } from "../api/client";
-import type { AdminUser, Caso, CaseDocument, EstadoCaso, Materia } from "../api/types";
+import type { Actuacion, AdminUser, Caso, CaseDocument, Cobro, EstadoCaso, Materia } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
-import { ESTADOS, ESTADO_LABEL, EstadoPill, fechaHora, MATERIA_LABEL, MATERIAS, separarAvisoRevisar } from "../ui";
+import {
+  CATEGORIA_LABEL, ESTADOS, ESTADO_LABEL, EstadoPill, fechaCorta, fechaHora,
+  MATERIA_LABEL, MATERIAS, RESULTADO_LABEL, separarAvisoRevisar,
+} from "../ui";
 import { ActuacionesYTerminos } from "./ActuacionesYTerminos";
 import { CobroPanel } from "./Cobro";
 import { Mensajes } from "./Mensajes";
+
+function formatoCOP(valor: number | null): string {
+  if (valor === null) return "—";
+  try {
+    return valor.toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
+  } catch {
+    return String(valor);
+  }
+}
 
 export function CasoDetailPage() {
   const { id = "" } = useParams();
@@ -15,7 +27,14 @@ export function CasoDetailPage() {
 
   const [caso, setCaso] = useState<Caso | null>(null);
   const [docs, setDocs] = useState<CaseDocument[] | null>(null);
+  const [actuaciones, setActuaciones] = useState<Actuacion[] | null>(null);
+  const [cobro, setCobro] = useState<Cobro | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // visor del hero -- muestra el documento más reciente, independiente del
+  // modal de "Documentos" (docAbierto) para no acoplar ambos flujos.
+  const [docVistaHero, setDocVistaHero] = useState<CaseDocument | null>(null);
+  const [cargandoDocHero, setCargandoDocHero] = useState(false);
 
   // asignación de abogado (solo admin -- lo exige el backend)
   const [abogados, setAbogados] = useState<AdminUser[] | null>(null);
@@ -42,9 +61,13 @@ export function CasoDetailPage() {
   async function cargar() {
     setError(null);
     try {
-      const [c, d] = await Promise.all([api.getCaso(id), api.listDocumentos(id)]);
+      const [c, d, a, cb] = await Promise.all([
+        api.getCaso(id), api.listDocumentos(id), api.listActuaciones(id), api.getCobro(id),
+      ]);
       setCaso(c);
       setDocs(d);
+      setActuaciones(a);
+      setCobro(cb);
     } catch (err) {
       manejarError(err, "No se pudo cargar el caso.");
     }
@@ -54,6 +77,15 @@ export function CasoDetailPage() {
     void cargar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  useEffect(() => {
+    if (!docs || docs.length === 0) return;
+    setCargandoDocHero(true);
+    api.getDocumento(id, docs[0].id)
+      .then(setDocVistaHero, () => {})
+      .finally(() => setCargandoDocHero(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docs?.[0]?.id]);
 
   useEffect(() => {
     if (perfil?.role !== "admin") return;
@@ -186,6 +218,88 @@ export function CasoDetailPage() {
       {error && <div className="alert error" role="alert">{error}</div>}
 
       {caso.descripcion && <p className="caso-desc muted">{caso.descripcion}</p>}
+
+      <div className="caso-hero">
+        <div className="caso-hero-col">
+          <h2 className="caso-hero-titulo">{caso.titulo}</h2>
+
+          <div className="caso-hero-label">Actuaciones</div>
+          {actuaciones === null ? (
+            <div className="empty muted"><span className="spinner" /> Cargando…</div>
+          ) : actuaciones.length === 0 ? (
+            <p className="faint">Todavía no hay actuaciones registradas.</p>
+          ) : (
+            <ol className="caso-timeline">
+              {actuaciones.map((a, i) => {
+                const esUltimo = i === actuaciones.length - 1;
+                return (
+                  <li key={a.id} className={`caso-timeline-item${esUltimo ? " es-ultimo" : ""}`}>
+                    <span className="caso-timeline-dot" aria-hidden="true" />
+                    {!esUltimo && <span className="caso-timeline-line" aria-hidden="true" />}
+                    <div className="caso-timeline-texto">{CATEGORIA_LABEL[a.categoria]}</div>
+                    {esUltimo && a.resultado && (
+                      <div className="caso-timeline-sub">
+                        {RESULTADO_LABEL[a.resultado]}
+                        {a.tipo_resolucion_ugpp ? ` — ${a.tipo_resolucion_ugpp}` : ""}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+
+          <div className="caso-hero-meta">
+            <div className="caso-hero-meta-label">Materia</div>
+            <div className="caso-hero-meta-valor">{caso.materia ? MATERIA_LABEL[caso.materia] : "Sin clasificar"}</div>
+            <div className="caso-hero-meta-label">Fecha</div>
+            <div className="caso-hero-meta-valor">
+              {fechaCorta(actuaciones && actuaciones.length > 0 ? actuaciones[actuaciones.length - 1].created_at : caso.created_at)}
+            </div>
+            <div className="caso-hero-meta-label">Cuantía</div>
+            <div className="caso-hero-meta-valor">{formatoCOP(cobro?.valor_en_disputa ?? null)}</div>
+          </div>
+        </div>
+
+        <div className="caso-hero-divider" />
+
+        <div className="caso-hero-col">
+          <div className="caso-hero-label">Documento</div>
+          {cargandoDocHero ? (
+            <div className="empty muted"><span className="spinner" /> Cargando…</div>
+          ) : docVistaHero ? (
+            <>
+              <h3 className="caso-doc-viewer-titulo">{docVistaHero.pregunta}</h3>
+              <div className="caso-doc-viewer-cuerpo">
+                {separarAvisoRevisar(docVistaHero.contenido ?? "").cuerpo
+                  .split("\n")
+                  .filter((linea) => linea.trim())
+                  .map((linea, i) => <p key={i}>{linea}</p>)}
+              </div>
+              <div className="caso-doc-viewer-folio">
+                <span className="caso-doc-viewer-folio-linea" />
+                <span className="caso-doc-viewer-folio-texto mono">{docVistaHero.tarea}</span>
+              </div>
+            </>
+          ) : (
+            <p className="caso-doc-viewer-vacio">Todavía no hay documentos generados en este caso.</p>
+          )}
+        </div>
+
+        <div className="caso-hero-divider" />
+
+        <div className="caso-hero-col caso-ia-panel">
+          <div className="caso-hero-label">Inteligencia VridiK</div>
+          <div className="caso-ia-item">
+            <div className="caso-ia-item-label">Sentido probable</div>
+            <p className="caso-ia-placeholder">Próximamente: predicción calculada por VridiK a partir del expediente.</p>
+          </div>
+          <div className="caso-ia-item">
+            <div className="caso-ia-item-label">Próxima acción sugerida</div>
+            <p className="caso-ia-placeholder">Función en desarrollo — todavía no hay recomendaciones automáticas.</p>
+          </div>
+        </div>
+      </div>
 
       <div className="caso-meta-row">
         <div className="field estado-field">
