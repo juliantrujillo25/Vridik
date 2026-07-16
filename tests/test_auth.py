@@ -27,6 +27,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from api.auth_endpoint import router as auth_router
+from core.auth_events import ensure_bitacora_hash_chain
 from core.feature_flag_legacy import (
     autenticar,
     autenticar_legacy,
@@ -98,6 +99,7 @@ async def test_dual_auth_cae_a_legacy_y_registra_auth_event(db, seed_roles, juri
     (migración parcial en curso) -> debe resolverse por legacy y dejar
     un auth_event 'legacy_fallback'."""
     monkeypatch.setenv("USE_POSTGRES", "true")
+    await ensure_bitacora_hash_chain(db)
 
     # db/seed_railway.sql (cargado por CI antes de pytest, fuera de la
     # transacción por-test de `db`) ya deja a 'soporte' en Postgres --

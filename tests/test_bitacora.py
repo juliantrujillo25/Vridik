@@ -398,8 +398,12 @@ def test_confirmar_acuse_endpoint_inexistente_da_404(bdb, bclient):
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_hash_chain_real_contra_postgres(db):
-    await db.execute("ALTER TABLE auth_events ADD COLUMN IF NOT EXISTS hash_anterior TEXT")
-    await db.execute("ALTER TABLE auth_events ADD COLUMN IF NOT EXISTS hash_actual TEXT")
+    # db/seed_railway.sql ya deja filas en auth_events (fuera de la
+    # transaccion de este test, antes de que existieran estas columnas) --
+    # hace falta sellarlas retroactivamente (ensure_bitacora_hash_chain),
+    # no solo agregar las columnas, o verificar_cadena() las marca como
+    # "ALTERADA" por tener hash_actual NULL (falso positivo).
+    await ensure_bitacora_hash_chain(db)
 
     e1 = await registrar_evento(db, event_type="login_success", user_id=None)
     e2 = await registrar_evento(db, event_type="login_success", user_id=None)

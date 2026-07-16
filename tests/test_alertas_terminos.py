@@ -24,6 +24,7 @@ os.environ.setdefault("JWT_SECRET", "vridik-test-secret-nunca-usar-en-produccion
 import pytest
 
 from core.case import create_caso, ensure_casos_table
+from core.events import ensure_events_table
 from core.terminos import (
     crear_termino,
     ensure_terminos_table,
@@ -128,13 +129,16 @@ async def test_ejecutar_ronda_marca_alerta_enviada_para_cada_termino_procesado()
 # PostgreSQL real: filtrado/idempotencia de listar_terminos_para_alertar.
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_listar_terminos_para_alertar_incluye_solo_pendientes_en_riesgo_no_avisados_hoy(db, make_user):
+async def test_listar_terminos_para_alertar_incluye_solo_pendientes_en_riesgo_no_avisados_hoy(db, make_despacho, make_user):
     await ensure_casos_table(db)
     await ensure_terminos_table(db)
 
-    cliente = await make_user(role="cliente")
-    abogado = await make_user(role="abogado")
-    caso = await create_caso(db, cliente_id=cliente["id"], titulo="Caso de prueba", abogado_id=abogado["id"])
+    despacho_id = await make_despacho()
+    cliente = await make_user(role="cliente", despacho_id=despacho_id)
+    abogado = await make_user(role="abogado", despacho_id=despacho_id)
+    caso = await create_caso(
+        db, cliente_id=cliente["id"], despacho_id=despacho_id, titulo="Caso de prueba", abogado_id=abogado["id"],
+    )
 
     hoy = date.today()
     # En riesgo (vence en 2 días -- dentro del umbral de 3): debe salir.
@@ -165,12 +169,13 @@ async def test_listar_terminos_para_alertar_incluye_solo_pendientes_en_riesgo_no
 
 
 @pytest.mark.asyncio
-async def test_marcar_alerta_enviada_hace_que_desaparezca_de_la_proxima_ronda(db, make_user):
+async def test_marcar_alerta_enviada_hace_que_desaparezca_de_la_proxima_ronda(db, make_despacho, make_user):
     await ensure_casos_table(db)
     await ensure_terminos_table(db)
 
-    cliente = await make_user(role="cliente")
-    caso = await create_caso(db, cliente_id=cliente["id"], titulo="Caso de prueba")
+    despacho_id = await make_despacho()
+    cliente = await make_user(role="cliente", despacho_id=despacho_id)
+    caso = await create_caso(db, cliente_id=cliente["id"], despacho_id=despacho_id, titulo="Caso de prueba")
     hoy = date.today()
     termino = await crear_termino(
         db, caso_id=caso["id"], created_by=cliente["id"], descripcion="vencido",
@@ -187,13 +192,17 @@ async def test_marcar_alerta_enviada_hace_que_desaparezca_de_la_proxima_ronda(db
 
 
 @pytest.mark.asyncio
-async def test_ejecutar_ronda_de_alertas_extremo_a_extremo_contra_postgres_real(db, make_user):
+async def test_ejecutar_ronda_de_alertas_extremo_a_extremo_contra_postgres_real(db, make_despacho, make_user):
     await ensure_casos_table(db)
     await ensure_terminos_table(db)
+    await ensure_events_table(db)
 
-    cliente = await make_user(role="cliente")
-    abogado = await make_user(role="abogado")
-    caso = await create_caso(db, cliente_id=cliente["id"], titulo="Caso de prueba", abogado_id=abogado["id"])
+    despacho_id = await make_despacho()
+    cliente = await make_user(role="cliente", despacho_id=despacho_id)
+    abogado = await make_user(role="abogado", despacho_id=despacho_id)
+    caso = await create_caso(
+        db, cliente_id=cliente["id"], despacho_id=despacho_id, titulo="Caso de prueba", abogado_id=abogado["id"],
+    )
     hoy = date.today()
     await crear_termino(
         db, caso_id=caso["id"], created_by=cliente["id"], descripcion="vencido",

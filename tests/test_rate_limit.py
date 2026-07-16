@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import pytest
 
-from core.auth_events import registrar_evento
+from core.auth_events import ensure_bitacora_hash_chain, registrar_evento
 from core.rate_limit import MAX_FALLOS_LOGIN, MAX_FALLOS_TOTP, excede_limite_login, excede_limite_totp
 
 
 @pytest.mark.asyncio
 async def test_no_excede_limite_login_con_pocos_fallos(db, make_user):
+    await ensure_bitacora_hash_chain(db)
     user = await make_user()
     for _ in range(MAX_FALLOS_LOGIN - 1):
         await registrar_evento(
@@ -29,6 +30,7 @@ async def test_no_excede_limite_login_con_pocos_fallos(db, make_user):
 
 @pytest.mark.asyncio
 async def test_excede_limite_login_tras_MAX_FALLOS(db, make_user):
+    await ensure_bitacora_hash_chain(db)
     user = await make_user()
     for _ in range(MAX_FALLOS_LOGIN):
         await registrar_evento(
@@ -41,6 +43,7 @@ async def test_excede_limite_login_tras_MAX_FALLOS(db, make_user):
 async def test_limite_login_es_por_email_e_ip_no_solo_email(db, make_user):
     """Los mismos fallos desde OTRA IP no deben contar para esta IP -- el
     límite es por la combinación email+IP, no solo por email."""
+    await ensure_bitacora_hash_chain(db)
     user = await make_user()
     for _ in range(MAX_FALLOS_LOGIN):
         await registrar_evento(
@@ -53,6 +56,7 @@ async def test_limite_login_es_por_email_e_ip_no_solo_email(db, make_user):
 async def test_limite_login_ignora_fallos_de_totp(db, make_user):
     """Un fallo de código TOTP (paso 2fa) no debe contar para el límite de
     contraseña -- son dos límites independientes (10 vs 5)."""
+    await ensure_bitacora_hash_chain(db)
     user = await make_user()
     for _ in range(MAX_FALLOS_LOGIN):
         await registrar_evento(
@@ -63,6 +67,7 @@ async def test_limite_login_ignora_fallos_de_totp(db, make_user):
 
 @pytest.mark.asyncio
 async def test_no_excede_limite_totp_con_pocos_fallos(db, make_user):
+    await ensure_bitacora_hash_chain(db)
     user = await make_user()
     for _ in range(MAX_FALLOS_TOTP - 1):
         await registrar_evento(db, event_type="login_failed", user_id=user["id"], metadata={"paso": "2fa"})
@@ -71,6 +76,7 @@ async def test_no_excede_limite_totp_con_pocos_fallos(db, make_user):
 
 @pytest.mark.asyncio
 async def test_excede_limite_totp_tras_MAX_FALLOS(db, make_user):
+    await ensure_bitacora_hash_chain(db)
     user = await make_user()
     for _ in range(MAX_FALLOS_TOTP):
         await registrar_evento(db, event_type="login_failed", user_id=user["id"], metadata={"paso": "2fa"})
@@ -80,6 +86,7 @@ async def test_excede_limite_totp_tras_MAX_FALLOS(db, make_user):
 @pytest.mark.asyncio
 async def test_limite_totp_es_por_usuario(db, make_user):
     """Los fallos de TOTP de un usuario no deben contar para otro."""
+    await ensure_bitacora_hash_chain(db)
     victima = await make_user()
     otro = await make_user()
     for _ in range(MAX_FALLOS_TOTP):
@@ -92,6 +99,7 @@ async def test_ip_desconocida_se_agrupa_consigo_misma(db, make_user):
     """Sin IP determinable (None), los intentos deben seguir agrupándose
     entre sí -- IS NOT DISTINCT FROM, no una igualdad que nunca matchea con
     NULL."""
+    await ensure_bitacora_hash_chain(db)
     user = await make_user()
     for _ in range(MAX_FALLOS_LOGIN):
         await registrar_evento(
