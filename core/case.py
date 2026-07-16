@@ -42,7 +42,7 @@ from __future__ import annotations
 from core.db_utils import conexion_dedicada, transaccion_si_disponible
 from core.despachos import ensure_despachos_table
 
-_COLUMNAS = "id, cliente_id, abogado_id, despacho_id, titulo, descripcion, estado, created_at, updated_at"
+COLUMNAS_CASO = "id, cliente_id, abogado_id, despacho_id, titulo, descripcion, estado, created_at, updated_at"
 
 _LOCK_KEY_CASOS_BACKFILL = "vridik_casos_despacho_backfill"
 
@@ -113,7 +113,7 @@ async def create_caso(
         f"""
         INSERT INTO casos (cliente_id, abogado_id, despacho_id, titulo, descripcion)
         VALUES ($1, $2, $3, $4, $5)
-        RETURNING {_COLUMNAS}
+        RETURNING {COLUMNAS_CASO}
         """,
         cliente_id, abogado_id, despacho_id, titulo, descripcion,
     )
@@ -121,7 +121,7 @@ async def create_caso(
 
 
 async def get_caso(db_connection, caso_id: str) -> dict | None:
-    fila = await db_connection.fetchrow(f"SELECT {_COLUMNAS} FROM casos WHERE id = $1", caso_id)
+    fila = await db_connection.fetchrow(f"SELECT {COLUMNAS_CASO} FROM casos WHERE id = $1", caso_id)
     return dict(fila) if fila is not None else None
 
 
@@ -135,13 +135,13 @@ async def list_casos_for_user(
     y por construcción esos casos ya son de su propio despacho)."""
     if is_admin:
         filas = await db_connection.fetch(
-            f"SELECT {_COLUMNAS} FROM casos WHERE despacho_id = $1 ORDER BY created_at DESC OFFSET $2 LIMIT $3",
+            f"SELECT {COLUMNAS_CASO} FROM casos WHERE despacho_id = $1 ORDER BY created_at DESC OFFSET $2 LIMIT $3",
             despacho_id, skip, limit,
         )
     else:
         filas = await db_connection.fetch(
             f"""
-            SELECT {_COLUMNAS} FROM casos
+            SELECT {COLUMNAS_CASO} FROM casos
             WHERE cliente_id = $1 OR abogado_id = $1
             ORDER BY created_at DESC
             OFFSET $2 LIMIT $3
@@ -168,7 +168,7 @@ async def asignar_abogado(db_connection, *, caso_id: str, abogado_id: str) -> di
     fila = await db_connection.fetchrow(
         f"""
         UPDATE casos SET abogado_id = $2, updated_at = now() WHERE id = $1
-        RETURNING {_COLUMNAS}
+        RETURNING {COLUMNAS_CASO}
         """,
         caso_id, abogado_id,
     )
@@ -179,7 +179,7 @@ async def cambiar_estado(db_connection, *, caso_id: str, estado: str) -> dict | 
     fila = await db_connection.fetchrow(
         f"""
         UPDATE casos SET estado = $2, updated_at = now() WHERE id = $1
-        RETURNING {_COLUMNAS}
+        RETURNING {COLUMNAS_CASO}
         """,
         caso_id, estado,
     )

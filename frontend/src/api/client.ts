@@ -15,6 +15,8 @@ import type {
   CambiarPasswordInput,
   Caso,
   CaseDocument,
+  Cliente,
+  ClienteDetalle,
   Cobro,
   CostosResponse,
   CrearDocumentoInput,
@@ -26,6 +28,7 @@ import type {
   EventoSSE,
   IntegridadBitacora,
   LoginResponse,
+  MatrizRiesgo,
   Mensaje,
   Notificacion,
   Perfil,
@@ -35,6 +38,7 @@ import type {
   ResumenAhorro,
   Role,
   SetCobroInput,
+  SetMatrizRiesgoInput,
   Setup2FAResponse,
   Termino,
   TokenPair,
@@ -462,6 +466,25 @@ class ApiClient {
       method: "PATCH",
       body: JSON.stringify({ plan }),
     });
+  }
+
+  // --- Fase 4: SAGRILAFT lite (matriz de riesgo por cliente) ----------------
+  /** Exclusivo de abogado/admin del despacho (lo exige el backend). */
+  listClientes(): Promise<Cliente[]> {
+    return this.request("/clientes");
+  }
+
+  getCliente(clienteId: string): Promise<ClienteDetalle> {
+    return this.request(`/clientes/${clienteId}`);
+  }
+
+  getMatrizRiesgo(clienteId: string): Promise<MatrizRiesgo | null> {
+    return this.request(`/clientes/${clienteId}/riesgo`);
+  }
+
+  /** Exclusivo de abogado/admin -- nunca el propio cliente (lo exige el backend). */
+  setMatrizRiesgo(clienteId: string, input: SetMatrizRiesgoInput): Promise<MatrizRiesgo> {
+    return this.request(`/clientes/${clienteId}/riesgo`, { method: "POST", body: JSON.stringify(input) });
   }
 
   // --- eventos en vivo (SSE, roadmap S11 Fase C) ---------------------------

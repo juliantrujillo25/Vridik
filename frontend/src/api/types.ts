@@ -288,3 +288,47 @@ export interface IntegridadBitacora {
   total_verificados: number;
   primera_ruptura_id: number | null;
 }
+
+// --- Fase 4: SAGRILAFT lite (matriz de riesgo por cliente) -----------------
+// GET /clientes -- lista del despacho, exclusiva de abogado/admin.
+export interface Cliente {
+  id: string;
+  email: string;
+  created_at: string;
+}
+
+// GET /clientes/{id} -- perfil + historial de casos.
+export interface ClienteDetalle extends Cliente {
+  casos: Caso[];
+}
+
+export type NivelRiesgo = "bajo" | "medio" | "alto";
+export type TipoPersona = "natural" | "juridica";
+export type Canal = "presencial" | "no_presencial";
+
+// GET/POST /clientes/{id}/riesgo -- nivel_riesgo_calculado SIEMPRE lo
+// calcula el backend (core/cumplimiento.py), nunca se propone desde acá
+// (mismo principio que honorarios_liquidados en Cobro). Herramienta de
+// apoyo, no un motor de compliance certificado -- ver disclaimer en
+// ClienteDetailPage.tsx.
+export interface MatrizRiesgo {
+  cliente_id: string;
+  despacho_id: string;
+  tipo_persona: TipoPersona;
+  actividad_economica_riesgo: NivelRiesgo;
+  jurisdiccion_riesgo: NivelRiesgo;
+  canal: Canal;
+  es_pep: boolean;
+  nivel_riesgo_calculado: NivelRiesgo;
+  evaluado_por: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SetMatrizRiesgoInput {
+  tipo_persona: TipoPersona;
+  actividad_economica_riesgo: NivelRiesgo;
+  jurisdiccion_riesgo: NivelRiesgo;
+  canal: Canal;
+  es_pep: boolean;
+}

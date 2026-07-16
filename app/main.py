@@ -49,6 +49,7 @@ from api.admin_endpoint import router as admin_router
 from api.auth_endpoint import router as auth_router
 from api.case_documents_endpoint import router as case_documents_router
 from api.casos_endpoint import router as casos_router
+from api.clientes_endpoint import router as clientes_router
 from api.cobro_endpoint import router as cobro_router
 from api.events_endpoint import router as events_router
 from api.bitacora_endpoint import router as bitacora_router
@@ -122,6 +123,11 @@ app.include_router(bitacora_router)
 # despacho), único lugar de la app donde ver/tocar TODOS los despachos sin
 # scoping es correcto por diseño (ver core/despachos.py).
 app.include_router(platform_router)
+
+# Fase 4: SAGRILAFT lite -- vista de cliente + matriz de riesgo por cliente
+# (core/clientes.py, core/cumplimiento.py). Herramienta de apoyo, no un
+# motor de compliance certificado -- ver docstring de core/cumplimiento.py.
+app.include_router(clientes_router)
 
 
 @app.on_event("startup")

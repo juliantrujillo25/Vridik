@@ -10,6 +10,8 @@ import { CasoDetailPage } from "./casos/CasoDetailPage";
 import { AccountPage } from "./account/AccountPage";
 import { AdminPage } from "./admin/AdminPage";
 import { PlatformPage } from "./platform/PlatformPage";
+import { ClientesListPage } from "./clientes/ClientesListPage";
+import { ClienteDetailPage } from "./clientes/ClienteDetailPage";
 import "./index.css";
 import "./layout.css";
 
@@ -23,6 +25,8 @@ const router = createBrowserRouter([
       { index: true, element: <Navigate to="/casos" replace /> },
       { path: "casos", element: <CasosListPage /> },
       { path: "casos/:id", element: <CasoDetailPage /> },
+      { path: "clientes", element: <ClientesListPage /> },
+      { path: "clientes/:id", element: <ClienteDetailPage /> },
       { path: "cuenta", element: <AccountPage /> },
       { path: "admin", element: <AdminPage /> },
       { path: "plataforma", element: <PlatformPage /> },

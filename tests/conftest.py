@@ -252,12 +252,21 @@ async def make_user(db, seed_roles, make_despacho):
             despacho_id = await make_despacho()
         user_id = str(uuid.uuid4())
         email = email or f"user-{user_id[:8]}@vridik.local"
+        # `role` TEXT (no `role_id`) es la fuente real que lee toda la app
+        # (core/admin.py::ensure_role_column, api/admin_endpoint.py::_resolver_
+        # usuario) -- `role_id` es una capa secundaria de la migración 005 que
+        # nunca se sincroniza sola. Sin setearla acá, cualquier usuario creado
+        # por este factory con un rol distinto de 'cliente' quedaba con
+        # role='cliente' (el DEFAULT) para cualquier chequeo real de
+        # autorización, un gap que nunca se notó porque ningún test real de
+        # Postgres había dependido del texto del rol hasta ahora.
+        await db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'cliente'")
         await db.execute(
             """
-            INSERT INTO users (id, email, nombre_completo, role_id, despacho_id, must_change, is_active)
-            VALUES ($1, $2, $3, $4, $5, false, true)
+            INSERT INTO users (id, email, nombre_completo, role_id, role, despacho_id, must_change, is_active)
+            VALUES ($1, $2, $3, $4, $5, $6, false, true)
             """,
-            user_id, email, "Usuario de prueba", ROLE_IDS[role], despacho_id,
+            user_id, email, "Usuario de prueba", ROLE_IDS[role], role, despacho_id,
         )
         password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=4)).decode()
         await db.execute(

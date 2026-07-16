@@ -23,6 +23,9 @@ export function ProtectedLayout() {
             <span className="brand-sub">copiloto legal</span>
           </Link>
           <nav className="app-nav">
+            {(perfil?.role === "admin" || perfil?.role === "abogado") && (
+              <Link className="btn btn-ghost btn-sm" to="/clientes">Clientes</Link>
+            )}
             {perfil?.role === "admin" && (
               <Link className="btn btn-ghost btn-sm" to="/admin">Admin</Link>
             )}
