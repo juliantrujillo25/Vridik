@@ -64,6 +64,12 @@ async def notificar_evento(conn, *, user_id: str, tipo: str, payload: dict | Non
     que viaja en el NOTIFY y en el campo `id:` de SSE, así el cliente
     puede usarlo tal cual como Last-Event-ID en la próxima reconexión) y
     lo notifica en vivo. Devuelve el id asignado."""
+    # default=str: el payload suele traer IDs devueltos por asyncpg (UUID de
+    # verdad, no str) tal cual salen de una fila -- p.ej. actuacion["id"] en
+    # api/actuaciones_endpoint.py. Sin esto, json.dumps revienta con
+    # "Object of type UUID is not JSON serializable" apenas un caller pase
+    # un valor así (bug real encontrado en producción: rompía POST
+    # /casos/{id}/actuaciones con 500 cada vez que había un destinatario).
     cuerpo = payload or {}
     fila = await conn.fetchrow(
         """
@@ -71,11 +77,11 @@ async def notificar_evento(conn, *, user_id: str, tipo: str, payload: dict | Non
         VALUES ($1, $2, $3::jsonb)
         RETURNING id
         """,
-        user_id, tipo, json.dumps(cuerpo),
+        user_id, tipo, json.dumps(cuerpo, default=str),
     )
     evento_id = fila["id"]
 
-    mensaje = json.dumps({"id": evento_id, "type": tipo, **cuerpo})
+    mensaje = json.dumps({"id": evento_id, "type": tipo, **cuerpo}, default=str)
     await conn.execute("SELECT pg_notify($1, $2)", canal_de_usuario(user_id), mensaje)
 
     await conn.execute(f"DELETE FROM user_events WHERE created_at < now() - interval '{TTL_HORAS_BUFFER} hours'")

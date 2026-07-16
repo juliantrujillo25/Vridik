@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import uuid
 
 import pytest
 
@@ -76,6 +77,28 @@ async def test_notificar_evento_sin_payload_solo_lleva_id_y_type():
     data = json.loads(cuerpo)
     assert data["type"] == "pdf.ready"
     assert "id" in data
+
+
+@pytest.mark.asyncio
+async def test_notificar_evento_acepta_uuid_reales_en_el_payload():
+    """Bug real encontrado en producción (verificación de analítica UGPP,
+    16-jul-2026): asyncpg devuelve `uuid.UUID` de verdad para columnas UUID
+    (no str) -- api/actuaciones_endpoint.py pasa actuacion["id"] tal cual
+    en el payload, y json.dumps() sin default=str reventaba con
+    "Object of type UUID is not JSON serializable", rompiendo POST
+    /casos/{id}/actuaciones con 500 cada vez que había un destinatario."""
+    conn = _FakeNotifyConn()
+    actuacion_id = uuid.uuid4()
+
+    evento_id = await notificar_evento(
+        conn, user_id="user-uuid", tipo="actuacion.nueva",
+        payload={"caso_id": "caso-abc", "actuacion_id": actuacion_id},
+    )
+
+    assert evento_id == 1
+    _, (_, cuerpo) = [c for c in conn.llamadas if "pg_notify" in c[0]][0]
+    data = json.loads(cuerpo)
+    assert data["actuacion_id"] == str(actuacion_id)
 
 
 @pytest.mark.asyncio
