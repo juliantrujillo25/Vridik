@@ -26,7 +26,17 @@ async def test_backfill_asigna_despacho_por_defecto_a_usuarios_sin_despacho(db):
     """Simula el escenario real: un usuario insertado ANTES de que
     despacho_id existiera (columna todavía sin agregar, `ensure_despachos_
     backfill` la crea acá adentro) no debe quedar sin despacho después del
-    backfill."""
+    backfill.
+
+    `DROP NOT NULL` primero -- hardening RLS (tests/conftest.py::
+    _backfill_de_sesion) ya corrió el backfill real UNA vez por sesión
+    (con su propia conexión que sí comitea) para que ensure_rls_policies()
+    no se salte FORCE ROW LEVEL SECURITY por filas legacy pendientes --
+    eso deja despacho_id NOT NULL a nivel de esquema, persistente entre
+    tests. Sacar el constraint acá (DDL transaccional, se revierte solo al
+    ROLLBACK de esta transacción) es lo que permite seguir simulando el
+    estado "recién migrando" sin tocar ningún otro test."""
+    await db.execute("ALTER TABLE users ALTER COLUMN despacho_id DROP NOT NULL")
     fila = await db.fetchrow(
         """
         INSERT INTO users (email, nombre_completo, role_id, is_active)
@@ -49,7 +59,9 @@ async def test_backfill_asigna_despacho_por_defecto_a_usuarios_sin_despacho(db):
 async def test_backfill_es_idempotente(db):
     """Correr el backfill dos veces seguidas no debe fallar (SET NOT NULL
     sobre una columna ya NOT NULL es un no-op en Postgres) ni duplicar
-    "Despacho por defecto"."""
+    "Despacho por defecto". Mismo motivo del DROP NOT NULL que el test de
+    arriba -- ver ese docstring."""
+    await db.execute("ALTER TABLE users ALTER COLUMN despacho_id DROP NOT NULL")
     await db.fetchrow(
         """
         INSERT INTO users (email, nombre_completo, role_id, is_active)
