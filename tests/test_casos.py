@@ -65,11 +65,11 @@ class _FakeCasosDB:
             u = self.users.get(user_id)
             return {"despacho_id": u["despacho_id"]} if u else None
         if q.startswith("INSERT INTO casos"):
-            cliente_id, abogado_id, despacho_id, titulo, descripcion = args
+            cliente_id, abogado_id, despacho_id, titulo, descripcion, materia = args
             caso_id = str(uuid.uuid4())
             caso = {
                 "id": caso_id, "cliente_id": cliente_id, "abogado_id": abogado_id, "despacho_id": despacho_id,
-                "titulo": titulo, "descripcion": descripcion, "estado": "abierto",
+                "titulo": titulo, "descripcion": descripcion, "estado": "abierto", "materia": materia,
                 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00",
             }
             self.casos[caso_id] = caso
@@ -91,6 +91,13 @@ class _FakeCasosDB:
             if c is None:
                 return None
             c["estado"] = estado
+            return dict(c)
+        if q.startswith("UPDATE casos SET materia"):
+            caso_id, materia = args
+            c = self.casos.get(caso_id)
+            if c is None:
+                return None
+            c["materia"] = materia
             return dict(c)
         return None
 
@@ -250,6 +257,44 @@ def test_estado_invalido_rechazado(casos_db, casos_client):
 
     r = casos_client.patch(
         f"/casos/{caso['id']}/estado", json={"estado": "no-existe"},
+        headers={"Authorization": f"Bearer {_token_de(cliente)}"},
+    )
+    assert r.status_code == 422
+
+
+def test_cliente_puede_marcar_materia_de_su_caso(casos_db, casos_client):
+    cliente = casos_db.seed_user(email="cliente_materia1@vridik.local")
+    caso = casos_client.post(
+        "/casos", json={"titulo": "caso"}, headers={"Authorization": f"Bearer {_token_de(cliente)}"},
+    ).json()
+    assert caso["materia"] is None
+
+    r = casos_client.patch(
+        f"/casos/{caso['id']}/materia", json={"materia": "ugpp"},
+        headers={"Authorization": f"Bearer {_token_de(cliente)}"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["materia"] == "ugpp"
+
+
+def test_crear_caso_con_materia(casos_db, casos_client):
+    cliente = casos_db.seed_user(email="cliente_materia2@vridik.local")
+    r = casos_client.post(
+        "/casos", json={"titulo": "caso", "materia": "laboral"},
+        headers={"Authorization": f"Bearer {_token_de(cliente)}"},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["materia"] == "laboral"
+
+
+def test_materia_invalida_rechazada(casos_db, casos_client):
+    cliente = casos_db.seed_user(email="cliente_materia3@vridik.local")
+    caso = casos_client.post(
+        "/casos", json={"titulo": "caso"}, headers={"Authorization": f"Bearer {_token_de(cliente)}"},
+    ).json()
+
+    r = casos_client.patch(
+        f"/casos/{caso['id']}/materia", json={"materia": "penal"},
         headers={"Authorization": f"Bearer {_token_de(cliente)}"},
     )
     assert r.status_code == 422

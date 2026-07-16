@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, SesionExpiradaError } from "../api/client";
-import type { AdminUser, Caso, CaseDocument, EstadoCaso } from "../api/types";
+import type { AdminUser, Caso, CaseDocument, EstadoCaso, Materia } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
-import { ESTADOS, ESTADO_LABEL, EstadoPill, fechaHora, separarAvisoRevisar } from "../ui";
+import { ESTADOS, ESTADO_LABEL, EstadoPill, fechaHora, MATERIA_LABEL, MATERIAS, separarAvisoRevisar } from "../ui";
 import { ActuacionesYTerminos } from "./ActuacionesYTerminos";
 import { CobroPanel } from "./Cobro";
 import { Mensajes } from "./Mensajes";
@@ -69,6 +69,15 @@ export function CasoDetailPage() {
       setCaso(await api.cambiarEstado(caso.id, estado));
     } catch (err) {
       manejarError(err, "No se pudo cambiar el estado.");
+    }
+  }
+
+  async function onCambiarMateria(materia: Materia) {
+    if (!caso || materia === caso.materia) return;
+    try {
+      setCaso(await api.cambiarMateria(caso.id, materia));
+    } catch (err) {
+      manejarError(err, "No se pudo cambiar la materia.");
     }
   }
 
@@ -189,6 +198,20 @@ export function CasoDetailPage() {
           >
             {ESTADOS.map((e) => (
               <option key={e} value={e}>{ESTADO_LABEL[e]}</option>
+            ))}
+          </select>
+        </div>
+        <div className="field estado-field">
+          <label htmlFor="materia">Materia</label>
+          <select
+            id="materia"
+            className="select"
+            value={caso.materia ?? ""}
+            onChange={(e) => { if (e.target.value) void onCambiarMateria(e.target.value as Materia); }}
+          >
+            <option value="" disabled>— Sin clasificar —</option>
+            {MATERIAS.map((m) => (
+              <option key={m} value={m}>{MATERIA_LABEL[m]}</option>
             ))}
           </select>
         </div>

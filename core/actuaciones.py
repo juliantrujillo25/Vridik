@@ -17,7 +17,22 @@ from __future__ import annotations
 
 from core.case import ensure_casos_table
 
-_COLUMNAS = "id, caso_id, created_by, texto, categoria, confianza, texto_bruto_clasificacion, created_at"
+_COLUMNAS = (
+    "id, caso_id, created_by, texto, categoria, confianza, texto_bruto_clasificacion, "
+    "resultado, tipo_resolucion_ugpp, created_at"
+)
+
+RESULTADOS_VALIDOS = ("favorable", "desfavorable", "parcial")
+
+
+class ActuacionError(Exception):
+    """Base de errores de negocio de este módulo."""
+
+
+class ActuacionNoEsFalloError(ActuacionError):
+    """resultado/tipo_resolucion_ugpp solo tienen sentido sobre una
+    actuación clasificada como 'fallo' -- un auto admisorio o un traslado
+    no tienen un "resultado" que registrar."""
 
 
 async def ensure_actuaciones_table(db_connection) -> None:
@@ -38,6 +53,24 @@ async def ensure_actuaciones_table(db_connection) -> None:
         )
         """
     )
+    # resultado/tipo_resolucion_ugpp (roadmap Fase 4: analítica UGPP) --
+    # nunca los propone la clasificación automática (Haiku solo clasifica
+    # categoria/confianza) -- los marca a mano el abogado/admin después de
+    # leer el fallo, vía set_resultado_actuacion(). tipo_resolucion_ugpp es
+    # texto libre a propósito: las siglas reales (RQI/RCD/RDO/RDC...) no
+    # están confirmadas con el despacho, un CHECK fijo arriesgaría rechazar
+    # una categorización legal válida.
+    await db_connection.execute("ALTER TABLE actuaciones ADD COLUMN IF NOT EXISTS resultado TEXT")
+    await db_connection.execute(
+        """
+        DO $$ BEGIN
+            ALTER TABLE actuaciones ADD CONSTRAINT actuaciones_resultado_check
+                CHECK (resultado IS NULL OR resultado IN ('favorable', 'desfavorable', 'parcial'));
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
+        """
+    )
+    await db_connection.execute("ALTER TABLE actuaciones ADD COLUMN IF NOT EXISTS tipo_resolucion_ugpp TEXT")
     await db_connection.execute(
         "CREATE INDEX IF NOT EXISTS ix_actuaciones_caso_id ON actuaciones (caso_id, created_at DESC)"
     )
@@ -67,4 +100,28 @@ async def list_actuaciones(db_connection, *, caso_id: str) -> list[dict]:
 
 async def get_actuacion(db_connection, actuacion_id: str) -> dict | None:
     fila = await db_connection.fetchrow(f"SELECT {_COLUMNAS} FROM actuaciones WHERE id = $1", actuacion_id)
+    return dict(fila) if fila is not None else None
+
+
+async def set_resultado_actuacion(
+    db_connection, *, actuacion_id: str, resultado: str, tipo_resolucion_ugpp: str | None,
+) -> dict | None:
+    """Solo se puede marcar sobre una actuación ya clasificada como 'fallo'
+    -- devuelve None si la actuación no existe (el llamador decide si eso
+    es 404), levanta ActuacionNoEsFalloError si existe pero no es un fallo."""
+    actuacion = await get_actuacion(db_connection, actuacion_id)
+    if actuacion is None:
+        return None
+    if actuacion["categoria"] != "fallo":
+        raise ActuacionNoEsFalloError(
+            f"La actuación {actuacion_id!r} es {actuacion['categoria']!r}, no 'fallo' -- no tiene resultado que registrar"
+        )
+
+    fila = await db_connection.fetchrow(
+        f"""
+        UPDATE actuaciones SET resultado = $2, tipo_resolucion_ugpp = $3 WHERE id = $1
+        RETURNING {_COLUMNAS}
+        """,
+        actuacion_id, resultado, tipo_resolucion_ugpp,
+    )
     return dict(fila) if fila is not None else None

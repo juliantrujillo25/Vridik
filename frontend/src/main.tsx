@@ -13,6 +13,7 @@ import { PlatformPage } from "./platform/PlatformPage";
 import { ClientesListPage } from "./clientes/ClientesListPage";
 import { ClienteDetailPage } from "./clientes/ClienteDetailPage";
 import { ReporteRiesgoPage } from "./clientes/ReporteRiesgoPage";
+import { AnaliticaUgppPage } from "./analitica/AnaliticaUgppPage";
 import "./index.css";
 import "./layout.css";
 
@@ -29,6 +30,7 @@ const router = createBrowserRouter([
       { path: "clientes", element: <ClientesListPage /> },
       { path: "clientes/reporte-riesgo", element: <ReporteRiesgoPage /> },
       { path: "clientes/:id", element: <ClienteDetailPage /> },
+      { path: "analitica/ugpp", element: <AnaliticaUgppPage /> },
       { path: "cuenta", element: <AccountPage /> },
       { path: "admin", element: <AdminPage /> },
       { path: "plataforma", element: <PlatformPage /> },

@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, SesionExpiradaError } from "../api/client";
-import type { Actuacion, ActuacionNuevaEvent, EventoSSE, Termino, TerminoAlertaEvent } from "../api/types";
-import { CATEGORIA_LABEL, fechaCorta, fechaHora, semaforoTermino } from "../ui";
+import type {
+  Actuacion, ActuacionNuevaEvent, EventoSSE, ResultadoActuacion, Termino, TerminoAlertaEvent,
+} from "../api/types";
+import { useAuth } from "../auth/AuthContext";
+import { CATEGORIA_LABEL, fechaCorta, fechaHora, RESULTADO_LABEL, ResultadoPill, semaforoTermino } from "../ui";
+
+const RESULTADOS: ResultadoActuacion[] = ["favorable", "desfavorable", "parcial"];
 
 function esActuacionNueva(ev: EventoSSE, casoId: string): ev is ActuacionNuevaEvent {
   return ev.type === "actuacion.nueva" && (ev as ActuacionNuevaEvent).caso_id === casoId;
@@ -33,9 +38,17 @@ interface Props {
 }
 
 export function ActuacionesYTerminos({ casoId, onGenerarBorrador }: Props) {
+  const { perfil } = useAuth();
+  const puedeRegistrarResultado = perfil?.role === "admin" || perfil?.role === "abogado";
+
   const [actuaciones, setActuaciones] = useState<Actuacion[] | null>(null);
   const [terminos, setTerminos] = useState<Termino[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [editandoResultadoId, setEditandoResultadoId] = useState<string | null>(null);
+  const [resultadoForm, setResultadoForm] = useState<ResultadoActuacion>("favorable");
+  const [tipoResolucionForm, setTipoResolucionForm] = useState("");
+  const [guardandoResultado, setGuardandoResultado] = useState(false);
 
   const [textoActuacion, setTextoActuacion] = useState("");
   const [clasificando, setClasificando] = useState(false);
@@ -128,6 +141,28 @@ export function ActuacionesYTerminos({ casoId, onGenerarBorrador }: Props) {
       manejarError(err, "No se pudo crear el término.");
     } finally {
       setCreandoTermino(false);
+    }
+  }
+
+  function onIniciarResultado(a: Actuacion) {
+    setResultadoForm(a.resultado ?? "favorable");
+    setTipoResolucionForm(a.tipo_resolucion_ugpp ?? "");
+    setEditandoResultadoId(a.id);
+  }
+
+  async function onGuardarResultado(actuacionId: string) {
+    setGuardandoResultado(true);
+    try {
+      const actualizada = await api.setResultadoActuacion(casoId, actuacionId, {
+        resultado: resultadoForm,
+        tipo_resolucion_ugpp: tipoResolucionForm.trim() || null,
+      });
+      setActuaciones((prev) => prev?.map((a) => (a.id === actuacionId ? actualizada : a)) ?? prev);
+      setEditandoResultadoId(null);
+    } catch (err) {
+      manejarError(err, "No se pudo guardar el resultado.");
+    } finally {
+      setGuardandoResultado(false);
     }
   }
 
@@ -312,6 +347,60 @@ export function ActuacionesYTerminos({ casoId, onGenerarBorrador }: Props) {
                       </button>
                     )}
                   </div>
+                  {a.categoria === "fallo" && (
+                    <div className="doc-row-meta actuacion-resultado">
+                      {editandoResultadoId === a.id ? (
+                        <>
+                          <select
+                            className="select"
+                            value={resultadoForm}
+                            onChange={(e) => setResultadoForm(e.target.value as ResultadoActuacion)}
+                          >
+                            {RESULTADOS.map((r) => (
+                              <option key={r} value={r}>{RESULTADO_LABEL[r]}</option>
+                            ))}
+                          </select>
+                          <input
+                            className="input"
+                            placeholder="Tipo de resolución (opcional, ej. RQI)"
+                            value={tipoResolucionForm}
+                            onChange={(e) => setTipoResolucionForm(e.target.value)}
+                          />
+                          <button
+                            className="btn btn-primary btn-sm"
+                            type="button"
+                            disabled={guardandoResultado}
+                            onClick={() => void onGuardarResultado(a.id)}
+                          >
+                            {guardandoResultado ? <span className="spinner" /> : "Guardar"}
+                          </button>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            type="button"
+                            onClick={() => setEditandoResultadoId(null)}
+                          >
+                            Cancelar
+                          </button>
+                        </>
+                      ) : a.resultado ? (
+                        <>
+                          <ResultadoPill resultado={a.resultado} />
+                          {a.tipo_resolucion_ugpp && <span className="faint mono">{a.tipo_resolucion_ugpp}</span>}
+                          {puedeRegistrarResultado && (
+                            <button className="btn btn-ghost btn-sm" type="button" onClick={() => onIniciarResultado(a)}>
+                              Editar
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        puedeRegistrarResultado && (
+                          <button className="btn btn-ghost btn-sm" type="button" onClick={() => onIniciarResultado(a)}>
+                            Registrar resultado
+                          </button>
+                        )
+                      )}
+                    </div>
+                  )}
                 </div>
               </li>
             ))}

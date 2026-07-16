@@ -15,6 +15,10 @@ GET  /casos/{id}           detalle de un caso -- mismo criterio de
 PATCH /casos/{id}/abogado  asigna/reasigna abogado -- solo admin.
 PATCH /casos/{id}/estado   cambia el estado -- dueño (cliente/abogado) o
                             admin.
+PATCH /casos/{id}/materia  marca la materia (ugpp/laboral/otro) -- roadmap
+                            Fase 4, insumo de /analitica/ugpp -- dueño
+                            (cliente/abogado) o admin, mismo criterio que
+                            estado.
 
 Ownership (mismo criterio que api/case_documents_endpoint.py): cliente_id
 del caso, abogado_id asignado, o admin.
@@ -31,6 +35,7 @@ from core.case import (
     AbogadoDespachoDistintoError,
     asignar_abogado,
     cambiar_estado,
+    cambiar_materia,
     create_caso,
     ensure_casos_table,
     get_caso,
@@ -40,12 +45,14 @@ from core.case import (
 router = APIRouter(prefix="/casos", tags=["casos"])
 
 ESTADOS_VALIDOS = ("abierto", "en_progreso", "cerrado")
+MATERIAS_VALIDAS = ("ugpp", "laboral", "otro")
 
 
 class CrearCasoRequest(BaseModel):
     titulo: str = Field(..., min_length=1)
     descripcion: str | None = None
     cliente_id: str | None = None  # solo admin puede pasarlo distinto al propio
+    materia: str | None = None
 
 
 class AsignarAbogadoRequest(BaseModel):
@@ -54,6 +61,10 @@ class AsignarAbogadoRequest(BaseModel):
 
 class CambiarEstadoRequest(BaseModel):
     estado: str
+
+
+class CambiarMateriaRequest(BaseModel):
+    materia: str
 
 
 def _exige_acceso_a_caso(caso: dict, current: dict) -> None:
@@ -77,6 +88,9 @@ async def _caso_o_404(conn, caso_id: str) -> dict:
 
 @router.post("", status_code=201)
 async def crear_caso(payload: CrearCasoRequest, request: Request, current: dict = Depends(get_current_user)):
+    if payload.materia is not None and payload.materia not in MATERIAS_VALIDAS:
+        raise HTTPException(status_code=422, detail=f"Materia inválida (válidas: {MATERIAS_VALIDAS})")
+
     conn = _get_db(request)
     await ensure_casos_table(conn)
 
@@ -95,7 +109,7 @@ async def crear_caso(payload: CrearCasoRequest, request: Request, current: dict 
 
     return await create_caso(
         conn, cliente_id=cliente_id, despacho_id=current["despacho_id"],
-        titulo=payload.titulo, descripcion=payload.descripcion,
+        titulo=payload.titulo, descripcion=payload.descripcion, materia=payload.materia,
     )
 
 
@@ -148,3 +162,17 @@ async def cambiar_estado_endpoint(
     caso = await _caso_o_404(conn, caso_id)
     _exige_acceso_a_caso(caso, current)
     return await cambiar_estado(conn, caso_id=caso_id, estado=payload.estado)
+
+
+@router.patch("/{caso_id}/materia")
+async def cambiar_materia_endpoint(
+    caso_id: str, payload: CambiarMateriaRequest, request: Request, current: dict = Depends(get_current_user),
+):
+    if payload.materia not in MATERIAS_VALIDAS:
+        raise HTTPException(status_code=422, detail=f"Materia inválida (válidas: {MATERIAS_VALIDAS})")
+
+    conn = _get_db(request)
+    await ensure_casos_table(conn)
+    caso = await _caso_o_404(conn, caso_id)
+    _exige_acceso_a_caso(caso, current)
+    return await cambiar_materia(conn, caso_id=caso_id, materia=payload.materia)

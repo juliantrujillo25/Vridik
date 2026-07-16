@@ -26,6 +26,9 @@ export function ProtectedLayout() {
             {(perfil?.role === "admin" || perfil?.role === "abogado") && (
               <Link className="btn btn-ghost btn-sm" to="/clientes">Clientes</Link>
             )}
+            {(perfil?.role === "admin" || perfil?.role === "abogado") && (
+              <Link className="btn btn-ghost btn-sm" to="/analitica/ugpp">Analítica UGPP</Link>
+            )}
             {perfil?.role === "admin" && (
               <Link className="btn btn-ghost btn-sm" to="/admin">Admin</Link>
             )}

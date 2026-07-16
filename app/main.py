@@ -46,6 +46,7 @@ import asyncpg
 from api.julix_endpoint import app
 from api.actuaciones_endpoint import router as actuaciones_router
 from api.admin_endpoint import router as admin_router
+from api.analitica_endpoint import router as analitica_router
 from api.auth_endpoint import router as auth_router
 from api.case_documents_endpoint import router as case_documents_router
 from api.casos_endpoint import router as casos_router
@@ -128,6 +129,13 @@ app.include_router(platform_router)
 # (core/clientes.py, core/cumplimiento.py). Herramienta de apoyo, no un
 # motor de compliance certificado -- ver docstring de core/cumplimiento.py.
 app.include_router(clientes_router)
+
+# Fase 4: analítica UGPP sobre casos propios del despacho -- el corpus
+# jurisprudencial sigue incompleto (85/400+ chunks), así que esto NO
+# analiza jurisprudencia externa ni perfila jueces (advertencia SAMAI del
+# roadmap), solo agrega los resultados que el propio despacho registra
+# (ver core/analitica.py).
+app.include_router(analitica_router)
 
 
 @app.on_event("startup")

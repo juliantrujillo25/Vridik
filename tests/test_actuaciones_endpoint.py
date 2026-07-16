@@ -58,6 +58,15 @@ class _FakeActuacionesDB:
         }
         return self.casos[caso_id]
 
+    def seed_actuacion(self, *, caso_id: str, categoria: str = "fallo", created_by: str = "u") -> dict:
+        actuacion_id = str(uuid.uuid4())
+        self.actuaciones[actuacion_id] = {
+            "id": actuacion_id, "caso_id": caso_id, "created_by": created_by, "texto": "texto",
+            "categoria": categoria, "confianza": 0.9, "texto_bruto_clasificacion": None,
+            "resultado": None, "tipo_resolucion_ugpp": None, "created_at": _ahora(),
+        }
+        return self.actuaciones[actuacion_id]
+
     async def execute(self, query: str, *args):
         q = query.strip()
         if q.startswith("SELECT pg_notify"):
@@ -114,10 +123,22 @@ class _FakeActuacionesDB:
             actuacion = {
                 "id": actuacion_id, "caso_id": caso_id, "created_by": created_by, "texto": texto,
                 "categoria": categoria, "confianza": confianza, "texto_bruto_clasificacion": texto_bruto,
-                "created_at": _ahora(),
+                "resultado": None, "tipo_resolucion_ugpp": None, "created_at": _ahora(),
             }
             self.actuaciones[actuacion_id] = actuacion
             return dict(actuacion)
+        if "FROM actuaciones WHERE id" in q:
+            (actuacion_id,) = args
+            a = self.actuaciones.get(actuacion_id)
+            return dict(a) if a else None
+        if q.startswith("UPDATE actuaciones SET resultado"):
+            actuacion_id, resultado, tipo_resolucion_ugpp = args
+            a = self.actuaciones.get(actuacion_id)
+            if a is None:
+                return None
+            a["resultado"] = resultado
+            a["tipo_resolucion_ugpp"] = tipo_resolucion_ugpp
+            return dict(a)
         return None
 
     async def fetch(self, query: str, *args):
@@ -252,3 +273,79 @@ def test_fallo_de_clasificacion_devuelve_502_y_no_persiste_nada(adb, aclient, mo
     )
     assert r.status_code == 502
     assert adb.actuaciones == {}
+
+
+# ---------------------------------------------------------------------------
+# PATCH /casos/{id}/actuaciones/{id}/resultado (roadmap Fase 4: analítica UGPP)
+# ---------------------------------------------------------------------------
+def test_cliente_no_puede_registrar_resultado(adb, aclient):
+    cliente = adb.seed_user(email="cliente_resultado1@vridik.local")
+    caso = adb.seed_caso(cliente_id=cliente["id"])
+    actuacion = adb.seed_actuacion(caso_id=caso["id"], categoria="fallo")
+    token = _token_de(cliente)
+
+    r = aclient.patch(
+        f"/casos/{caso['id']}/actuaciones/{actuacion['id']}/resultado",
+        json={"resultado": "favorable"}, headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 403
+
+
+def test_abogado_registra_resultado_de_un_fallo(adb, aclient):
+    abogado = adb.seed_user(email="abogado_resultado1@vridik.local", role="abogado")
+    cliente = adb.seed_user(email="cliente_resultado2@vridik.local")
+    caso = adb.seed_caso(cliente_id=cliente["id"], abogado_id=abogado["id"])
+    actuacion = adb.seed_actuacion(caso_id=caso["id"], categoria="fallo")
+    token = _token_de(abogado)
+
+    r = aclient.patch(
+        f"/casos/{caso['id']}/actuaciones/{actuacion['id']}/resultado",
+        json={"resultado": "favorable", "tipo_resolucion_ugpp": "RQI"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["resultado"] == "favorable"
+    assert r.json()["tipo_resolucion_ugpp"] == "RQI"
+
+
+def test_no_se_puede_registrar_resultado_sobre_actuacion_que_no_es_fallo(adb, aclient):
+    abogado = adb.seed_user(email="abogado_resultado2@vridik.local", role="abogado")
+    cliente = adb.seed_user(email="cliente_resultado3@vridik.local")
+    caso = adb.seed_caso(cliente_id=cliente["id"], abogado_id=abogado["id"])
+    actuacion = adb.seed_actuacion(caso_id=caso["id"], categoria="traslado")
+    token = _token_de(abogado)
+
+    r = aclient.patch(
+        f"/casos/{caso['id']}/actuaciones/{actuacion['id']}/resultado",
+        json={"resultado": "favorable"}, headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 422
+
+
+def test_resultado_invalido_rechazado(adb, aclient):
+    abogado = adb.seed_user(email="abogado_resultado3@vridik.local", role="abogado")
+    cliente = adb.seed_user(email="cliente_resultado4@vridik.local")
+    caso = adb.seed_caso(cliente_id=cliente["id"], abogado_id=abogado["id"])
+    actuacion = adb.seed_actuacion(caso_id=caso["id"], categoria="fallo")
+    token = _token_de(abogado)
+
+    r = aclient.patch(
+        f"/casos/{caso['id']}/actuaciones/{actuacion['id']}/resultado",
+        json={"resultado": "ganado"}, headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 422
+
+
+def test_actuacion_de_otro_caso_404(adb, aclient):
+    abogado = adb.seed_user(email="abogado_resultado4@vridik.local", role="abogado")
+    cliente = adb.seed_user(email="cliente_resultado5@vridik.local")
+    caso_a = adb.seed_caso(cliente_id=cliente["id"], abogado_id=abogado["id"])
+    caso_b = adb.seed_caso(cliente_id=cliente["id"], abogado_id=abogado["id"])
+    actuacion_de_b = adb.seed_actuacion(caso_id=caso_b["id"], categoria="fallo")
+    token = _token_de(abogado)
+
+    r = aclient.patch(
+        f"/casos/{caso_a['id']}/actuaciones/{actuacion_de_b['id']}/resultado",
+        json={"resultado": "favorable"}, headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 404

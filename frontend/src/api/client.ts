@@ -11,6 +11,7 @@ import type {
   Actuacion,
   AdjuntoSubido,
   AdminUser,
+  AnaliticaUgpp,
   AuthEvent,
   CambiarPasswordInput,
   Caso,
@@ -28,6 +29,7 @@ import type {
   EventoSSE,
   IntegridadBitacora,
   LoginResponse,
+  Materia,
   MatrizRiesgo,
   Mensaje,
   Notificacion,
@@ -40,6 +42,7 @@ import type {
   Role,
   SetCobroInput,
   SetMatrizRiesgoInput,
+  SetResultadoActuacionInput,
   Setup2FAResponse,
   Termino,
   TokenPair,
@@ -265,15 +268,21 @@ class ApiClient {
     return this.request(`/casos/${id}`);
   }
 
-  crearCaso(titulo: string, descripcion?: string): Promise<Caso> {
+  crearCaso(titulo: string, descripcion?: string, materia?: Materia | null): Promise<Caso> {
     return this.request("/casos", {
       method: "POST",
-      body: JSON.stringify({ titulo, descripcion: descripcion || null }),
+      body: JSON.stringify({ titulo, descripcion: descripcion || null, materia: materia ?? null }),
     });
   }
 
   cambiarEstado(id: string, estado: EstadoCaso): Promise<Caso> {
     return this.request(`/casos/${id}/estado`, { method: "PATCH", body: JSON.stringify({ estado }) });
+  }
+
+  /** Roadmap Fase 4 (analítica UGPP) -- sin esto no hay forma de saber qué
+   *  casos son UGPP para la agregación de /analitica/ugpp. */
+  cambiarMateria(id: string, materia: Materia): Promise<Caso> {
+    return this.request(`/casos/${id}/materia`, { method: "PATCH", body: JSON.stringify({ materia }) });
   }
 
   /** Solo admin (lo exige el backend). El backend no soporta desasignar
@@ -394,6 +403,17 @@ class ApiClient {
     });
   }
 
+  /** Solo sobre una actuación categoria='fallo' -- exclusivo de abogado/
+   *  admin (lo exige el backend, nunca el cliente). */
+  setResultadoActuacion(
+    casoId: string, actuacionId: string, input: SetResultadoActuacionInput,
+  ): Promise<Actuacion> {
+    return this.request(`/casos/${casoId}/actuaciones/${actuacionId}/resultado`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  }
+
   listTerminos(casoId: string): Promise<Termino[]> {
     return this.request(`/casos/${casoId}/terminos`);
   }
@@ -495,6 +515,12 @@ class ApiClient {
 
   descargarReporteRiesgoCsv(): Promise<Blob> {
     return this.requestBlob("/clientes/riesgo/reporte?formato=csv");
+  }
+
+  // --- Fase 4: analítica UGPP (sobre casos propios, no corpus/jueces) ------
+  /** Exclusivo de abogado/admin del despacho (lo exige el backend). */
+  analiticaUgpp(): Promise<AnaliticaUgpp> {
+    return this.request("/analitica/ugpp");
   }
 
   // --- eventos en vivo (SSE, roadmap S11 Fase C) ---------------------------

@@ -26,7 +26,15 @@ from pydantic import BaseModel, Field
 
 from api.admin_endpoint import get_current_user
 from api.auth_endpoint import _get_db
-from core.actuaciones import ensure_actuaciones_table, insert_actuacion, list_actuaciones
+from core.actuaciones import (
+    RESULTADOS_VALIDOS,
+    ActuacionNoEsFalloError,
+    ensure_actuaciones_table,
+    get_actuacion,
+    insert_actuacion,
+    list_actuaciones,
+    set_resultado_actuacion,
+)
 from core.auth_events import ensure_bitacora_hash_chain, registrar_evento
 from core.case import ensure_casos_table, get_caso
 from core.events import notificar_evento
@@ -41,6 +49,11 @@ ENVIRONMENT = os.environ.get("VRIDIK_ENVIRONMENT", "staging")
 
 class CrearActuacionRequest(BaseModel):
     texto: str = Field(..., min_length=1)
+
+
+class SetResultadoActuacionRequest(BaseModel):
+    resultado: str
+    tipo_resolucion_ugpp: str | None = None
 
 
 def _exige_acceso_a_caso(caso: dict, current: dict) -> None:
@@ -117,3 +130,33 @@ async def listar_actuaciones_endpoint(caso_id: str, request: Request, current: d
     await _preparar(conn)
     await _caso_con_acceso(conn, caso_id, current)
     return await list_actuaciones(conn, caso_id=caso_id)
+
+
+@router.patch("/casos/{caso_id}/actuaciones/{actuacion_id}/resultado")
+async def set_resultado_actuacion_endpoint(
+    caso_id: str, actuacion_id: str, payload: SetResultadoActuacionRequest,
+    request: Request, current: dict = Depends(get_current_user),
+):
+    # Roadmap Fase 4 (analítica UGPP): el resultado de un fallo es un juicio
+    # legal del despacho -- nunca lo marca el cliente, mismo principio que
+    # "el cliente nunca configura su propio cobro" (core/cobro.py).
+    if current["role"] not in ("abogado", "admin"):
+        raise HTTPException(status_code=403, detail="Solo un abogado o admin puede registrar el resultado de un fallo")
+    if payload.resultado not in RESULTADOS_VALIDOS:
+        raise HTTPException(status_code=422, detail=f"Resultado inválido (válidos: {RESULTADOS_VALIDOS})")
+
+    conn = _get_db(request)
+    await _preparar(conn)
+    await _caso_con_acceso(conn, caso_id, current)
+
+    actuacion = await get_actuacion(conn, actuacion_id)
+    if actuacion is None or str(actuacion["caso_id"]) != caso_id:
+        raise HTTPException(status_code=404, detail="Actuación no encontrada en este caso")
+
+    try:
+        return await set_resultado_actuacion(
+            conn, actuacion_id=actuacion_id, resultado=payload.resultado,
+            tipo_resolucion_ugpp=payload.tipo_resolucion_ugpp,
+        )
+    except ActuacionNoEsFalloError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -42,7 +42,7 @@ from __future__ import annotations
 from core.db_utils import conexion_dedicada, transaccion_si_disponible
 from core.despachos import ensure_despachos_table
 
-COLUMNAS_CASO = "id, cliente_id, abogado_id, despacho_id, titulo, descripcion, estado, created_at, updated_at"
+COLUMNAS_CASO = "id, cliente_id, abogado_id, despacho_id, titulo, descripcion, estado, materia, created_at, updated_at"
 
 _LOCK_KEY_CASOS_BACKFILL = "vridik_casos_despacho_backfill"
 
@@ -78,6 +78,19 @@ async def ensure_casos_table(db_connection) -> None:
     )
     # despacho_id pudo no existir si `casos` ya estaba creada antes de Fase 4.
     await db_connection.execute("ALTER TABLE casos ADD COLUMN IF NOT EXISTS despacho_id UUID REFERENCES despachos(id)")
+    # materia (roadmap Fase 4: analítica UGPP) -- nullable a propósito: un
+    # caso ya existente, o uno que nadie clasificó todavía, no tiene por qué
+    # tener materia; queda fuera de la analítica hasta que alguien la marque.
+    await db_connection.execute("ALTER TABLE casos ADD COLUMN IF NOT EXISTS materia TEXT")
+    await db_connection.execute(
+        """
+        DO $$ BEGIN
+            ALTER TABLE casos ADD CONSTRAINT casos_materia_check
+                CHECK (materia IS NULL OR materia IN ('ugpp', 'laboral', 'otro'));
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
+        """
+    )
     await db_connection.execute("CREATE INDEX IF NOT EXISTS ix_casos_cliente_id ON casos (cliente_id)")
     await db_connection.execute("CREATE INDEX IF NOT EXISTS ix_casos_abogado_id ON casos (abogado_id)")
     await db_connection.execute("CREATE INDEX IF NOT EXISTS ix_casos_despacho_id ON casos (despacho_id)")
@@ -107,15 +120,15 @@ async def ensure_casos_despacho_backfill(db_connection) -> None:
 
 async def create_caso(
     db_connection, *, cliente_id: str, despacho_id: str, titulo: str,
-    descripcion: str | None = None, abogado_id: str | None = None,
+    descripcion: str | None = None, abogado_id: str | None = None, materia: str | None = None,
 ) -> dict:
     fila = await db_connection.fetchrow(
         f"""
-        INSERT INTO casos (cliente_id, abogado_id, despacho_id, titulo, descripcion)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO casos (cliente_id, abogado_id, despacho_id, titulo, descripcion, materia)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING {COLUMNAS_CASO}
         """,
-        cliente_id, abogado_id, despacho_id, titulo, descripcion,
+        cliente_id, abogado_id, despacho_id, titulo, descripcion, materia,
     )
     return dict(fila)
 
@@ -182,5 +195,19 @@ async def cambiar_estado(db_connection, *, caso_id: str, estado: str) -> dict | 
         RETURNING {COLUMNAS_CASO}
         """,
         caso_id, estado,
+    )
+    return dict(fila) if fila is not None else None
+
+
+async def cambiar_materia(db_connection, *, caso_id: str, materia: str) -> dict | None:
+    """Roadmap Fase 4 (analítica UGPP): sin esto no hay forma de distinguir
+    un caso UGPP de cualquier otro -- lo marca el abogado/admin, nunca se
+    infiere automáticamente."""
+    fila = await db_connection.fetchrow(
+        f"""
+        UPDATE casos SET materia = $2, updated_at = now() WHERE id = $1
+        RETURNING {COLUMNAS_CASO}
+        """,
+        caso_id, materia,
     )
     return dict(fila) if fila is not None else None

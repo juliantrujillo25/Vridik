@@ -80,6 +80,11 @@ export interface RegisterInput {
 
 export type EstadoCaso = "abierto" | "en_progreso" | "cerrado";
 
+// Fase 4 (analítica UGPP) -- nullable: un caso ya existente, o uno que
+// nadie clasificó todavía, no tiene materia hasta que un abogado/admin la
+// marque (GET/PATCH /casos/{id}/materia).
+export type Materia = "ugpp" | "laboral" | "otro";
+
 export interface Caso {
   id: string;
   cliente_id: string;
@@ -87,6 +92,7 @@ export interface Caso {
   titulo: string;
   descripcion: string | null;
   estado: EstadoCaso;
+  materia: Materia | null;
   created_at: string;
   updated_at: string;
 }
@@ -201,6 +207,11 @@ export interface CostosResponse {
 // --- Fase 2: actuaciones + términos (procesal/) ----------------------------
 export type CategoriaActuacion = "auto_admisorio" | "requerimiento" | "fallo" | "traslado" | "otro";
 
+// Fase 4 (analítica UGPP) -- solo tiene sentido sobre una actuación
+// categoria='fallo'; nunca lo propone la clasificación IA, lo marca a
+// mano el abogado/admin (PATCH .../actuaciones/{id}/resultado).
+export type ResultadoActuacion = "favorable" | "desfavorable" | "parcial";
+
 // POST/GET /casos/{id}/actuaciones
 export interface Actuacion {
   id: string;
@@ -210,7 +221,14 @@ export interface Actuacion {
   categoria: CategoriaActuacion;
   confianza: number;
   texto_bruto_clasificacion: string;
+  resultado: ResultadoActuacion | null;
+  tipo_resolucion_ugpp: string | null;
   created_at: string;
+}
+
+export interface SetResultadoActuacionInput {
+  resultado: ResultadoActuacion;
+  tipo_resolucion_ugpp?: string | null;
 }
 
 export type EstadoTermino = "pendiente" | "cumplido";
@@ -323,6 +341,32 @@ export interface MatrizRiesgo {
   evaluado_por: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// GET /analitica/ugpp -- roadmap Fase 4: "línea decisional UGPP", pero
+// sobre los PROPIOS casos del despacho (el corpus jurisprudencial sigue
+// incompleto) y NUNCA por juez (advertencia SAMAI, Ley 1581). Herramienta
+// de apoyo: con pocos casos, un porcentaje solo es engañoso -- siempre
+// mostrar junto al tamaño de muestra (ver AnaliticaUgppPage.tsx).
+export interface DesgloseTipoResolucion {
+  tipo_resolucion_ugpp: string;
+  total: number;
+  favorable: number;
+  desfavorable: number;
+  parcial: number;
+}
+
+export interface AnaliticaUgpp {
+  total_casos_ugpp: number;
+  total_fallos_registrados: number;
+  total_con_resultado: number;
+  conteo_por_resultado: Record<ResultadoActuacion, number>;
+  tasa_exito: number | null;
+  por_tipo_resolucion: DesgloseTipoResolucion[];
+  tiempo_promedio_dias_hasta_fallo: number | null;
+  casos_liquidados: number;
+  valor_recuperado_total: number;
+  valor_recuperado_promedio: number | null;
 }
 
 export interface SetMatrizRiesgoInput {

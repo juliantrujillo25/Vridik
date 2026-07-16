@@ -301,7 +301,14 @@
 .semaforo-dot.verde { background: var(--good); }
 .semaforo-dot.amarillo { background: var(--warn); }
 .semaforo-dot.rojo { background: var(--danger); }
-.actuacion-row { margin-bottom: 0.6rem; }
+.actuacion-row { margin-bottom: 0.6rem; flex-wrap: wrap; }
+.actuacion-resultado {
+  flex-basis: 100%;
+  justify-content: flex-start;
+  padding-top: 0.6rem;
+  margin-top: 0.3rem;
+  border-top: 1px solid var(--hair);
+}
 
 /* --- cobro inteligente (Fase 3) --- */
 .cobro-resumen { padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: 0.7rem; align-items: flex-start; }

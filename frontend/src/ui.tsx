@@ -1,4 +1,4 @@
-import type { CategoriaActuacion, EstadoCaso } from "./api/types";
+import type { CategoriaActuacion, EstadoCaso, Materia, ResultadoActuacion } from "./api/types";
 
 export const ESTADOS: EstadoCaso[] = ["abierto", "en_progreso", "cerrado"];
 
@@ -10,6 +10,31 @@ export const ESTADO_LABEL: Record<EstadoCaso, string> = {
 
 export function EstadoPill({ estado }: { estado: EstadoCaso }) {
   return <span className={`pill ${estado}`}>{ESTADO_LABEL[estado]}</span>;
+}
+
+// Fase 4 (analítica UGPP)
+export const MATERIAS: Materia[] = ["ugpp", "laboral", "otro"];
+
+export const MATERIA_LABEL: Record<Materia, string> = {
+  ugpp: "UGPP",
+  laboral: "Laboral",
+  otro: "Otro",
+};
+
+export const RESULTADO_LABEL: Record<ResultadoActuacion, string> = {
+  favorable: "Favorable",
+  desfavorable: "Desfavorable",
+  parcial: "Parcial",
+};
+
+const RESULTADO_PILL_COLOR: Record<ResultadoActuacion, string> = {
+  favorable: "verde",
+  desfavorable: "rojo",
+  parcial: "amarillo",
+};
+
+export function ResultadoPill({ resultado }: { resultado: ResultadoActuacion }) {
+  return <span className={`pill ${RESULTADO_PILL_COLOR[resultado]}`}>{RESULTADO_LABEL[resultado]}</span>;
 }
 
 export function fechaCorta(iso: string): string {
