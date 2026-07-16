@@ -29,8 +29,8 @@ async def test_backfill_asigna_despacho_por_defecto_a_usuarios_sin_despacho(db):
     backfill."""
     fila = await db.fetchrow(
         """
-        INSERT INTO users (email, hashed_password, is_active)
-        VALUES ('backfill-despacho-test@vridik.local', 'x-hash', true)
+        INSERT INTO users (email, nombre_completo, role_id, is_active)
+        VALUES ('backfill-despacho-test@vridik.local', 'Usuario de prueba', 3, true)
         RETURNING id
         """
     )
@@ -52,8 +52,8 @@ async def test_backfill_es_idempotente(db):
     "Despacho por defecto"."""
     await db.fetchrow(
         """
-        INSERT INTO users (email, hashed_password, is_active)
-        VALUES ('backfill-idempotente@vridik.local', 'x-hash', true)
+        INSERT INTO users (email, nombre_completo, role_id, is_active)
+        VALUES ('backfill-idempotente@vridik.local', 'Usuario de prueba', 3, true)
         RETURNING id
         """
     )
