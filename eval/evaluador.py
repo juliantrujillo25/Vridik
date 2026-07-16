@@ -96,6 +96,15 @@ Califica la respuesta de JuliX en estas dimensiones:
     Una alucinación es cualquier afirmación normativa sin respaldo en la
     fuente permitida, exista o no en la realidad — en este ejercicio la
     única fuente válida es la norma_clave dada.
+
+    IMPORTANTE (chequeo mecánico, no de criterio): antes de marcar
+    hallucination_flag=true por una norma/cita específica, verificá
+    literalmente si esa cita (ley, decreto o artículo) aparece dentro del
+    texto de "norma_clave" que se te entregó abajo. Si aparece ahí, JuliX
+    NO la inventó — fue entregada como fuente autorizada, y comentar sobre
+    su vigencia, plausibilidad o fecha NO es alucinación (puede ser
+    prudencia legítima). Solo marcá hallucination_flag=true por normas que
+    JuliX introdujo y que NO están en el texto de norma_clave.
   - score (0-5): calificación global — si hallucination_flag es true, el
     score NUNCA puede ser mayor a 1, sin excepción.
   - comentario: 1-2 frases explicando la calificación.

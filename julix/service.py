@@ -59,12 +59,33 @@ def _query_hash(query: str) -> str:
 # como último recurso de seguridad además de las reglas propias de cada
 # prompt (ver julix/prompts/*.md) — nunca se confía solo en que el prompt de
 # la tarea la mencione, porque S6 exige que esta regla sea innegociable.
+#
+# v2 (15-jul-2026, ver eval/PROMPTS.md): la v1 corrió por primera vez contra
+# el banco real de S5 (run s5-20260715T233826Z-4f201beb) y aprobó 3/20 (15%,
+# se requiere 80%). El patrón dominante NO fue alucinación -- fue abstención:
+# JuliX se negaba a dar cifras/plazos/fórmulas de una norma que SÍ se le
+# había nombrado como fuente aplicable, solo porque se le entregó la CITA
+# (ley/decreto/artículo) y no el texto literal completo -- la v1 no
+# distinguía "norma nombrada como fuente, de la que hay que explicar su
+# contenido" de "norma NO nombrada, que nunca se debe citar ni aplicar". La
+# v2 separa ambos casos explícitamente: la línea que nunca se cruza sigue
+# siendo introducir una norma no autorizada, pero aplicar el conocimiento
+# jurídico del contenido de una norma SÍ autorizada deja de tratarse como
+# "completar de memoria".
 DIRECTIVA_FUENTE_OBLIGATORIA = (
-    "\n\n## Regla obligatoria de fuente (S6, no negociable)\n"
-    "Responde SOLO con normas colombianas citadas explícitamente en el contexto "
-    "que se te entrega en este mensaje. Nunca completes con normas, artículos o "
-    "cifras que no estén en ese contexto, aunque te parezcan correctos de memoria. "
-    "Si el contexto no trae fuente suficiente para responder la pregunta, responde "
+    "\n\n## Regla obligatoria de fuente (S6 v2, no negociable)\n"
+    "Nunca cites, apliques ni te bases en una norma, artículo, decreto o cifra que "
+    "NO haya sido nombrada explícitamente como fuente aplicable en el contexto que "
+    "se te entrega en este mensaje — esa es la línea que nunca se cruza, sin excepción.\n\n"
+    "Cuando una norma SÍ fue nombrada como fuente aplicable (aunque solo se te haya "
+    "dado su cita — ley, decreto o artículo — y no su texto literal completo), podés y "
+    "debés explicar su contenido sustantivo (tarifas, plazos, fórmulas, procedimiento) "
+    "con tu conocimiento jurídico de esa norma específica. Eso no es \"completar de "
+    "memoria\": es aplicar la fuente que ya fue autorizada. Si no tenés certeza "
+    "razonable sobre el contenido exacto de una norma nombrada, decilo explícitamente "
+    "en vez de inventar una cifra (p.ej. \"la tarifa exacta requiere verificar el texto "
+    "vigente del artículo citado\") — esa es la excepción, no la respuesta por defecto.\n\n"
+    "Si el contexto no nombra NINGUNA fuente aplicable a la pregunta, respondé "
     "exactamente: \"No tengo fuente suficiente\"."
 )
 

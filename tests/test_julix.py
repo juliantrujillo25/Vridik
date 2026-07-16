@@ -71,8 +71,8 @@ def test_context_builder_trunca_respetando_presupuesto():
 # ---------------------------------------------------------------------------
 def test_prompts_carga_ugpp_demanda_con_prioridad_normativa():
     prompt = prompts.load_prompt("ugpp_demanda")
-    assert prompt.version == 1
-    assert prompt.archivo == "v1_ugpp_demanda.md"
+    assert prompt.version == 2
+    assert prompt.archivo == "v2_ugpp_demanda.md"
     assert "jerarquía kelseniana" in prompt.contenido.lower() or "jerarquia" in prompt.contenido.lower()
     assert len(prompt.hash) == 16
 
@@ -80,7 +80,7 @@ def test_prompts_carga_ugpp_demanda_con_prioridad_normativa():
 def test_prompts_carga_laboral_consulta_enfocado_en_cst():
     prompt = prompts.load_prompt("laboral_consulta")
     assert prompt.tarea == "laboral_consulta"
-    assert prompt.archivo == "v2_laboral_consulta.md"
+    assert prompt.archivo == "laboral_consulta_v2.md"
     assert "CST" in prompt.contenido
 
 

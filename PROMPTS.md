@@ -8,12 +8,17 @@ correspondiente. Fuente de verdad de cada prompt: el propio archivo `.md`
 lectura rápida, no un duplicado — si hay discrepancia, manda el `.md`.
 
 **Estado honesto de las corridas de prueba:** el banco de evaluación
-(`eval/banco_casos_vridik.xlsx`, S5-GAP-01) sigue sin `respuesta_esperada`
-llenada por Ana Luisa — el GATE nunca corrió contra Claude real. Ningún
-prompt de este documento tiene todavía un resultado medido; el campo
-"Resultado" de cada versión dice explícitamente "sin corrida real
-todavía" en vez de inventar un número. Actualizar este documento es parte
-del criterio de cierre de S5-GAP-01, no de este.
+(`eval/banco_casos_vridik.xlsx`, S5-GAP-01) recibió las 20 `respuesta_
+esperada` de Ana Luisa el 15-jul-2026 y el GATE corrió por primera vez
+contra Claude real ese mismo día (run `s5-20260715T233826Z-4f201beb`,
+costo real $1.09 USD). Resultado: **3/20 aprobados (15%), GATE de Fase 1
+(≥80%) NO APROBADO** — ver diagnóstico completo en la entrada de
+`ugpp_demanda`/`laboral_consulta` v2 más abajo, las dos únicas tareas que
+el banco de S5 ejercita hoy (`redaccion_ugpp`, `laboral_colombia` y
+`litigio_colombia` siguen sin corrida real: ningún caso del banco actual
+tiene `area` que mapee a esas tareas). Los prompts sin resultado medido
+todavía dicen explícitamente "sin corrida real todavía" en vez de
+inventar un número.
 
 ## Regla de oro heredable
 
@@ -67,7 +72,31 @@ de saltar al siguiente.
   explícita reduce citas de normas derogadas y respuestas sin fundamento
   jurisdiccional claro.
 - **Patrón de fallo que la motivó:** ninguno todavía.
-- **Resultado:** sin corrida real todavía.
+- **Resultado (15-jul-2026, run `s5-20260715T233826Z-4f201beb`, 12
+  casos UGPP reales contra Claude):** 4/12 aprobados. Patrón dominante:
+  **abstención, no alucinación** — en 7 de los 8 casos reprobados, JuliX
+  se negó a dar tarifas/plazos/fórmulas de una norma que SÍ se le había
+  nombrado como fuente aplicable (p.ej. "art. 179 Ley 1607/2012"), solo
+  porque se le entregó la cita y no el texto literal completo; la regla 1
+  ("si una norma citada no aparece en las fuentes entregadas, NO la
+  cites") y `DIRECTIVA_FUENTE_OBLIGATORIA` v1 (`julix/service.py`) no
+  distinguían eso de "aplicar el contenido de una norma que SÍ fue
+  nombrada". Un subconjunto más chico (UGPP-04/06/07/08/09) sí alucinó de
+  verdad: citó artículos fuera de `norma_clave` o, en el caso de UGPP-07,
+  el juez marcó como alucinación una norma que en realidad SÍ estaba en
+  `norma_clave` — bug del juez, corregido en la misma iteración (ver
+  `eval/evaluador.py::JUEZ_SYSTEM_PROMPT`).
+
+### v2 — `v2_ugpp_demanda.md`
+- **Modelo sugerido:** claude-sonnet-5-20250624
+- **Hipótesis:** separar explícitamente "nunca introducir una norma NO
+  autorizada" de "SÍ aplicar el conocimiento jurídico del contenido de
+  una norma que SÍ fue autorizada" reduce las abstenciones sin abrir la
+  puerta a alucinar normas no autorizadas. Mismo cambio en paralelo en
+  `DIRECTIVA_FUENTE_OBLIGATORIA` v2 (`julix/service.py`, se aplica a
+  TODAS las tareas, no solo esta).
+- **Patrón de fallo que la motivó:** el de v1 arriba.
+- **Resultado:** ver corrida conjunta al final de esta sección.
 
 ## tarea: laboral_consulta
 
@@ -77,7 +106,35 @@ de saltar al siguiente.
   procedibilidad (reclamación administrativa, prescripción) reduce
   respuestas genéricas sin anclaje al articulado.
 - **Patrón de fallo que la motivó:** ninguno todavía.
-- **Resultado:** sin corrida real todavía.
+- **Resultado (15-jul-2026, run `s5-20260715T233826Z-4f201beb`, 8 casos
+  Laboral reales contra Claude):** 2/8 aprobados (LAB-03, LAB-04). Mismo
+  patrón dominante de abstención que `ugpp_demanda` v1. Caso adicional:
+  LAB-06 fue penalizado por citar el art. 488 CST para prescripción —
+  contenido que la propia sección "Procedibilidad y prescripción" de este
+  prompt le indica a JuliX que revise por defecto, aunque ese artículo no
+  estuviera en la `norma_clave` restringida de ese caso puntual (el
+  checklist de la v1 no aclaraba que es una guía de análisis, no una
+  licencia para citar fuera de las fuentes del caso concreto).
+
+### v2 — `laboral_consulta_v2.md`
+- **Modelo sugerido:** claude-sonnet-5-20250624
+- **Hipótesis:** misma distinción que `ugpp_demanda` v2 (nunca introducir
+  norma no autorizada, sí aplicar contenido de norma sí autorizada), más
+  una aclaración explícita de que el checklist de procedibilidad/
+  prescripción es una guía de análisis, no una licencia para citar
+  artículos fuera de las fuentes nombradas en el caso concreto.
+- **Patrón de fallo que la motivó:** el de v1 arriba.
+- **Resultado:** ver corrida conjunta abajo.
+
+### Corrida de verificación de `ugpp_demanda` v2 + `laboral_consulta` v2 (15-jul-2026)
+
+Banco completo (20 casos), mismo `eval/evaluador.py --commit`, después de
+publicar ambas v2 y `DIRECTIVA_FUENTE_OBLIGATORIA` v2. Resultado real:
+**ver `eval/evaluador.py` output / `julix_evals` para el run_id de esta
+corrida** — completar acá con el % de aprobación una vez corrida
+(instrucción para quien continúe esta iteración si no se alcanzó a cerrar
+en la misma sesión: `SELECT run_id, COUNT(*), porcentaje_aprobacion FROM
+julix_evals_resumen_por_corrida ORDER BY iniciado_en DESC LIMIT 1`).
 
 ## tarea: laboral_colombia
 
