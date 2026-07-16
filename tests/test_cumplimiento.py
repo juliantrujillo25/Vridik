@@ -95,6 +95,7 @@ def test_canal_invalido_rechazado():
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_set_y_obtener_matriz_riesgo_contra_postgres_real(db, make_despacho, make_user):
+    await ensure_matriz_riesgo_table(db)
     despacho_id = await make_despacho()
     abogado = await make_user(role="abogado", despacho_id=despacho_id)
     cliente = await make_user(role="cliente", despacho_id=despacho_id)
@@ -113,6 +114,7 @@ async def test_set_y_obtener_matriz_riesgo_contra_postgres_real(db, make_despach
 
 @pytest.mark.asyncio
 async def test_set_matriz_riesgo_es_upsert_no_duplica_fila(db, make_despacho, make_user):
+    await ensure_matriz_riesgo_table(db)
     despacho_id = await make_despacho()
     abogado = await make_user(role="abogado", despacho_id=despacho_id)
     cliente = await make_user(role="cliente", despacho_id=despacho_id)
@@ -135,6 +137,7 @@ async def test_set_matriz_riesgo_es_upsert_no_duplica_fila(db, make_despacho, ma
 
 @pytest.mark.asyncio
 async def test_set_matriz_riesgo_rechaza_cliente_de_otro_despacho(db, make_despacho, make_user):
+    await ensure_matriz_riesgo_table(db)
     despacho_a = await make_despacho()
     despacho_b = await make_despacho()
     abogado_a = await make_user(role="abogado", despacho_id=despacho_a)
@@ -160,6 +163,7 @@ async def test_ensure_matriz_riesgo_table_es_idempotente(db):
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_reporte_riesgo_cuenta_evaluados_y_sin_evaluar(db, make_despacho, make_user):
+    await ensure_matriz_riesgo_table(db)
     despacho_id = await make_despacho()
     abogado = await make_user(role="abogado", despacho_id=despacho_id)
     evaluado = await make_user(role="cliente", despacho_id=despacho_id)
@@ -184,6 +188,7 @@ async def test_reporte_riesgo_cuenta_evaluados_y_sin_evaluar(db, make_despacho, 
 
 @pytest.mark.asyncio
 async def test_reporte_riesgo_ordena_de_mayor_a_menor_riesgo(db, make_despacho, make_user):
+    await ensure_matriz_riesgo_table(db)
     despacho_id = await make_despacho()
     abogado = await make_user(role="abogado", despacho_id=despacho_id)
     cliente_bajo = await make_user(role="cliente", despacho_id=despacho_id)
@@ -210,6 +215,7 @@ async def test_reporte_riesgo_ordena_de_mayor_a_menor_riesgo(db, make_despacho, 
 
 @pytest.mark.asyncio
 async def test_reporte_riesgo_no_mezcla_clientes_de_otro_despacho(db, make_despacho, make_user):
+    await ensure_matriz_riesgo_table(db)
     despacho_a = await make_despacho()
     despacho_b = await make_despacho()
     abogado_b = await make_user(role="abogado", despacho_id=despacho_b)
