@@ -233,7 +233,13 @@ export function AdminPage() {
       )}
 
       {usuarios === null ? (
-        <div className="empty muted"><span className="spinner" /> Cargando…</div>
+        error ? (
+          <div className="empty muted">
+            <button className="btn btn-ghost btn-sm" onClick={() => void cargar(true)}>Reintentar</button>
+          </div>
+        ) : (
+          <div className="empty muted"><span className="spinner" /> Cargando…</div>
+        )
       ) : (
         <>
           <ul className="admin-user-list">

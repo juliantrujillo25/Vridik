@@ -114,7 +114,13 @@ export function PlatformPage() {
       {error && <div className="alert error" role="alert">{error}</div>}
 
       {despachos === null ? (
-        <div className="empty muted"><span className="spinner" /> Cargando…</div>
+        error ? (
+          <div className="empty muted">
+            <button className="btn btn-ghost btn-sm" onClick={() => void cargar()}>Reintentar</button>
+          </div>
+        ) : (
+          <div className="empty muted"><span className="spinner" /> Cargando…</div>
+        )
       ) : (
         <ul className="admin-user-list">
           {despachos.map((d) => (
