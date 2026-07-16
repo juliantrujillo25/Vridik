@@ -187,7 +187,13 @@ async def registrar_evento(
                 RETURNING id, user_id, actor_id, event_type, metadata, ip_address, user_agent,
                           created_at, hash_anterior, hash_actual
                 """,
-                user_id, actor_id, event_type, json.dumps(cuerpo), ip_address, user_agent,
+                # default=str: mismo motivo que _contenido_canonico() arriba
+                # (que ya lo usa, así que el hash chain no se ve afectado por
+                # este fix) -- metadata suele traer IDs de asyncpg (UUID real,
+                # no str) sin este default, json.dumps revienta con "Object
+                # of type UUID is not JSON serializable" (bug real
+                # encontrado en producción, ver api/actuaciones_endpoint.py).
+                user_id, actor_id, event_type, json.dumps(cuerpo, default=str), ip_address, user_agent,
                 created_at, hash_anterior, hash_actual,
             )
     # `metadata` en el RETURNING viene como jsonb crudo (string) -- se

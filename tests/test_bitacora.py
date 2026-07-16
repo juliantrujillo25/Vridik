@@ -111,6 +111,25 @@ async def test_registrar_evento_devuelve_metadata_como_dict_no_string():
 
 
 @pytest.mark.asyncio
+async def test_registrar_evento_acepta_uuid_reales_en_metadata():
+    """Bug real encontrado en producción (verificación de analítica UGPP,
+    16-jul-2026): asyncpg devuelve uuid.UUID de verdad (no str) para
+    columnas UUID -- api/actuaciones_endpoint.py pasa actuacion["id"] tal
+    cual en metadata, y json.dumps() sin default=str reventaba con
+    "Object of type UUID is not JSON serializable" al escribir la columna
+    metadata (la propia _contenido_canonico() del hash YA usaba default=str,
+    así que el hash chain nunca estuvo en riesgo -- este fix no lo toca)."""
+    conn = _FakeBitacoraConn()
+    actuacion_id = uuid.uuid4()
+
+    evento = await registrar_evento(
+        conn, event_type="actuacion_notificada", metadata={"actuacion_id": actuacion_id},
+    )
+    assert evento["metadata"] == {"actuacion_id": actuacion_id}  # devuelto tal cual (nunca double-encoded)
+    assert json.loads(conn.filas[0]["metadata"]) == {"actuacion_id": str(actuacion_id)}  # persistido como str
+
+
+@pytest.mark.asyncio
 async def test_verificar_cadena_integra_tras_varios_eventos():
     conn = _FakeBitacoraConn()
     for i in range(5):
@@ -399,7 +418,7 @@ def test_confirmar_acuse_endpoint_inexistente_da_404(bdb, bclient):
 @pytest.mark.asyncio
 async def test_hash_chain_real_contra_postgres(db):
     # db/seed_railway.sql ya deja filas en auth_events (fuera de la
-    # transaccion de este test, antes de que existieran estas columnas) --
+    # transacción de este test, antes de que existieran estas columnas) --
     # hace falta sellarlas retroactivamente (ensure_bitacora_hash_chain),
     # no solo agregar las columnas, o verificar_cadena() las marca como
     # "ALTERADA" por tener hash_actual NULL (falso positivo).
