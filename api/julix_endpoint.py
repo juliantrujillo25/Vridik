@@ -75,7 +75,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from core.auth import jwt_secrets_para_verificar
+from core.db_utils import obtener_conexion_de_request
 from core.feature_flag_legacy import use_postgres
+from core.rls import aplicar_contexto_despacho
 from julix.context_builder import RankedChunk
 from julix.client import JuliXClient
 from julix.ledger import obtener_ultima_llamada
@@ -150,6 +152,65 @@ async def _agregar_headers_seguridad(request: Request, call_next):
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Content-Security-Policy-Report-Only"] = "default-src 'none'; frame-ancestors 'none'"
     return response
+
+
+# Hardening RLS (core/rls.py): rutas que ya manejan su propia conexión
+# dedicada con su propio ciclo de vida (streams SSE de larga duración) --
+# excluidas del middleware de conexión-por-request de abajo para no
+# competir por una segunda conexión del pool en rutas ya documentadas como
+# sensibles a agotamiento del pool (incidente real, 2026-07-12, ver
+# api/events_endpoint.py).
+_RUTAS_CONEXION_PROPIA = {"/julix/stream", "/api/events/stream"}
+
+
+@app.middleware("http")
+async def _conexion_por_request(request: Request, call_next):
+    """Hardening RLS (core/rls.py): adquiere UNA conexión dedicada del
+    pool para toda la vida de este request (solo si `db_connection` en
+    `app.state` es un Pool real -- mismo duck-typing que
+    `core/db_utils.py::conexion_dedicada`; con los fakes de test de los
+    endpoints no hace nada) y la guarda en `request.state.db_connection`
+    para que `core.db_utils.obtener_conexion_de_request()` la use en vez
+    del Pool crudo. Necesario para que el GUC de sesión de RLS
+    (`app.despacho_id`/`app.bypass_rls`) se mantenga estable entre todas
+    las queries de un mismo request -- con el Pool crudo, cada
+    `.fetch()/.execute()` puede adquirir una conexión física distinta.
+
+    Arranca en `bypass_rls='true'` por defecto (fail-open, decisión
+    confirmada con el usuario): la única query que corre en esa ventana es
+    la que hace `_resolver_usuario` (`api/admin_endpoint.py`) para leer
+    `users` por PK -- huevo y gallina real, no se puede angostar por
+    `despacho_id` sin antes saber cuál es. `core.rls.aplicar_contexto_
+    despacho()` angosta apenas se conoce.
+
+    NO cubre las rutas de `_RUTAS_CONEXION_PROPIA` -- ver ese comentario."""
+    pool = getattr(request.app.state, "db_connection", None)
+    if pool is None or not hasattr(pool, "acquire") or request.url.path in _RUTAS_CONEXION_PROPIA:
+        return await call_next(request)
+
+    conn = await pool.acquire()
+    request.state.db_connection = conn
+    try:
+        await conn.execute("SELECT set_config('app.bypass_rls', 'true', false)")
+        return await call_next(request)
+    finally:
+        try:
+            await conn.execute("RESET app.bypass_rls")
+            await conn.execute("RESET app.despacho_id")
+        except Exception:
+            # No hay garantía de que un await en un finally corra hasta el
+            # final si la cancelación (cliente cortó la conexión) ya está
+            # en curso -- más seguro perder esta conexión física (el pool
+            # abre una nueva bajo demanda) que devolver al pool una
+            # conexión que pueda haber quedado con el despacho_id de otro
+            # tenant todavía seteado.
+            logger.warning(
+                "Vridik/RLS: no se pudo resetear el GUC de sesión al liberar la conexión -- "
+                "se cierra en vez de devolverla al pool.", exc_info=True,
+            )
+            await conn.close()
+        else:
+            await pool.release(conn)
 
 
 RATE_LIMIT_MAX_REQUESTS = 20
@@ -245,8 +306,15 @@ class JuliXQueryResponse(BaseModel):
 def get_service(request: Request) -> JuliXService:
     """La app real de Vridik monta `db_connection` y `environment` en
     `app.state` durante el bootstrap (pool de PostgreSQL, entorno
-    staging/producción). Este esqueleto asume que ya están disponibles ahí."""
-    db_connection = getattr(request.app.state, "db_connection", None)
+    staging/producción). Este esqueleto asume que ya están disponibles ahí.
+
+    Usa `obtener_conexion_de_request` (no el Pool crudo) -- hardening RLS
+    (core/rls.py): las escrituras reales en `julix_calls` que hace
+    `JuliXService`/`JuliXClient` internamente necesitan caer en la MISMA
+    conexión donde `julix_query` angostó el contexto de despacho, o el GUC
+    de sesión no se ve ahí. Solo usado por `julix_query` -- `julix_stream`
+    maneja su propia conexión dedicada (ver ese handler)."""
+    db_connection = obtener_conexion_de_request(request)
     environment = getattr(request.app.state, "environment", "staging")
     client = JuliXClient(environment=environment, db_connection=db_connection)
     return JuliXService(client=client, db_connection=db_connection)
@@ -269,7 +337,7 @@ async def _fuentes_citadas_para_pdf(
     if payload.chunks:
         return [FuenteCitada.desde_referencia(c.referencia) for c in chunks_candidatos]
 
-    db_connection = getattr(request.app.state, "db_connection", None)
+    db_connection = obtener_conexion_de_request(request)
     if db_connection is None:
         return []
     texto_busqueda = payload.pregunta or payload.expediente_texto
@@ -303,11 +371,21 @@ async def julix_query(
     # Fase 4: el límite blando mensual de JuliX es por despacho, no un pozo
     # compartido de toda la plataforma -- este endpoint no hacía ninguna
     # consulta a la base antes de generar, así que esta es la primera.
-    db_connection = getattr(request.app.state, "db_connection", None)
+    #
+    # Hardening RLS (core/rls.py): este endpoint decodifica su propio JWT y
+    # resuelve despacho_id de forma independiente de
+    # api/admin_endpoint.py::_resolver_usuario -- sin el
+    # aplicar_contexto_despacho() de abajo, la conexión de este request se
+    # queda en bypass_rls='true' (el default del middleware) de punta a
+    # punta, y julix_calls (la tabla que este mismo endpoint escribe) queda
+    # con RLS efectivamente desactivado. Bug real encontrado y corregido en
+    # esta misma pasada -- ver tests/test_rls.py, caso de regresión.
+    db_connection = obtener_conexion_de_request(request)
     despacho_id = None
     if db_connection is not None:
         fila_despacho = await db_connection.fetchrow("SELECT despacho_id FROM users WHERE id = $1", user_id)
         despacho_id = str(fila_despacho["despacho_id"]) if fila_despacho and fila_despacho["despacho_id"] else None
+        await aplicar_contexto_despacho(db_connection, despacho_id=despacho_id, es_superadmin=False)
 
     documento = ""
     async for fragmento in service.generar_documento(
@@ -366,7 +444,6 @@ async def _formatear_evento_sse(evento: str, data: dict) -> str:
 
 async def _generar_stream_sse(
     request: Request,
-    service: JuliXService,
     *,
     user_id: str,
     caso_id: str,
@@ -374,7 +451,6 @@ async def _generar_stream_sse(
     expediente_texto: str,
     pregunta: str | None,
     prompt_version: int | None,
-    despacho_id: str | None = None,
 ):
     """Generador de eventos SSE (S11): traduce cada fragmento que produce
     JuliXService.generar_documento() a un evento `chunk`, y cierra con
@@ -385,29 +461,68 @@ async def _generar_stream_sse(
     cliente que cierra la conexión (botón "Cancelar" del frontend, roadmap
     S4) detenga el streaming de inmediato: sin este chequeo, el servidor
     seguiría consumiendo tokens de Anthropic para una respuesta que ya
-    nadie va a leer."""
+    nadie va a leer.
+
+    Hardening RLS (core/rls.py): adquiere su PROPIA conexión dedicada del
+    pool acá adentro, no la del middleware de conexión-por-request de más
+    arriba -- ese middleware libera su conexión apenas `julix_stream`
+    DEVUELVE el `StreamingResponse` (BaseHTTPMiddleware no espera a que
+    este generador termine de transmitirse), así que sostenerla desde ahí
+    la devolvería al pool mientras este generador todavía la está usando.
+    Mismo patrón que api/events_endpoint.py para sus streams SSE (mismo
+    motivo: incidente real de agotamiento del pool, 2026-07-12).
+
+    Guarda la conexión adquirida en `request.state.db_connection` y recién
+    ahí llama a `get_service(request)` (en vez de construir el
+    `JuliXService` acá a mano) -- así `get_service` (vía
+    `obtener_conexion_de_request`) la recoge sola, y el seam de test
+    existente (`tests/test_julix_stream.py` monkeypatchea `get_service`
+    para inyectar un servicio falso) sigue funcionando sin cambios."""
+    pool = getattr(request.app.state, "db_connection", None)
+    conn = None
+    if pool is not None and hasattr(pool, "acquire"):
+        conn = await pool.acquire()
+    elif pool is not None:
+        conn = pool  # fake de test sin .acquire -- se usa tal cual, nunca se libera
+
+    despacho_id = None
+    if conn is not None:
+        # Fase 4 (límite mensual por despacho) + hardening RLS (angosta el
+        # contexto de esta conexión antes de que JuliXService escriba en
+        # julix_calls -- mismo motivo que julix_query más arriba).
+        fila_despacho = await conn.fetchrow("SELECT despacho_id FROM users WHERE id = $1", user_id)
+        despacho_id = str(fila_despacho["despacho_id"]) if fila_despacho and fila_despacho["despacho_id"] else None
+        await aplicar_contexto_despacho(conn, despacho_id=despacho_id, es_superadmin=False)
+        request.state.db_connection = conn
+
+    service = get_service(request)
+
     try:
-        async for fragmento in service.generar_documento(
-            user_id=user_id,
-            caso_id=caso_id,
-            tarea=tarea,
-            expediente_texto=expediente_texto,
-            despacho_id=despacho_id,
-            pregunta=pregunta,
-            prompt_version=prompt_version,
-        ):
-            if await request.is_disconnected():
-                logger.info(
-                    "Vridik/JuliX SSE: cliente desconectado, deteniendo stream — caso_id=%s",
-                    caso_id,
-                )
-                return
-            yield await _formatear_evento_sse("chunk", {"texto": fragmento})
-    except Exception as exc:  # noqa: BLE001 — un error de streaming nunca debe tumbar el servidor
-        logger.exception("Vridik/JuliX SSE: error generando el stream — caso_id=%s", caso_id)
-        yield await _formatear_evento_sse("error", {"detalle": str(exc)})
-        return
-    yield await _formatear_evento_sse("done", {})
+        try:
+            async for fragmento in service.generar_documento(
+                user_id=user_id,
+                caso_id=caso_id,
+                tarea=tarea,
+                expediente_texto=expediente_texto,
+                despacho_id=despacho_id,
+                pregunta=pregunta,
+                prompt_version=prompt_version,
+            ):
+                if await request.is_disconnected():
+                    logger.info(
+                        "Vridik/JuliX SSE: cliente desconectado, deteniendo stream — caso_id=%s",
+                        caso_id,
+                    )
+                    return
+                yield await _formatear_evento_sse("chunk", {"texto": fragmento})
+        except Exception as exc:  # noqa: BLE001 — un error de streaming nunca debe tumbar el servidor
+            logger.exception("Vridik/JuliX SSE: error generando el stream — caso_id=%s", caso_id)
+            yield await _formatear_evento_sse("error", {"detalle": str(exc)})
+            return
+        yield await _formatear_evento_sse("done", {})
+    finally:
+        if conn is not None and conn is not pool and pool is not None and hasattr(pool, "release"):
+            await pool.release(conn)
 
 
 @app.get("/julix/stream")
@@ -436,24 +551,16 @@ async def julix_stream(
         user_id, tarea, caso_id,
     )
 
-    service = get_service(request)
-
-    # Fase 4: mismo motivo que POST /julix/query -- el límite blando
-    # mensual es por despacho.
-    despacho_id = None
-    db_connection = getattr(request.app.state, "db_connection", None)
-    if db_connection is not None:
-        fila_despacho = await db_connection.fetchrow("SELECT despacho_id FROM users WHERE id = $1", user_id)
-        despacho_id = str(fila_despacho["despacho_id"]) if fila_despacho and fila_despacho["despacho_id"] else None
-
+    # Resolución de despacho_id (límite mensual por despacho) + narrowing
+    # de RLS ahora viven DENTRO de _generar_stream_sse -- necesitan su
+    # propia conexión dedicada del pool, con un ciclo de vida atado al del
+    # generador (ver docstring de esa función para el porqué).
     generador = _generar_stream_sse(
         request,
-        service,
         user_id=user_id,
         caso_id=caso_id,
         tarea=tarea,
         expediente_texto=expediente_texto,
-        despacho_id=despacho_id,
         pregunta=pregunta,
         prompt_version=prompt_version,
     )

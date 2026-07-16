@@ -42,6 +42,7 @@ from core.admin import change_role, create_user, ensure_role_column, ensure_supe
 from core.admin_users import UsuarioNoEncontradoError, actividad_usuario, resetear_password
 from core.auth import hash_password
 from core.despachos import ensure_despachos_table, limite_julix_mensual, obtener_plan
+from core.rls import aplicar_contexto_despacho
 from core.totp_2fa import desactivar_totp, ensure_totp_columns
 from julix.ledger import (
     ensure_julix_calls_table,
@@ -83,6 +84,16 @@ async def _resolver_usuario(request: Request, authorization: str | None) -> dict
     )
     if fila is None:
         raise HTTPException(status_code=401, detail="Usuario del token no existe")
+
+    # Hardening RLS (core/rls.py): esta es la ÚNICA query de arriba que
+    # corre en la ventana de bypass por defecto del middleware de
+    # conexión-por-request (api/julix_endpoint.py) -- angosta el contexto
+    # de esta conexión al despacho real apenas se conoce, para que TODO lo
+    # que el handler haga después (las queries de negocio reales) ya quede
+    # scoped por RLS, no solo por los checks de aplicación de siempre.
+    despacho_id = str(fila["despacho_id"]) if fila["despacho_id"] else None
+    await aplicar_contexto_despacho(conn, despacho_id=despacho_id, es_superadmin=fila["es_superadmin"])
+
     return dict(fila)
 
 

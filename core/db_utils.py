@@ -39,3 +39,22 @@ async def transaccion_si_disponible(conexion):
             yield
     else:
         yield
+
+
+def obtener_conexion_de_request(request):
+    """Hardening RLS (core/rls.py): prioriza la conexión dedicada que el
+    middleware de conexión-por-request (`api/julix_endpoint.py`) ya haya
+    adquirido y guardado en `request.state.db_connection` -- necesaria
+    para que el GUC de sesión (`app.despacho_id`/`app.bypass_rls`, seteado
+    por `core.rls.aplicar_contexto_despacho`) se mantenga estable entre
+    todas las queries de un mismo request (con el `Pool` crudo, cada
+    `.fetch()/.execute()` puede adquirir una conexión física distinta).
+
+    Si no hay ninguna en `request.state` (tests con fake DB, que no pasan
+    por ese middleware; o rutas que deliberadamente no pasan por él, como
+    los streams SSE) cae a `request.app.state.db_connection` tal cual,
+    mismo comportamiento de siempre."""
+    conexion_de_request = getattr(request.state, "db_connection", None)
+    if conexion_de_request is not None:
+        return conexion_de_request
+    return getattr(request.app.state, "db_connection", None)

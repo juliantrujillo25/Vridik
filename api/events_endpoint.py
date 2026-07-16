@@ -66,7 +66,6 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from api.admin_endpoint import get_current_user
-from api.auth_endpoint import _get_db
 from core.events import canal_de_usuario, ensure_events_table, existe_evento, listar_eventos_desde
 
 router = APIRouter(tags=["events"])
@@ -140,7 +139,13 @@ async def _generador_sse(pool, *, user_id: str, last_event_id: int | None, reque
 async def stream_events(
     request: Request, current: dict = Depends(get_current_user), last_event_id: str | None = None,
 ):
-    pool = _get_db(request)
+    # Hardening RLS (core/rls.py): lee el Pool crudo de app.state directo,
+    # NO _get_db()/obtener_conexion_de_request() -- este handler adquiere
+    # su PROPIA conexión dedicada más abajo (pool.acquire(), sostenida
+    # toda la vida del stream para LISTEN/NOTIFY) y necesita el Pool en sí
+    # para poder llamar .acquire()/.release() sobre él; la conexión
+    # per-request que _get_db() devolvería ahora no tiene esos métodos.
+    pool = getattr(request.app.state, "db_connection", None)
     # El header estándar de SSE es "Last-Event-ID" (lo manda EventSource
     # solo; con fetch+ReadableStream lo tiene que mandar el cliente a
     # mano) -- se acepta también como query param ?last_event_id= para

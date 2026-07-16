@@ -64,7 +64,7 @@ from core.auth import (
     verify_password,
 )
 from core.auth_events import registrar_evento
-from core.db_utils import conexion_dedicada, transaccion_si_disponible
+from core.db_utils import conexion_dedicada, obtener_conexion_de_request, transaccion_si_disponible
 from core.despachos import ensure_despachos_table
 from core.rate_limit import excede_limite_login, excede_limite_totp
 from core.refresh_tokens import (
@@ -141,7 +141,10 @@ class CambiarPasswordRequest(BaseModel):
 
 
 def _get_db(request: Request):
-    db_connection = getattr(request.app.state, "db_connection", None)
+    # Hardening RLS (core/rls.py): prioriza la conexión dedicada del
+    # middleware de conexión-por-request (api/julix_endpoint.py) sobre el
+    # Pool crudo -- ver core.db_utils.obtener_conexion_de_request.
+    db_connection = obtener_conexion_de_request(request)
     if db_connection is None:
         raise HTTPException(status_code=503, detail="db_connection no configurado en app.state")
     return db_connection

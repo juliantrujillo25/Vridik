@@ -61,6 +61,7 @@ from core.auth import ensure_auth_migration_005
 from core.auth_events import ensure_bitacora_hash_chain
 from core.case import ensure_casos_despacho_backfill
 from core.despachos import ensure_despachos_backfill
+from core.rls import ensure_rls_policies
 from core.terminos import ensure_terminos_table
 from julix.ledger import ensure_julix_calls_despacho_backfill
 from procesal.alertas_terminos import ejecutar_ronda_de_alertas
@@ -227,6 +228,21 @@ async def _conectar_db() -> None:
             logger.critical(
                 "Vridik: no se pudo aplicar el backfill de despacho_id en julix_calls al arrancar -- "
                 "el límite mensual por despacho puede quedar mal calculado hasta el próximo arranque.",
+                exc_info=True,
+            )
+
+        # Hardening RLS (core/rls.py) -- DESPUÉS de los tres backfills de
+        # arriba a propósito: FORCE ROW LEVEL SECURITY sobre una tabla con
+        # filas despacho_id IS NULL pendientes las dejaría invisibles para
+        # todos, incluido este mismo bootstrap.
+        try:
+            async with app.state.db_connection.acquire() as conn:
+                await ensure_rls_policies(conn)
+        except Exception:
+            logger.critical(
+                "Vridik: no se pudieron aplicar las políticas de RLS al arrancar -- el aislamiento "
+                "entre despachos sigue dependiendo solo de los checks de aplicación existentes "
+                "hasta el próximo arranque.",
                 exc_info=True,
             )
 

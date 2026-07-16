@@ -146,6 +146,14 @@ async def db(test_database_url, backend):
     conn = await asyncpg.connect(test_database_url)
     tx = conn.transaction()
     await tx.start()
+    # Hardening RLS (core/rls.py): estos ~300 tests testean funciones core
+    # directo (create_caso(), etc.), no el camino HTTP + middleware de
+    # conexión-por-request -- sin este bypass, cualquier SELECT/INSERT
+    # contra users/casos/julix_calls/matriz_riesgo devolvería 0 filas
+    # apenas esas tablas tengan FORCE ROW LEVEL SECURITY. El enforcement
+    # real de RLS se prueba en tests/test_rls.py, revocando este bypass
+    # explícitamente dentro de esos tests.
+    await conn.execute("SELECT set_config('app.bypass_rls', 'true', false)")
     try:
         yield conn
     finally:
