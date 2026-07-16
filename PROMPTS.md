@@ -126,15 +126,46 @@ de saltar al siguiente.
 - **Patrón de fallo que la motivó:** el de v1 arriba.
 - **Resultado:** ver corrida conjunta abajo.
 
-### Corrida de verificación de `ugpp_demanda` v2 + `laboral_consulta` v2 (15-jul-2026)
+### Corrida de verificación de `ugpp_demanda` v2 + `laboral_consulta` v2 (15/16-jul-2026)
 
 Banco completo (20 casos), mismo `eval/evaluador.py --commit`, después de
-publicar ambas v2 y `DIRECTIVA_FUENTE_OBLIGATORIA` v2. Resultado real:
-**ver `eval/evaluador.py` output / `julix_evals` para el run_id de esta
-corrida** — completar acá con el % de aprobación una vez corrida
-(instrucción para quien continúe esta iteración si no se alcanzó a cerrar
-en la misma sesión: `SELECT run_id, COUNT(*), porcentaje_aprobacion FROM
-julix_evals_resumen_por_corrida ORDER BY iniciado_en DESC LIMIT 1`).
+publicar ambas v2 y `DIRECTIVA_FUENTE_OBLIGATORIA` v2 (run
+`s5-20260716T023451Z-46812ab1`, costo real $1.38 USD).
+
+**Resultado: 7/20 aprobados (35%)** — más del doble que v1 (15%), GATE de
+Fase 1 (≥80%) sigue **NO APROBADO**. La hipótesis de v2 se confirmó
+parcialmente: la abstención bajó de forma medible (UGPP-01 pasó de score 1
+a 3, varios casos que antes se negaban por completo ahora sí dan
+tarifas/plazos), pero surgió un **patrón dominante nuevo**: cifras
+concretas pero **incorrectas** en lugar de abstención total —
+UGPP-03 (20% en vez del 5/20/35% escalonado del patrón oro), UGPP-05/10
+(confunde plazos de recursos, inventa "dos meses" donde son "diez días"),
+UGPP-12 (regla de riesgo laboral I-III vs. IV-V invertida), LAB-01/02
+(porcentajes de recargo y días de indemnización distintos al patrón oro).
+
+**Diagnóstico de fondo (no es solo un problema de prompt):** `norma_clave`
+en el banco de S5 es SOLO la cita (ley/decreto/artículo), nunca el texto
+literal del artículo — a diferencia del RAG real de producción
+(`rag/context_builder.py`), que si recupera contenido verbatim de
+`rag_chunks`. v2 le pidió al modelo que aplicara su conocimiento jurídico
+del contenido de una norma ya citada; el modelo ahora SÍ responde, pero su
+memoria paramétrica de cifras exactas (porcentajes, días, tramos) no
+siempre es precisa — un modelo que "sabe aproximadamente" pero no tiene el
+texto real inevitablemente va a errar cifras específicas alguna vez. Este
+es un límite estructural del banco de S5 tal como está armado hoy (citas
+sin texto), no algo que otra iteración de prompt por sí sola resuelva de
+forma confiable: cualquier ajuste sigue moviendo la aguja entre "abstenerse"
+y "adivinar con confianza", nunca hacia "tener el texto real". La solución
+de fondo es que `norma_clave` incluya el texto verbatim del artículo (o que
+el banco se corra contra el corpus real de RAG una vez esté completo,
+S8-S9) — decisión pendiente con el usuario, no tomada unilateralmente acá.
+
+**Caveat de medición:** 2/20 casos (UGPP-06, LAB-05) recibieron
+score=0/hallucination_flag=true por una falla de formato JSON del juez
+("Expecting ',' delimiter"), no por la respuesta real de JuliX —
+`JuliXClient.validar_json()` no logró parsear la salida del juez en esos
+dos casos. El % real de aprobación podría ser algo más alto si se
+resuelve esa falla de parseo antes de la próxima corrida.
 
 ## tarea: laboral_colombia
 
