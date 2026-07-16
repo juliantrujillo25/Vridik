@@ -26,6 +26,9 @@ export function ProtectedLayout() {
             {perfil?.role === "admin" && (
               <Link className="btn btn-ghost btn-sm" to="/admin">Admin</Link>
             )}
+            {perfil?.es_superadmin && (
+              <Link className="btn btn-ghost btn-sm" to="/plataforma">Plataforma</Link>
+            )}
             <Link className="btn btn-ghost btn-sm" to="/cuenta">Cuenta</Link>
             <button className="btn btn-ghost btn-sm" onClick={onLogout}>Salir</button>
           </nav>

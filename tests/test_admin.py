@@ -54,6 +54,7 @@ class _FakeAdminDB:
             "id": user_id, "email": email, "hashed_password": "x-hash",
             "role": role, "is_active": is_active, "created_at": "2026-01-01T00:00:00+00:00",
             "deleted_at": None, "must_change": False, "totp_enabled": totp_enabled, "despacho_id": despacho_id,
+            "es_superadmin": False,
         }
         return self.users[user_id]
 
@@ -99,10 +100,16 @@ class _FakeAdminDB:
             if not self.auth_events:
                 return None
             return {"hash_actual": self.auth_events[-1]["hash_actual"]}
-        if "SELECT id, email, role, despacho_id FROM users WHERE id" in q:
+        if "SELECT id, email, role, despacho_id, es_superadmin FROM users WHERE id" in q:
             (user_id,) = args
             u = self.users.get(user_id)
-            return {"id": u["id"], "email": u["email"], "role": u["role"], "despacho_id": u["despacho_id"]} if u else None
+            return (
+                {
+                    "id": u["id"], "email": u["email"], "role": u["role"],
+                    "despacho_id": u["despacho_id"], "es_superadmin": u["es_superadmin"],
+                }
+                if u else None
+            )
         if "SELECT id FROM users WHERE email" in q:
             (email,) = args
             return next(({"id": u["id"]} for u in self.users.values() if u["email"] == email), None)
@@ -132,6 +139,15 @@ class _FakeAdminDB:
                 return None
             u["role"] = new_role
             return {k: u[k] for k in ("id", "email", "role", "is_active", "created_at")}
+        return None
+
+    async def fetchval(self, query: str, *args):
+        q = query.strip()
+        if q == "SELECT plan FROM despachos WHERE id = $1":
+            # Sin fila de despacho real en este fake -- None cae al default
+            # de core.despachos.limite_julix_mensual ('piloto', $150),
+            # mismo límite que ya asumían los tests de costos existentes.
+            return None
         return None
 
     async def fetch(self, query: str, *args):

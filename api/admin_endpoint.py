@@ -38,13 +38,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from api.auth_endpoint import _claims_de_bearer, _get_db
-from core.admin import change_role, create_user, ensure_role_column, list_users
+from core.admin import change_role, create_user, ensure_role_column, ensure_superadmin_column, list_users
 from core.admin_users import UsuarioNoEncontradoError, actividad_usuario, resetear_password
 from core.auth import hash_password
-from core.despachos import ensure_despachos_table
+from core.despachos import ensure_despachos_table, limite_julix_mensual, obtener_plan
 from core.totp_2fa import desactivar_totp, ensure_totp_columns
 from julix.ledger import (
-    SOFT_MONTHLY_LIMIT_USD,
     ensure_julix_calls_table,
     gasto_mensual_actual_usd,
     requiere_confirmacion,
@@ -72,12 +71,16 @@ async def _resolver_usuario(request: Request, authorization: str | None) -> dict
     conn = _get_db(request)
     await ensure_role_column(conn)
     await ensure_despachos_table(conn)
-    # Fase 4: despacho_id se resuelve fresco acá, igual que role -- nunca
-    # vive en el JWT, así que mover/desactivar un usuario toma efecto sin
-    # esperar a que su token expire. Único choke point real: todos los
-    # endpoints con acceso a casos dependen de get_current_admin/
-    # get_current_user, que pasan siempre por acá.
-    fila = await conn.fetchrow("SELECT id, email, role, despacho_id FROM users WHERE id = $1", user_id)
+    await ensure_superadmin_column(conn)
+    # Fase 4: despacho_id/es_superadmin se resuelven frescos acá, igual que
+    # role -- nunca viven en el JWT, así que mover/desactivar un usuario o
+    # cambiarle un privilegio toma efecto sin esperar a que su token
+    # expire. Único choke point real: todos los endpoints con acceso a
+    # casos dependen de get_current_admin/get_current_user, que pasan
+    # siempre por acá.
+    fila = await conn.fetchrow(
+        "SELECT id, email, role, despacho_id, es_superadmin FROM users WHERE id = $1", user_id,
+    )
     if fila is None:
         raise HTTPException(status_code=401, detail="Usuario del token no existe")
     return dict(fila)
@@ -112,6 +115,30 @@ async def get_current_admin(request: Request, authorization: str | None = Header
 async def get_current_user(request: Request, authorization: str | None = Header(default=None)) -> dict:
     """Cualquier usuario autenticado, sin importar el rol."""
     return await _resolver_usuario(request, authorization)
+
+
+async def get_current_superadmin(request: Request, authorization: str | None = Header(default=None)) -> dict:
+    """Admin de PLATAFORMA (Vridik, no de un despacho) -- distinto de
+    `role='admin'`, que siempre es por-despacho. Ver `es_superadmin` en
+    core/admin.py::ensure_superadmin_column. Exige 2FA igual que
+    get_current_admin (esta capacidad es más sensible todavía, no menos:
+    puede ver y cambiar el plan de CUALQUIER despacho)."""
+    usuario = await _resolver_usuario(request, authorization)
+    if not usuario["es_superadmin"]:
+        raise HTTPException(status_code=403, detail="Requiere admin de plataforma")
+
+    conn = _get_db(request)
+    await ensure_totp_columns(conn)
+    fila_2fa = await conn.fetchrow("SELECT totp_enabled FROM users WHERE id = $1", usuario["id"])
+    if fila_2fa is None or not fila_2fa["totp_enabled"]:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Tu cuenta de admin de plataforma requiere 2FA activado. "
+                "Configuralo con POST /auth/2fa/setup y POST /auth/2fa/verify antes de usar /platform."
+            ),
+        )
+    return usuario
 
 
 @router.get("/users")
@@ -204,18 +231,25 @@ async def post_user_reset_2fa(
 @router.get("/costos")
 async def get_costos(request: Request, admin: dict = Depends(get_current_admin)):
     """Widget de costos del roadmap (S4/S6): gasto acumulado de JuliX en el
-    mes calendario en curso contra el límite blando mensual
-    (julix/ledger.py::SOFT_MONTHLY_LIMIT_USD). Nunca bloqueo duro -- los
-    flags `aviso_80`/`confirmacion_100` son solo información para el
-    panel, no impiden generar documentos (esa decisión, si algún día se
-    quiere, vive en el flujo de generación, no acá)."""
+    mes calendario en curso contra el límite blando mensual del PLAN del
+    despacho (core.despachos.limite_julix_mensual, Fase 4 -- antes era el
+    flat SOFT_MONTHLY_LIMIT_USD para cualquiera, ya no: un despacho en
+    plan 'pagado' tiene un límite real distinto al de uno en 'piloto').
+    Nunca bloqueo duro -- los flags `aviso_80`/`confirmacion_100` son solo
+    información para el panel, no impiden generar documentos (esa
+    decisión, si algún día se quiere, vive en el flujo de generación, no
+    acá)."""
     conn = _get_db(request)
+    await ensure_despachos_table(conn)
     await ensure_julix_calls_table(conn)
     gasto = await gasto_mensual_actual_usd(conn, despacho_id=admin["despacho_id"])
+    plan = await obtener_plan(conn, admin["despacho_id"])
+    limite = await limite_julix_mensual(conn, admin["despacho_id"])
     aviso_80, confirmacion_100 = await requiere_confirmacion(conn, despacho_id=admin["despacho_id"])
     return {
         "gasto_mensual_usd": round(gasto, 2),
-        "limite_mensual_usd": SOFT_MONTHLY_LIMIT_USD,
+        "limite_mensual_usd": limite,
+        "plan": plan,
         "aviso_80": aviso_80,
         "confirmacion_100": confirmacion_100,
     }

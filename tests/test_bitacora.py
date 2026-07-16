@@ -250,20 +250,29 @@ class _FakeBitacoraHttpConn(_FakeBitacoraConn):
         super().__init__()
         self.users: dict[str, dict] = {}
 
-    def seed_user(self, *, role: str = "cliente", totp_enabled: bool = True, despacho_id: str = "despacho-1") -> dict:
+    def seed_user(
+        self, *, role: str = "cliente", totp_enabled: bool = True, despacho_id: str = "despacho-1",
+        es_superadmin: bool = False,
+    ) -> dict:
         user_id = str(uuid.uuid4())
         self.users[user_id] = {
             "id": user_id, "email": f"{user_id}@vridik.local", "role": role, "totp_enabled": totp_enabled,
-            "despacho_id": despacho_id,
+            "despacho_id": despacho_id, "es_superadmin": es_superadmin,
         }
         return self.users[user_id]
 
     async def fetchrow(self, query: str, *args):
         q = query.strip()
-        if "SELECT id, email, role, despacho_id FROM users WHERE id" in q:
+        if "SELECT id, email, role, despacho_id, es_superadmin FROM users WHERE id" in q:
             (user_id,) = args
             u = self.users.get(user_id)
-            return {"id": u["id"], "email": u["email"], "role": u["role"], "despacho_id": u["despacho_id"]} if u else None
+            return (
+                {
+                    "id": u["id"], "email": u["email"], "role": u["role"],
+                    "despacho_id": u["despacho_id"], "es_superadmin": u["es_superadmin"],
+                }
+                if u else None
+            )
         if q.strip() == "SELECT totp_enabled FROM users WHERE id = $1":
             (user_id,) = args
             u = self.users.get(user_id)
@@ -315,9 +324,19 @@ def test_verificar_endpoint_solo_admin(bdb, bclient):
     assert r.status_code == 403
 
 
-def test_verificar_endpoint_admin_ve_integridad(bdb, bclient):
+def test_verificar_endpoint_admin_de_despacho_no_alcanza(bdb, bclient):
+    """Fase 4 (pricing por despacho): la cadena de hash es platform-wide --
+    un admin de despacho normal (no superadmin) ya no puede verla, cierra
+    el hueco que la fundación de multi-tenancy había dejado documentado
+    a propósito (antes esto era get_current_admin)."""
     admin = bdb.seed_user(role="admin")
     r = bclient.get("/bitacora/verificar", headers={"Authorization": f"Bearer {_token_de(admin)}"})
+    assert r.status_code == 403
+
+
+def test_verificar_endpoint_superadmin_ve_integridad(bdb, bclient):
+    superadmin = bdb.seed_user(role="admin", es_superadmin=True)
+    r = bclient.get("/bitacora/verificar", headers={"Authorization": f"Bearer {_token_de(superadmin)}"})
     assert r.status_code == 200, r.text
     assert r.json()["integra"] is True
 

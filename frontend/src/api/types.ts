@@ -52,6 +52,23 @@ export interface Perfil {
   totp_enabled: boolean;
   despacho_id: string;
   despacho_nombre: string;
+  // Fase 4 (pricing por despacho): admin de PLATAFORMA (Vridik, no de un
+  // despacho) -- distinto de role === "admin", que siempre es por-despacho.
+  es_superadmin: boolean;
+}
+
+// Fase 4 (pricing por despacho)
+export type Plan = "piloto" | "pagado";
+
+// GET /platform/despachos (exclusivo del admin de plataforma)
+export interface Despacho {
+  id: string;
+  nombre: string;
+  plan: Plan;
+  activo: boolean;
+  created_at: string;
+  cantidad_usuarios: number;
+  gasto_mensual_usd: number;
 }
 
 // POST /auth/register (Fase 4: registrarse crea un despacho nuevo)
@@ -176,6 +193,7 @@ export interface ResetPasswordResult {
 export interface CostosResponse {
   gasto_mensual_usd: number;
   limite_mensual_usd: number;
+  plan: Plan;
   aviso_80: boolean;
   confirmacion_100: boolean;
 }

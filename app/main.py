@@ -53,6 +53,7 @@ from api.cobro_endpoint import router as cobro_router
 from api.events_endpoint import router as events_router
 from api.bitacora_endpoint import router as bitacora_router
 from api.mensajes_endpoint import router as mensajes_router
+from api.platform_endpoint import router as platform_router
 from api.terminos_endpoint import router as terminos_router
 from core.auth import ensure_auth_migration_005
 from core.auth_events import ensure_bitacora_hash_chain
@@ -116,6 +117,11 @@ app.include_router(cobro_router)
 # Fase 3: bitácora sellada de notificaciones con acuse -- crece sobre
 # auth_events + hash encadenado (ver core/auth_events.py).
 app.include_router(bitacora_router)
+
+# Fase 4: pricing por despacho -- admin de plataforma (Vridik, no de un
+# despacho), único lugar de la app donde ver/tocar TODOS los despachos sin
+# scoping es correcto por diseño (ver core/despachos.py).
+app.include_router(platform_router)
 
 
 @app.on_event("startup")

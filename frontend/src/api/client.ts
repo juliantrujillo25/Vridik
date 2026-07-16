@@ -20,6 +20,7 @@ import type {
   CrearDocumentoInput,
   CrearTerminoInput,
   CrearUsuarioAdminInput,
+  Despacho,
   EstadoCaso,
   EstadoTermino,
   EventoSSE,
@@ -28,6 +29,7 @@ import type {
   Mensaje,
   Notificacion,
   Perfil,
+  Plan,
   RegenerarCodigosResponse,
   ResetPasswordResult,
   ResumenAhorro,
@@ -443,9 +445,23 @@ class ApiClient {
     return this.request(`/bitacora/eventos/${eventoId}/acuse`, { method: "POST" });
   }
 
-  /** Solo admin (lo exige el backend). */
+  /** Exclusivo del admin de plataforma (Fase 4 -- lo exige el backend, la
+   *  cadena de hash es platform-wide, no de un despacho). */
   verificarBitacora(): Promise<IntegridadBitacora> {
     return this.request("/bitacora/verificar");
+  }
+
+  // --- Fase 4: pricing por despacho (admin de plataforma) -------------------
+  /** Exclusivo del admin de plataforma (es_superadmin). */
+  platformListDespachos(): Promise<Despacho[]> {
+    return this.request("/platform/despachos");
+  }
+
+  platformCambiarPlan(despachoId: string, plan: Plan): Promise<Despacho> {
+    return this.request(`/platform/despachos/${despachoId}/plan`, {
+      method: "PATCH",
+      body: JSON.stringify({ plan }),
+    });
   }
 
   // --- eventos en vivo (SSE, roadmap S11 Fase C) ---------------------------

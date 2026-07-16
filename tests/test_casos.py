@@ -37,6 +37,7 @@ class _FakeCasosDB:
         user_id = str(uuid.uuid4())
         self.users[user_id] = {
             "id": user_id, "email": email, "role": role, "totp_enabled": totp_enabled, "despacho_id": despacho_id,
+            "es_superadmin": False,
         }
         return self.users[user_id]
 
@@ -45,10 +46,16 @@ class _FakeCasosDB:
 
     async def fetchrow(self, query: str, *args):
         q = query.strip()
-        if "SELECT id, email, role, despacho_id FROM users WHERE id" in q:
+        if "SELECT id, email, role, despacho_id, es_superadmin FROM users WHERE id" in q:
             (user_id,) = args
             u = self.users.get(user_id)
-            return {"id": u["id"], "email": u["email"], "role": u["role"], "despacho_id": u["despacho_id"]} if u else None
+            return (
+                {
+                    "id": u["id"], "email": u["email"], "role": u["role"],
+                    "despacho_id": u["despacho_id"], "es_superadmin": u["es_superadmin"],
+                }
+                if u else None
+            )
         if q.strip() == "SELECT totp_enabled FROM users WHERE id = $1":
             (user_id,) = args
             u = self.users.get(user_id)

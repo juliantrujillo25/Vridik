@@ -272,11 +272,22 @@ async def requiere_confirmacion(
     """Retorna (mostrar_aviso_80, requiere_confirmacion_100). Nunca bloqueo duro:
     al 100% el usuario puede seguir, pero debe confirmar explícitamente por documento.
 
-    Fase 4: `despacho_id` acota el límite blando de $150/mes a UN despacho
-    (antes era un solo pozo compartido por toda la plataforma) -- sin esto,
-    un despacho podía quedar bloqueado por el gasto de otro."""
+    Fase 4: `despacho_id` acota el límite blando a UN despacho (antes era
+    un solo pozo compartido por toda la plataforma) -- sin esto, un
+    despacho podía quedar bloqueado por el gasto de otro. Pricing por
+    despacho (misma Fase 4, pasada siguiente): con `despacho_id`, el
+    límite ya no es el flat `SOFT_MONTHLY_LIMIT_USD` -- se resuelve según
+    el plan de ESE despacho (core.despachos.limite_julix_mensual). Sin
+    `despacho_id` (llamador legacy, nunca ocurre en tráfico real post
+    Fase 4), se mantiene el fallback flat de siempre."""
     gasto = await gasto_mensual_actual_usd(db_connection, environment, despacho_id=despacho_id)
-    ratio = gasto / SOFT_MONTHLY_LIMIT_USD if SOFT_MONTHLY_LIMIT_USD else 0
+    if despacho_id is not None:
+        from core.despachos import limite_julix_mensual
+
+        limite = await limite_julix_mensual(db_connection, despacho_id)
+    else:
+        limite = SOFT_MONTHLY_LIMIT_USD
+    ratio = gasto / limite if limite else 0
     return (ratio >= WARNING_THRESHOLD_RATIO, ratio >= 1.0)
 
 

@@ -12,7 +12,13 @@ os.environ.setdefault("JWT_SECRET", "vridik-test-secret-nunca-usar-en-produccion
 
 import pytest
 
-from core.despachos import ensure_despachos_backfill
+from core.despachos import (
+    PlanInvalidoError,
+    cambiar_plan,
+    ensure_despachos_backfill,
+    ensure_despachos_table,
+    limite_julix_mensual,
+)
 
 
 @pytest.mark.asyncio
@@ -57,3 +63,47 @@ async def test_backfill_es_idempotente(db):
 
     total = await db.fetchval("SELECT COUNT(*) FROM despachos WHERE nombre = 'Despacho por defecto'")
     assert total == 1
+
+
+# ---------------------------------------------------------------------------
+# Pricing por despacho (Fase 4, pasada siguiente a la fundación de
+# multi-tenancy): plan de un despacho y su límite mensual de JuliX.
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_despacho_nuevo_nace_en_plan_piloto_con_limite_150(db):
+    await ensure_despachos_table(db)
+    despacho_id = await db.fetchval("INSERT INTO despachos (nombre) VALUES ('Piloto Test') RETURNING id")
+    limite = await limite_julix_mensual(db, despacho_id)
+    assert limite == 150.0
+
+
+@pytest.mark.asyncio
+async def test_cambiar_plan_a_pagado_sube_el_limite_a_500(db):
+    await ensure_despachos_table(db)
+    despacho_id = await db.fetchval("INSERT INTO despachos (nombre) VALUES ('Pagado Test') RETURNING id")
+
+    actualizado = await cambiar_plan(db, despacho_id=despacho_id, plan="pagado")
+    assert actualizado["plan"] == "pagado"
+
+    limite = await limite_julix_mensual(db, despacho_id)
+    assert limite == 500.0
+
+
+@pytest.mark.asyncio
+async def test_cambiar_plan_invalido_rechazado(db):
+    await ensure_despachos_table(db)
+    despacho_id = await db.fetchval("INSERT INTO despachos (nombre) VALUES ('Plan Invalido Test') RETURNING id")
+
+    with pytest.raises(PlanInvalidoError):
+        await cambiar_plan(db, despacho_id=despacho_id, plan="premium-inventado")
+
+    # No debe haber tocado el plan real (sigue en 'piloto', el default).
+    limite = await limite_julix_mensual(db, despacho_id)
+    assert limite == 150.0
+
+
+@pytest.mark.asyncio
+async def test_cambiar_plan_despacho_inexistente_rechazado(db):
+    await ensure_despachos_table(db)
+    with pytest.raises(PlanInvalidoError):
+        await cambiar_plan(db, despacho_id="00000000-0000-0000-0000-000000000000", plan="pagado")

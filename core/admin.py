@@ -33,6 +33,19 @@ async def ensure_role_column(db_connection) -> None:
     await db_connection.execute("ALTER TABLE users ALTER COLUMN role SET DEFAULT 'cliente'")
 
 
+async def ensure_superadmin_column(db_connection) -> None:
+    """Fase 4 (pricing por despacho): admin de PLATAFORMA (Vridik, no de un
+    despacho) -- distinto de `role='admin'` (que siempre es por-despacho,
+    ver core/despachos.py). Un admin de despacho nunca puede subirse el
+    plan a sí mismo; cambiar el plan de un despacho es exclusivo de acá.
+    Default false -- nadie nace superadmin por accidente, se promueve a
+    mano (mismo criterio que la promoción manual de rol admin durante
+    verificación, nunca vía UI en esta pasada)."""
+    await db_connection.execute(
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS es_superadmin BOOLEAN NOT NULL DEFAULT false"
+    )
+
+
 async def list_users(db_connection, *, despacho_id: str, skip: int, limit: int) -> list[dict]:
     """Fase 4: acotado al despacho del admin que pide la lista -- antes
     traía TODOS los usuarios de la plataforma sin importar de qué despacho

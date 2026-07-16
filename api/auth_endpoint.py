@@ -53,7 +53,7 @@ import qrcode
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from core.admin import ensure_role_column
+from core.admin import ensure_role_column, ensure_superadmin_column
 from core.auth import (
     create_jwt,
     create_temp_2fa_token,
@@ -304,13 +304,15 @@ async def me(request: Request, authorization: str | None = Header(default=None))
     await ensure_role_column(conn)
     await ensure_totp_columns(conn)
     await ensure_despachos_table(conn)
+    await ensure_superadmin_column(conn)
 
     # LEFT JOIN, no INNER (Fase 4) -- mismo criterio que el join a
     # user_credentials en /auth/login: nunca dejar que un despacho faltante
     # convierta una sesión válida en un 500.
     fila = await conn.fetchrow(
         """
-        SELECT u.id, u.email, u.role, u.totp_enabled, u.despacho_id, d.nombre AS despacho_nombre
+        SELECT u.id, u.email, u.role, u.totp_enabled, u.despacho_id, d.nombre AS despacho_nombre,
+               u.es_superadmin
         FROM users u
         LEFT JOIN despachos d ON d.id = u.despacho_id
         WHERE u.id = $1

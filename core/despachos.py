@@ -28,6 +28,12 @@ from core.db_utils import conexion_dedicada, transaccion_si_disponible
 _LOCK_KEY_BACKFILL = "vridik_despachos_backfill"
 _NOMBRE_DESPACHO_POR_DEFECTO = "Despacho por defecto"
 
+# Pricing por despacho (Fase 4). Sin CHECK a nivel de DB -- mismo criterio
+# que `users.role` (tampoco lo tiene): se valida en capa de aplicación
+# (Literal en Pydantic + guard acá abajo en cambiar_plan()).
+PLANES_VALIDOS = ("piloto", "pagado")
+LIMITE_JULIX_POR_PLAN_USD = {"piloto": 150.0, "pagado": 500.0}
+
 
 async def ensure_despachos_table(conn) -> None:
     """Nivel barato: crea la tabla y la columna si no existen. No hace
@@ -40,12 +46,76 @@ async def ensure_despachos_table(conn) -> None:
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             nombre TEXT NOT NULL,
             activo BOOLEAN NOT NULL DEFAULT true,
+            plan TEXT NOT NULL DEFAULT 'piloto',
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
         """
     )
     await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS despacho_id UUID REFERENCES despachos(id)")
     await conn.execute("CREATE INDEX IF NOT EXISTS ix_users_despacho_id ON users (despacho_id)")
+    # `plan` pudo no existir si `despachos` ya estaba creada antes de esta
+    # pasada -- a diferencia de despacho_id (que necesitó backfill
+    # computado por fila), un DEFAULT constante aplica de una sola vez a
+    # filas existentes y nuevas, no hace falta una función de backfill
+    # aparte.
+    await conn.execute("ALTER TABLE despachos ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'piloto'")
+
+
+async def obtener_plan(conn, despacho_id: str) -> str:
+    """Lookup por PK -- usado tanto por limite_julix_mensual() como por
+    GET /admin/costos (que muestra el plan además del límite numérico)."""
+    plan = await conn.fetchval("SELECT plan FROM despachos WHERE id = $1", despacho_id)
+    return plan or "piloto"
+
+
+async def limite_julix_mensual(conn, despacho_id: str) -> float:
+    """Límite mensual de JuliX del despacho, según su plan -- se llama en
+    el camino caliente de generación de documentos (julix/ledger.py::
+    requiere_confirmacion), por eso una consulta sola y directa."""
+    plan = await obtener_plan(conn, despacho_id)
+    return LIMITE_JULIX_POR_PLAN_USD.get(plan, LIMITE_JULIX_POR_PLAN_USD["piloto"])
+
+
+async def listar_despachos_con_uso(conn) -> list[dict]:
+    """Único lugar de la app donde listar TODOS los despachos sin scoping
+    es correcto por diseño -- exclusivo del admin de plataforma
+    (api/platform_endpoint.py::get_current_superadmin).
+
+    Import de julix.ledger diferido (no al tope del módulo) para evitar un
+    ciclo: julix/ledger.py ya importa core.despachos::limite_julix_mensual."""
+    from julix.ledger import gasto_mensual_actual_usd
+
+    filas = await conn.fetch(
+        """
+        SELECT d.id, d.nombre, d.plan, d.activo, d.created_at,
+               COUNT(u.id) AS cantidad_usuarios
+        FROM despachos d
+        LEFT JOIN users u ON u.despacho_id = d.id
+        GROUP BY d.id, d.nombre, d.plan, d.activo, d.created_at
+        ORDER BY d.created_at DESC
+        """
+    )
+    resultado = []
+    for fila in filas:
+        gasto = await gasto_mensual_actual_usd(conn, despacho_id=fila["id"])
+        resultado.append({**dict(fila), "gasto_mensual_usd": gasto})
+    return resultado
+
+
+class PlanInvalidoError(Exception):
+    pass
+
+
+async def cambiar_plan(conn, *, despacho_id: str, plan: str) -> dict:
+    if plan not in PLANES_VALIDOS:
+        raise PlanInvalidoError(f"Plan inválido: {plan!r} (válidos: {PLANES_VALIDOS})")
+    fila = await conn.fetchrow(
+        "UPDATE despachos SET plan = $2 WHERE id = $1 RETURNING id, nombre, plan, activo, created_at",
+        despacho_id, plan,
+    )
+    if fila is None:
+        raise PlanInvalidoError(f"Despacho no encontrado: {despacho_id!r}")
+    return dict(fila)
 
 
 async def ensure_despachos_backfill(conn) -> None:

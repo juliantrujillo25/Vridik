@@ -37,7 +37,9 @@ class _FakeTerminosDB:
 
     def seed_user(self, *, email: str, role: str = "cliente", despacho_id: str = "despacho-1") -> dict:
         user_id = str(uuid.uuid4())
-        self.users[user_id] = {"id": user_id, "email": email, "role": role, "despacho_id": despacho_id}
+        self.users[user_id] = {
+            "id": user_id, "email": email, "role": role, "despacho_id": despacho_id, "es_superadmin": False,
+        }
         return self.users[user_id]
 
     def seed_caso(self, *, cliente_id: str, abogado_id: str | None = None, despacho_id: str = "despacho-1") -> dict:
@@ -53,7 +55,7 @@ class _FakeTerminosDB:
 
     async def fetchrow(self, query: str, *args):
         q = query.strip()
-        if "SELECT id, email, role, despacho_id FROM users WHERE id" in q:
+        if "SELECT id, email, role, despacho_id, es_superadmin FROM users WHERE id" in q:
             (user_id,) = args
             u = self.users.get(user_id)
             return dict(u) if u else None

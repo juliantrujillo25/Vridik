@@ -4,9 +4,16 @@ Fase 3: "Bitácora sellada de notificaciones con acuse" (core/auth_events.py
 -- hash encadenado sobre `auth_events`).
 
 GET  /bitacora/verificar               integridad de la cadena completa --
-                                        solo admin (es una herramienta de
-                                        auditoría/compliance, no algo que
-                                        un cliente necesite ver).
+                                        exclusivo del admin de PLATAFORMA
+                                        (Fase 4, api/platform_endpoint.py),
+                                        no de un admin de despacho: la
+                                        cadena de hash es única y global
+                                        (un solo pg_advisory_xact_lock para
+                                        toda la app), nunca se sharding por
+                                        despacho -- antes de Fase 4 esto
+                                        era get_current_admin (cualquier
+                                        admin de cualquier despacho podía
+                                        verla), hueco que se cierra acá.
 GET  /bitacora/mis-notificaciones      notificaciones del usuario
                                         autenticado (actuaciones
                                         notificadas, etc.) con su estado
@@ -22,7 +29,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from api.admin_endpoint import get_current_admin, get_current_user
+from api.admin_endpoint import get_current_superadmin, get_current_user
 from api.auth_endpoint import _get_db
 from core.auth_events import (
     AcuseInvalidoError,
@@ -38,7 +45,7 @@ router = APIRouter(prefix="/bitacora", tags=["bitacora"])
 
 
 @router.get("/verificar")
-async def verificar_bitacora_endpoint(request: Request, current: dict = Depends(get_current_admin)):
+async def verificar_bitacora_endpoint(request: Request, current: dict = Depends(get_current_superadmin)):
     conn = _get_db(request)
     await ensure_bitacora_hash_chain(conn)
     return await verificar_cadena(conn)
