@@ -78,6 +78,20 @@ jobs:
       - name: Cargar seed de staging (db/seed_railway.sql)
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/seed_railway.sql
 
+      - name: Hardening RLS -- quitar SUPERUSER al rol de conexión antes de pytest
+        # POSTGRES_USER=vridik hace que la imagen oficial de postgres lo cree
+        # como superusuario (initdb lo usa para bootstrapear el cluster) --
+        # Postgres nunca aplica row security a un superusuario, sin importar
+        # cuántas políticas/FORCE ROW LEVEL SECURITY existan (core/rls.py).
+        # Corre DESPUÉS de aplicar schema/seed (que sí necesitan privilegio
+        # completo para el CREATE EXTENSION inicial de pgcrypto/citext,
+        # igual que en producción ya instalada) y ANTES de pytest, para que
+        # toda la suite (incluida tests/test_rls.py) corra con el mismo
+        # nivel de privilegio real que usa la app -- si esto rompiera algo
+        # (p.ej. CREATE EXTENSION IF NOT EXISTS de los ensure_*_table()
+        # per-request), es mejor que reviente acá, no en producción.
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER ROLE vridik NOSUPERUSER;"
+
       - name: pytest -q (JUnit XML para el gate de 90%, cobertura para el gate de 60%)
         run: |
           mkdir -p reports
