@@ -24,6 +24,7 @@ os.environ.setdefault("JWT_SECRET", "vridik-test-secret-nunca-usar-en-produccion
 import pytest
 
 from core.case import create_caso, ensure_casos_table
+from core.events import ensure_events_table
 from core.terminos import (
     crear_termino,
     ensure_terminos_table,
