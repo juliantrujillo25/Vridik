@@ -134,6 +134,53 @@ def test_database_url() -> str | None:
     return os.environ.get("TEST_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _backfill_de_sesion(test_database_url):
+    """Hardening RLS (core/rls.py): `ensure_rls_policies()` se salta
+    `FORCE ROW LEVEL SECURITY` en cualquier tabla con filas
+    `despacho_id IS NULL` pendientes (red de seguridad real para
+    producción -- ver ese módulo). Los 4 usuarios de
+    `db/seed_railway.sql` (julian/ana/cliente1/soporte) predatan el
+    concepto de despacho y NUNCA pasan por el backfill real, que solo
+    corre al arrancar `app/main.py::_conectar_db` -- la suite nunca
+    levanta ese proceso. Sin este fixture, esas filas quedarían con
+    `despacho_id NULL` para siempre en la base de test, y
+    `ensure_rls_policies()` nunca aplicaría `FORCE` en users/casos/
+    julix_calls durante NINGÚN test -- exactamente lo que pasó la
+    primera vez que corrió tests/test_rls.py contra CI real.
+
+    Corre UNA vez por sesión, con su PROPIA conexión que sí comitea
+    (nunca la fixture `db`, que hace rollback) -- mismo trabajo que hace
+    app/main.py al arrancar en producción real, para que el estado de la
+    base de test represente "producción ya migrada", no "producción
+    recién instalada".
+
+    Fixture SÍNCRONA con `asyncio.run()` propio (no `pytest_asyncio.
+    fixture`) a propósito: un fixture async de alcance "session" corre en
+    un event loop distinto al que pytest-asyncio arma por test (modo
+    `auto`, alcance de loop por función) -- `asyncio.run()` evita
+    depender de ese manejo de loop por completo."""
+    if asyncpg is None or not test_database_url:
+        return
+
+    import asyncio
+
+    async def _correr() -> None:
+        from core.case import ensure_casos_despacho_backfill
+        from core.despachos import ensure_despachos_backfill
+        from julix.ledger import ensure_julix_calls_despacho_backfill
+
+        conn = await asyncpg.connect(test_database_url)
+        try:
+            await ensure_despachos_backfill(conn)
+            await ensure_casos_despacho_backfill(conn)
+            await ensure_julix_calls_despacho_backfill(conn)
+        finally:
+            await conn.close()
+
+    asyncio.run(_correr())
+
+
 @pytest_asyncio.fixture if pytest_asyncio else pytest.fixture
 async def db(test_database_url, backend):
     """Conexión con rollback transaccional. Se salta explícitamente si no hay
