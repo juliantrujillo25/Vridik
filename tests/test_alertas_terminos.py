@@ -194,6 +194,7 @@ async def test_marcar_alerta_enviada_hace_que_desaparezca_de_la_proxima_ronda(db
 async def test_ejecutar_ronda_de_alertas_extremo_a_extremo_contra_postgres_real(db, make_despacho, make_user):
     await ensure_casos_table(db)
     await ensure_terminos_table(db)
+    await ensure_events_table(db)
 
     despacho_id = await make_despacho()
     cliente = await make_user(role="cliente", despacho_id=despacho_id)
