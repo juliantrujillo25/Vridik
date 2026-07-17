@@ -81,11 +81,41 @@ de saltar al siguiente.
   ("si una norma citada no aparece en las fuentes entregadas, NO la
   cites") y `DIRECTIVA_FUENTE_OBLIGATORIA` v1 (`julix/service.py`) no
   distinguían eso de "aplicar el contenido de una norma que SÍ fue
-  nombrada". Un subconjunto más chico (UGPP-04/06/07/08/09) sí alucinó de
-  verdad: citó artículos fuera de `norma_clave` o, en el caso de UGPP-07,
-  el juez marcó como alucinación una norma que en realidad SÍ estaba en
-  `norma_clave` — bug del juez, corregido en la misma iteración (ver
-  `eval/evaluador.py::JUEZ_SYSTEM_PROMPT`).
+  nombrada". Un subconjunto más chico (UGPP-04/06/08/09) sí alucinó de
+  verdad: citó artículos fuera de `norma_clave`. UGPP-07 se sacó de esta
+  lista — ver corrección del 16-jul-2026 abajo, es en realidad un caso de
+  abstención, no de alucinación.
+
+  **Corrección (16-jul-2026), verificada contra `julix_evals` real, run
+  `s5-20260715T233826Z-4f201beb`** (la corrida oficial del GATE, 15%):
+  UGPP-07 SÍ tenía "Decreto 379 de 2026" como fuente autorizada en
+  `norma_clave` de ese caso, y **el decreto es real** (confirmado contra
+  Función Pública y el sitio oficial de la UGPP — regula el traslado a la
+  UGPP de la potestad de fijar costos presuntos de independientes,
+  vigente desde may-2026, ver `data/PROPUESTA_CORPUS_OLA1.md` en la rama
+  `worktree-corpus+propuesta-ola1`). JuliX no inventó el decreto — lo
+  citó porque se le dio como fuente autorizada, pero luego **dudó de su
+  propia existencia** ("se requiere confirmar que dicha norma exista...
+  si resulta aplicable *ratione temporis*"), presumiblemente por ser una
+  norma muy reciente y estar cerca del borde de lo que el modelo conoce
+  de memoria. El juez tomó esa duda como si JuliX hubiera "introducido un
+  decreto inexistente" y marcó `hallucination_flag=true`, score=0 — el
+  mismo bug de juez que este documento ya identificaba arriba, aplicado
+  específicamente a este caso. La fila de `julix_evals` de esa corrida
+  oficial **nunca se corrigió retroactivamente** (el fix de
+  `JUEZ_SYSTEM_PROMPT` solo aplicó hacia adelante). En la corrida
+  siguiente (`s5-20260716T023451Z-46812ab1`, S6, 35%) el mismo caso ya no
+  tiene `hallucination_flag`, score=3 (correcto, aunque sigue sin llegar
+  al umbral de "aprobado" ≥4). **No cambia el % de aprobación reportado
+  de ninguna corrida de forma material** (incluso re-juzgado sin el bug,
+  UGPP-07 probablemente seguiría sin aprobar por score <4) — el valor de
+  esta corrección es de diagnóstico: UGPP-07 pertenece al balde de
+  "abstención/sobre-cautela" ya documentado como patrón dominante, no al
+  balde más chico de "alucinación real". Patrón nuevo a vigilar en
+  próximas iteraciones de prompt: JuliX puede llegar a **dudar de normas
+  reales autorizadas solo por ser muy recientes** — un tipo de error
+  distinto tanto de la abstención por falta de texto como de la
+  alucinación por citar algo no autorizado.
 
 ### v2 — `v2_ugpp_demanda.md`
 - **Modelo sugerido:** claude-sonnet-5-20250624
