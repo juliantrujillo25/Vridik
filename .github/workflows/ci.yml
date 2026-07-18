@@ -120,7 +120,11 @@ jobs:
 
     services:
       postgres:
-        image: postgres:15
+        # pgvector/pgvector:pg15 (no postgres:15 puro) -- rag_chunks_schema.sql
+        # hace CREATE EXTENSION "vector", que la imagen oficial de Postgres no
+        # trae instalada. Es un superset compatible de postgres:15 (mismo
+        # entrypoint/health-check), así que no cambia nada del resto de este job.
+        image: pgvector/pgvector:pg15
         env:
           POSTGRES_USER: vridik
           POSTGRES_PASSWORD: ${{ secrets.CI_TEST_DB_PASSWORD }}
@@ -158,6 +162,12 @@ jobs:
       - name: Dry-run — db/seed_railway.sql
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/seed_railway.sql
 
+      - name: Dry-run — rag/sql/rag_chunks_schema.sql (S6/S7, RAG legal -- nunca antes validado en CI)
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f rag/sql/rag_chunks_schema.sql
+
+      - name: Dry-run — rag/sql/002_rag_chunks_metadata.sql (S7, migración aditiva idempotente)
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f rag/sql/002_rag_chunks_metadata.sql
+
       - name: Verificación de idempotencia — reaplicar seed_railway.sql no debe fallar
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/seed_railway.sql
 
@@ -165,6 +175,14 @@ jobs:
         run: |
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/003_pdf_jobs.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/004_totp_2fa.sql
+
+      - name: Verificación de idempotencia — reaplicar 002_rag_chunks_metadata.sql no debe fallar
+        # rag_chunks_schema.sql en sí NO es idempotente (CREATE TABLE sin
+        # IF NOT EXISTS, a propósito -- es el schema base, se aplica una sola
+        # vez) -- reaplicarlo fallaría con "ya existe". 002 sí lo es (mismo
+        # patrón que 003/004), es el que se reaplica en producción sin romper
+        # cada vez que corre scripts/railway_setup_rag.sh.
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f rag/sql/002_rag_chunks_metadata.sql
 
       - name: Nota
         run: |
