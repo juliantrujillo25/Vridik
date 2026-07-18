@@ -403,3 +403,43 @@ export interface ReporteRiesgo {
   total_pep: number;
   clientes: ClienteEnReporte[];
 }
+
+// Roadmap S7: mini-herramienta de curaduría del corpus legal (3 pasos),
+// exclusiva del admin de plataforma. rag_chunks es compartido de toda la
+// plataforma -- corpus_drafts no tiene despacho_id.
+export type TipoFuenteCorpus = "ley" | "decreto" | "jurisprudencia";
+export type PrioridadCorpus = "alta" | "media" | "baja";
+export type EstadoBorradorCorpus = "borrador" | "publicado";
+
+export interface BorradorCorpusResumen {
+  id: string;
+  nombre_fuente: string;
+  estado: EstadoBorradorCorpus;
+  norma: string | null;
+  tipo_fuente: TipoFuenteCorpus | null;
+  prioridad: PrioridadCorpus | null;
+  cantidad_chunks: number;
+  chunks_publicados: number | null;
+  chunks_duplicados: number | null;
+  creado_en: string;
+  actualizado_en: string;
+}
+
+export interface BorradorCorpus extends BorradorCorpusResumen {
+  texto_extraido: string;
+  chunks: string[];
+  articulo: string | null;
+  anio: number | null;
+  tribunal: string | null;
+  creado_por: string | null;
+}
+
+export interface ActualizarBorradorCorpusInput {
+  chunks?: string[];
+  norma?: string;
+  articulo?: string;
+  tipo_fuente?: TipoFuenteCorpus;
+  prioridad?: PrioridadCorpus;
+  anio?: number;
+  tribunal?: string;
+}

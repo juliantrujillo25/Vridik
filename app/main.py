@@ -52,6 +52,7 @@ from api.case_documents_endpoint import router as case_documents_router
 from api.casos_endpoint import router as casos_router
 from api.clientes_endpoint import router as clientes_router
 from api.cobro_endpoint import router as cobro_router
+from api.corpus_endpoint import router as corpus_router
 from api.events_endpoint import router as events_router
 from api.bitacora_endpoint import router as bitacora_router
 from api.mensajes_endpoint import router as mensajes_router
@@ -125,6 +126,12 @@ app.include_router(bitacora_router)
 # despacho), único lugar de la app donde ver/tocar TODOS los despachos sin
 # scoping es correcto por diseño (ver core/despachos.py).
 app.include_router(platform_router)
+
+# Roadmap S7: mini-herramienta de curaduría del corpus legal (3 pasos:
+# extraer texto -> editar chunks -> completar metadata -> publicar). Mismo
+# criterio de acceso que platform_router -- rag_chunks es corpus compartido
+# de toda la plataforma, sin despacho_id (ver core/corpus_curation.py).
+app.include_router(corpus_router)
 
 # Fase 4: SAGRILAFT lite -- vista de cliente + matriz de riesgo por cliente
 # (core/clientes.py, core/cumplimiento.py). Herramienta de apoyo, no un

@@ -65,6 +65,9 @@ export function ProtectedLayout() {
             {perfil?.es_superadmin && (
               <Link className="btn btn-ghost btn-sm" to="/plataforma">Plataforma</Link>
             )}
+            {perfil?.es_superadmin && (
+              <Link className="btn btn-ghost btn-sm" to="/plataforma/corpus">Corpus</Link>
+            )}
             <Link className="btn btn-ghost btn-sm" to="/cuenta">Cuenta</Link>
             <button className="btn btn-ghost btn-sm" onClick={onLogout}>Salir</button>
             <ThemeToggle />

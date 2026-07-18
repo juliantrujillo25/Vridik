@@ -42,3 +42,10 @@ pytest-cov==5.0.0
 # usa UploadFile -- FastAPI necesita python-multipart para parsear
 # multipart/form-data, tanto en runtime real como en TestClient.
 python-multipart==0.0.20
+
+# Roadmap S7 (curaduría del corpus, core/corpus_curation.py): faltaba --
+# tests/test_corpus_curation.py extrae texto de un PDF real de prueba con
+# pypdf (misma versión que requirements.txt). El import es perezoso/opcional
+# en core/corpus_curation.py y rag/ingest_corpus.py (no rompe el arranque de
+# la app sin esto), pero los tests de extracción de PDF sí lo necesitan real.
+pypdf==5.1.0

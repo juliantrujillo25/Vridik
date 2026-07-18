@@ -8,11 +8,14 @@
 // request original una sola vez.
 
 import type {
+  ActualizarBorradorCorpusInput,
   Actuacion,
   AdjuntoSubido,
   AdminUser,
   AnaliticaUgpp,
   AuthEvent,
+  BorradorCorpus,
+  BorradorCorpusResumen,
   CambiarPasswordInput,
   Caso,
   CaseDocument,
@@ -515,6 +518,47 @@ class ApiClient {
 
   descargarReporteRiesgoCsv(): Promise<Blob> {
     return this.requestBlob("/clientes/riesgo/reporte?formato=csv");
+  }
+
+  // --- Roadmap S7: curaduría del corpus legal (admin de plataforma) --------
+  /** Extrae texto de un PDF -- el archivo nunca se persiste en el backend,
+   *  solo se devuelve el texto para el paso 1 del wizard. */
+  extraerTextoPdf(archivo: File): Promise<{ texto: string }> {
+    const formData = new FormData();
+    formData.append("archivo", archivo);
+    return this.request("/platform/corpus/extraer-pdf", { method: "POST", body: formData });
+  }
+
+  crearBorradorCorpus(nombreFuente: string, texto: string): Promise<BorradorCorpus> {
+    return this.request("/platform/corpus/borradores", {
+      method: "POST",
+      body: JSON.stringify({ nombre_fuente: nombreFuente, texto }),
+    });
+  }
+
+  listarBorradoresCorpus(): Promise<BorradorCorpusResumen[]> {
+    return this.request("/platform/corpus/borradores");
+  }
+
+  obtenerBorradorCorpus(id: string): Promise<BorradorCorpus> {
+    return this.request(`/platform/corpus/borradores/${id}`);
+  }
+
+  actualizarBorradorCorpus(id: string, input: ActualizarBorradorCorpusInput): Promise<BorradorCorpus> {
+    return this.request(`/platform/corpus/borradores/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  }
+
+  /** Embebe cada chunk final e inserta en rag_chunks -- irreversible desde
+   *  acá (el borrador queda como historial, no se puede volver a editar). */
+  publicarBorradorCorpus(id: string): Promise<BorradorCorpus> {
+    return this.request(`/platform/corpus/borradores/${id}/publicar`, { method: "POST" });
+  }
+
+  descartarBorradorCorpus(id: string): Promise<void> {
+    return this.request(`/platform/corpus/borradores/${id}`, { method: "DELETE" });
   }
 
   // --- Fase 4: analítica UGPP (sobre casos propios, no corpus/jueces) ------

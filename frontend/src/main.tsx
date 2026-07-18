@@ -10,6 +10,7 @@ import { CasoDetailPage } from "./casos/CasoDetailPage";
 import { AccountPage } from "./account/AccountPage";
 import { AdminPage } from "./admin/AdminPage";
 import { PlatformPage } from "./platform/PlatformPage";
+import { CorpusCuracionPage } from "./platform/CorpusCuracionPage";
 import { ClientesListPage } from "./clientes/ClientesListPage";
 import { ClienteDetailPage } from "./clientes/ClienteDetailPage";
 import { ReporteRiesgoPage } from "./clientes/ReporteRiesgoPage";
@@ -34,6 +35,7 @@ const router = createBrowserRouter([
       { path: "cuenta", element: <AccountPage /> },
       { path: "admin", element: <AdminPage /> },
       { path: "plataforma", element: <PlatformPage /> },
+      { path: "plataforma/corpus", element: <CorpusCuracionPage /> },
     ],
   },
   { path: "*", element: <Navigate to="/casos" replace /> },
