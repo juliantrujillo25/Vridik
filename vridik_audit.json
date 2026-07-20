@@ -1,0 +1,127 @@
+{
+  "auditoria": "Vridik - Auditoría Fable 5",
+  "fecha": "2026-07-20",
+  "modo": "solo lectura, 0 ejecución, 0 llamadas a producción",
+  "nota_contexto": "El estado declarado al 05/07/2026 (0 tests, usuarios en ENV, sin 2FA, sin SSE, stack Next.js) está desactualizado contra la evidencia del repo al 20/07: 428 funciones de test, users en Postgres, 2FA TOTP completo, SSE S11 cerrado, frontend React+Vite+TS sobre FastAPI. Se auditó contra evidencia, no contra el contexto declarado.",
+  "score_global": 58,
+  "ejes": [
+    {
+      "nombre": "Arquitectura y escalabilidad",
+      "score": 60,
+      "semaforo": "amarillo",
+      "hallazgos": [
+        "Multi-tenancy real por despachos con backfill idempotente y RLS de Postgres como segunda capa (core/rls.py) en 4 tablas con despacho_id directo",
+        "RLS incompleto: actuaciones, terminos, cobro_caso, case_documents, mensajes dependen solo de WHERE manual",
+        "Todo en un proceso: alertas de términos como loop in-process, sin colas reales (ni BullMQ/Celery); pdf_worker es proceso aparte, no cola",
+        "Storage de PDFs local y efímero: se pierden en cada redeploy (bug documentado en case_documents_endpoint.py)",
+        "Sin staging, sin backups evidenciados; versión de Postgres no evidenciada (sin acceso de red a Railway desde el sandbox)",
+        "Pool asyncpg dimensionado tras incidente real de agotamiento por SSE (2026-07-12)",
+        "Veredicto: aguanta 10-20 despachos con dolor; 100 requieren cola real, S3/R2, RLS completo y staging"
+      ]
+    },
+    {
+      "nombre": "Seguridad y compliance Colombia",
+      "score": 65,
+      "semaforo": "amarillo",
+      "hallazgos": [
+        "Código de auth en percentil alto: 2FA TOTP + backup codes un solo uso + must_enroll admin, refresh tokens con rotación y detección de reuso por familia, rate limiting sobre auth_events, bitácora con hash encadenado, rotación JWT con doble clave (SECURITY.md), TOTP_ENCRYPTION_KEY desacoplada",
+        "Ley 1581: sin endpoints ARCO, sin política de retención/borrado, sin aviso de privacidad versionado, sin rastro de RNBD",
+        "Ley 527: nada evidenciado sobre firma electrónica; la bitácora hash-chain es cimiento probatorio, no firma",
+        "PDFs legales en filesystem plano sin cifrado en reposo documentado",
+        "core/analitica.py respeta explícitamente la advertencia SAMAI: cero perfilamiento de jueces en el esquema",
+        "CRITICO OPERATIVO: password real de Postgres de producción pegada en chat esta semana - rotar hoy"
+      ]
+    },
+    {
+      "nombre": "RAG y JuliX",
+      "score": 35,
+      "semaforo": "rojo",
+      "hallazgos": [
+        "GATE >=80% corrido dos veces (15-16 jul 2026): 15% y 35% - reprobado; el core del producto no cumple su propio estándar",
+        "Banco de 20 casos completo con respuesta_esperada (Instrucciones - CLAUDE.md desactualizado: dice 'bloqueado esperando datos')",
+        "Causa raíz probable diagnosticada en PROMPTS.md: norma_clave guarda la cita, nunca el texto verbatim del artículo",
+        "Corpus 85/400+ chunks, corpus_manifest.csv con ~20 filas, fuerte solo en Laboral/UGPP",
+        "Prompts v3 redactados y sin corrida real; validador de citas post-generación desplegado y funcional",
+        "El juez del evaluador también falla: UGPP-07 reclasificado de alucinación a sobre-cautela (Decreto 379/2026 sí existía) - el evaluador necesita calibración",
+        "Ledger de costos real por despacho (julix_calls) y prompts versionados: correcto",
+        "FIX (rojo): 1) cargar texto verbatim de ~30 artículos más citados vía core/corpus_curation.py, 2) correr v3 contra el banco, 3) recalibrar el juez con UGPP-07 como test de regresión"
+      ]
+    },
+    {
+      "nombre": "Deuda técnica",
+      "score": 80,
+      "semaforo": "verde",
+      "hallazgos": [
+        "Tests: 51 archivos, 428 funciones test_ (meta de 45 superada ~10x), coverage gate 60% en CI, medido 71-72%",
+        "Usuarios en Postgres con user_credentials como fuente real de password (Fase C parcial cerrada)",
+        "Términos CPACA/CPT: vencimiento siempre calculado por procesal/calendario_judicial.py, nunca manual",
+        "Clasificador de actuaciones sobre Haiku listo (procesal/clasificador_actuaciones.py), reusa prompt versionado",
+        "PDF: ReportLab elegido en vez de LibreOffice headless; si el requisito real es .docx editable, eso sigue abierto",
+        "Deuda restante: docstrings/estado desactualizados (CLAUDE.md S5, pdf_worker), archivos .diff sueltos en raíz, Fase C de auth pospuesta, RLS incompleto"
+      ]
+    },
+    {
+      "nombre": "Producto y UX",
+      "score": 60,
+      "semaforo": "amarillo",
+      "hallazgos": [
+        "Frontend real: React+Vite+TS consumiendo auth 2FA/casos/JuliX - no es Next.js",
+        "No se evidenció separación Panel Vridik Pro vs Portal Cliente Vridik como productos distintos: hay un solo frontend en el repo",
+        "Cobro Inteligente sí diferencia: honorarios_liquidados siempre calculado (fijo/cuota litis/mixto), liquidación de una sola vez",
+        "Bóveda de Cumplimiento a medias: matriz de riesgo real con disclaimer correcto, pero listas restrictivas ONU/OFAC/PEP en esquema sin datos ni cruce - no vendible como bóveda hoy",
+        "La diferenciación central sigue siendo JuliX, que está en rojo (eje 3)"
+      ]
+    },
+    {
+      "nombre": "Roadmap",
+      "score": 65,
+      "semaforo": "amarillo",
+      "hallazgos": [
+        "Fase 1 cerrada en código, abierta en calidad (gate reprobado)",
+        "Fases 2/3/4 arrancadas en paralelo antes de cerrar el gate: amplitud bien construida sobre un core reprobado",
+        "Recomendación: congelar features nuevas de Fase 2-4 hasta gate >=80%, excepto calendario de términos (genera valor sin JuliX)",
+        "Para 3 despachos pagando en Q2-2027, en orden: gate >=80%, corpus 400+, ingesta de actuaciones resuelta, storage S3, ARCO minimo",
+        "Con el gate aprobado, Q2-2027 es realista; sin el gate, no hay fecha defendible"
+      ]
+    },
+    {
+      "nombre": "Riesgo de caída (Radar Judicial)",
+      "score": 40,
+      "semaforo": "rojo",
+      "hallazgos": [
+        "No hay scraper y eso es correcto: ingesta bloqueada en decisión build-vs-integrate documentada (procesal/__init__.py)",
+        "Actuaciones se registran a mano; el clasificador ya funciona sobre texto pegado - la arquitectura está lista para enchufar cualquier fuente",
+        "Rama Judicial sin API oficial + CAPTCHA + TYBA con ViewState: scraper propio = mantenimiento perpetuo + exposición legal por evasión de controles",
+        "DECISION (rojo): integrar proveedor (TusDatos.co / AliadoJudicial; Monolegal como benchmark de precio) con SLA de frescura y cláusula de licitud de fuente; adaptador delgado procesal/ingesta_<proveedor>.py + webhook",
+        "Scraper propio solo como plan C, jamás para clientes pagos sin fallback"
+      ]
+    }
+  ],
+  "deudas_criticas": [
+    "GATE de evaluación en 35% vs meta 80%",
+    "Corpus RAG 85/400+ chunks sin texto verbatim de normas",
+    "Credenciales de Postgres de producción expuestas en chat (rotar hoy)",
+    "Sin staging: verificación directa en producción",
+    "Storage de PDFs local y efímero (documentos legales se pierden por redeploy)",
+    "Sin endpoints ARCO ni política de retención (Ley 1581)",
+    "Ingesta de actuaciones sin resolver (build-vs-integrate)",
+    "Una sola cuenta admin de producción (bus factor 1)",
+    "RLS incompleto (4 de ~9 tablas tenant)",
+    "Documentación de estado desactualizada (CLAUDE.md sobre S5)"
+  ],
+  "quick_wins_7_dias": [
+    "Rotar credenciales de Postgres en Railway (día 1, 15 minutos)",
+    "Actualizar sección S5 de 'Instrucciones - CLAUDE.md' con el estado real del gate (15%->35%, reprobado)",
+    "Crear segunda cuenta admin de producción con 2FA",
+    "Borrar o aplicar los .diff sueltos de la raíz del repo",
+    "Cargar texto verbatim de los 10 artículos más citados por el banco vía core/corpus_curation.py",
+    "Correr prompts v3 contra el banco (ya están redactados, costo estimado en el rango de la corrida S4: <1 USD)",
+    "Configurar OBJECT_STORAGE_BACKEND=s3 en staging-clon para validar el adaptador existente"
+  ],
+  "roadmap_corregido": [
+    "Días 1-30: rotar credenciales + CLAUDE.md real + corpus verbatim (~30 artículos) + prompts v3 + recalibrar juez del evaluador (UGPP-07 como regresión) + segunda cuenta admin + staging mínimo. Meta: gate >=60%",
+    "Días 31-60: storage S3/R2 + endpoints ARCO + política de retención + evaluación RNBD con abogado + RLS completo + contrato proveedor de datos judiciales + adaptador de ingesta. Meta: gate >=80%",
+    "Días 61-90: piloto con 1 despacho real con Radar vía proveedor + completar listas restrictivas o retirar 'Bóveda' del pitch + corpus a 400+ con Ana Luisa + pricing contra costo real del ledger",
+    "Congelado hasta gate >=80%: cualquier feature nueva de Fases 2-4 (excepto calendario de términos, que vende solo)"
+  ]
+}
