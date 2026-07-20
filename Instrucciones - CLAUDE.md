@@ -121,10 +121,26 @@ auditoría).
   es un smoke test directo de `julix/client.py` vía
   `client._abrir_stream_sdk()`, con autorización explícita del dev lead
   para gastar dinero real en esta corrida puntual.
-- **S5-GAP-01 (bloqueante) — SIGUE BLOQUEADO.** No es código: falta que
-  Ana Luisa llene `respuesta_esperada` en `eval/banco_casos_vridik.xlsx`
-  (20 casos). Sin esto, `eval/evaluador.py --commit` no tiene nada que
-  evaluar y el GATE de Fase 1 (>=80% aprobación) nunca puede correr.
+- **S5-GAP-01 (bloqueante) — ESTADO REAL ACTUALIZADO (20-jul-2026,
+  auditoría Fable 5): el GATE YA CORRIÓ y REPROBÓ.** La versión anterior
+  de esta sección ("sigue bloqueado, falta que Ana Luisa llene
+  respuesta_esperada") quedó desactualizada: el banco está completo y
+  `eval/evaluador.py --commit` corrió dos veces con datos reales
+  (15-jul y 16-jul-2026, runs `s5-...-4f201beb` y `s5-...-46812ab1`,
+  ver PROMPTS.md y git log): **15% y luego 35% de aprobación, ambas por
+  debajo del GATE >=80%**. El bloqueo hoy es de RESULTADO, no de datos.
+  Además: (a) UGPP-07 se reclasificó el 16-jul (`e1db508`) de
+  "alucinación real" a "abstención/sobre-cautela" — el Decreto 379/2026
+  que citaba SÍ existe; el juez del evaluador lo marcó mal, o sea el
+  evaluador también necesita calibración; (b) el diagnóstico de
+  PROMPTS.md apunta a un límite estructural del banco (`norma_clave`
+  guarda solo la cita, nunca el texto verbatim del artículo); (c) los
+  prompts v3 están redactados y sin corrida real. Regla del propio
+  roadmap ignorada hasta ahora: "<60% → freno y revisión" — las Fases
+  2-4 se construyeron igual. Próximos pasos (ver vridik_audit.md, plan
+  30-60-90): cargar texto verbatim de ~30 artículos vía
+  `core/corpus_curation.py`, correr v3 contra el banco, y recalibrar el
+  juez con UGPP-07 como caso de regresión.
 - **S6-GAP-01 (media) — CERRADO.** `PROMPTS.md` consolidado, honesto
   sobre que ningún prompt tiene corrida de evaluación medida todavía
   (bloqueado en S5).
@@ -136,8 +152,11 @@ auditoría).
   y verificado en producción.
 
 **Balance final de la auditoría:** de los 7 gaps, 6 cerrados (S1 Fases
-A/B, S2, S3, S4, S6, S7). Solo **S5** sigue abierto, y depende
-enteramente de Ana Luisa, no de más trabajo de código.
+A/B, S2, S3, S4, S6, S7). Solo **S5** sigue abierto — y desde el
+20-jul-2026 su naturaleza cambió: ya NO depende de datos de Ana Luisa
+(el banco está completo y el GATE corrió), sino de subir el resultado
+de 35% a >=80% — eso SÍ es trabajo de código+corpus (ver la entrada
+S5-GAP-01 actualizada arriba y vridik_audit.md).
 
 ## Continuación del roadmap (post-desmantelamiento del marketplace)
 

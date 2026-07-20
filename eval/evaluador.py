@@ -61,6 +61,7 @@ if str(REPO_ROOT) not in sys.path:
 from julix import prompts  # noqa: E402
 from julix.client import JuliXClient  # noqa: E402
 from julix.errors import JuliXError, JuliXInvalidFormatError  # noqa: E402
+from julix.service import _claves_citables  # noqa: E402
 
 logger = logging.getLogger("vridik.julix.eval")
 
@@ -289,6 +290,61 @@ async def _costo_por_caso_id(db_connection, caso_id: str) -> float | None:
     return float(fila["costo_usd"]) if fila and fila["costo_usd"] is not None else None
 
 
+def contrastar_flag_con_norma_clave(
+    respuesta_julix: str, norma_clave: str, calificacion: dict,
+) -> dict:
+    """Regresión UGPP-07 (corrida s5 del 16-jul-2026): el juez marcó
+    hallucination_flag=true por el Decreto 379/2026, que SÍ estaba en la
+    norma_clave entregada — un falso positivo del juez, no una alucinación
+    de JuliX. Este contraste es el chequeo MECÁNICO de ese patrón (mismo
+    principio que julix/service.py::validar_citas_post_generacion: regex
+    determinístico, no otra instrucción que el modelo pueda ignorar):
+
+    Si el juez marcó alucinación pero TODAS las citas detectables en la
+    respuesta de JuliX están respaldadas por la norma_clave, el flag es
+    cuestionable. NUNCA se voltea en silencio (el regex es más burdo que el
+    juez y la respuesta puede alucinar cifras/plazos que el regex no ve) —
+    se anota `flag_cuestionado=True` y se deja rastro en el comentario para
+    revisión humana, igual que la reclasificación manual del 16-jul.
+
+    Reusa julix.service._claves_citables (claves normalizadas tipo
+    'articulo:33' / 'decreto:379:2026') — una cita se considera respaldada
+    si su clave aparece en la norma_clave, sin importar cómo se escribió.
+    """
+    calificacion = dict(calificacion)
+    calificacion.setdefault("flag_cuestionado", False)
+    if not calificacion.get("hallucination_flag"):
+        return calificacion
+
+    citadas = _claves_citables(respuesta_julix)
+    if not citadas:
+        # Sin citas detectables no hay nada que contrastar mecánicamente:
+        # el flag del juez queda como está (puede ser por cifras/plazos).
+        return calificacion
+
+    respaldadas = set(_claves_citables(norma_clave).keys())
+    sin_respaldo = {c: t for c, t in citadas.items() if c not in respaldadas}
+    if sin_respaldo:
+        # Hay al menos una cita que el regex tampoco encuentra en la
+        # norma_clave: el flag del juez es plausible, no se cuestiona.
+        return calificacion
+
+    detalle = ", ".join(sorted(citadas.values()))
+    calificacion["flag_cuestionado"] = True
+    calificacion["comentario"] = (
+        f"{calificacion.get('comentario', '')} "
+        f"[flag_cuestionado] El juez marcó alucinación, pero todas las citas "
+        f"detectables ({detalle}) están respaldadas por la norma_clave — "
+        f"posible falso positivo del juez (patrón UGPP-07, 16-jul-2026). "
+        f"Revisar manualmente antes de aceptar este veredicto."
+    ).strip()
+    logger.warning(
+        "Vridik/JuliX eval: flag de alucinación cuestionado mecánicamente "
+        "(todas las citas respaldadas por norma_clave) — revisar manualmente."
+    )
+    return calificacion
+
+
 async def evaluar_caso(client: JuliXClient, db_connection, caso: CasoEval) -> ResultadoCaso:
     respuesta_julix, tarea = await generar_respuesta_julix(client, caso)
     costo_generacion = None
@@ -296,6 +352,9 @@ async def evaluar_caso(client: JuliXClient, db_connection, caso: CasoEval) -> Re
         costo_generacion = await _costo_por_caso_id(db_connection, caso.id)
 
     calificacion = await calificar_con_juez(client, caso, respuesta_julix)
+    calificacion = contrastar_flag_con_norma_clave(
+        respuesta_julix, caso.norma_clave, calificacion,
+    )
     costo_juez = None
     if db_connection is not None:
         costo_juez = await _costo_por_caso_id(db_connection, f"juez-{caso.id}")
