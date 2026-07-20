@@ -193,6 +193,12 @@ function NuevoBorradorForm({ onCreado, onError }: { onCreado: (b: BorradorCorpus
   return (
     <div className="card" style={{ padding: "1.25rem", marginBottom: "1rem" }}>
       <h2 className="section-title">Paso 1 — Fuente</h2>
+      <div className="alert" role="alert" style={{ marginBottom: "1rem" }}>
+        Esta herramienta es para <strong>fuentes legales</strong> (leyes, decretos, jurisprudencia) que
+        aplican a cualquier despacho -- lo que se publica queda visible para toda la plataforma, sin filtro
+        por despacho. <strong>No subas documentos de un caso o expediente de un cliente</strong> (contienen
+        datos personales que no deben quedar en el corpus compartido).
+      </div>
       <div className="field">
         <label htmlFor="nombre-fuente">Nombre de la fuente</label>
         <input
