@@ -83,6 +83,33 @@ código. Este archivo es la lista de trabajo delegada, en orden.
   SU-213/2024 (ya leídas en fuente oficial en la Ola 8 del corpus, pero
   nunca cargadas a `rag_chunks` -- son un caso fácil, solo falta
   re-fetchear y cargar, no requieren investigación nueva).
+- **T2, tercera pasada (mismo día)**: 20 chunks reales en total (15→20).
+  Se cargó **Ley 2277/2022 art. 89** (IBC independientes, PDF+PyMuPDF --
+  el artículo de una ley de reforma tributaria de 47 páginas, confirmado
+  completo por límites naturales del artículo siguiente), **Ley 361/1997
+  art. 26** (estabilidad laboral reforzada, PDF+PyMuPDF), **SU-049/2017 y
+  SU-213/2024** (regla de unificación citada textualmente entre
+  comillas, confirmada la de SU-213 con una segunda fuente independiente
+  -- se descartó el resto de cada respuesta de WebFetch por venir sin
+  comillas, es decir resumen del modelo, no cita) y **Ley 995/2005 arts.
+  1-2 completos** (ley corta de 2 artículos, PDF+PyMuPDF confirmó que no
+  faltaba nada). Con esto, del banco de 20 casos: **LAB-03, LAB-07 y
+  LAB-08 quedan con TODA su `norma_clave` cargada**; UGPP-04/05/07/10 y
+  LAB-01/05 con cobertura parcial. Sesión de prueba limpiada.
+  **Pendiente real, actualizado**: E.T. (UGPP-04/08/09/11), CPACA art.
+  138 (UGPP-10), Decreto 1072/2015 (UGPP-12) -- los tres son códigos/DUR
+  grandes, usar PDF+PyMuPDF, no fetch en vivo. Ley 100/1993 arts. 18/19/23
+  (UGPP-06/08, ver hallazgo de fiabilidad -- lo ya extraído en la sesión
+  anterior NO sirve, hay que re-extraer del PDF). Decreto 1601/2022
+  (UGPP-07). Ley 1562/2012 art. 2 (UGPP-12). Ley 52/1975 art. 1 (LAB-06,
+  nunca encontrado en ninguna pasada, ni en Ola 6 del corpus ni acá --
+  puede que solo exista en el Diario Oficial escaneado, no en gestores
+  normativos). CST arts. 46/159/160/168/179/186/189/192/239/240/249/253
+  (LAB-02/04/06/07, el 64 ya está) -- el PDF de la Rama Judicial que se
+  probó antes es un OCR malo del texto de 1950 sin las reformas, no
+  sirve; probar el PDF de Función Pública (`norma_pdf.php?i=199983`,
+  el mismo que se usó para leer el art. 64 en vivo, pero descargado
+  entero y extraído local en vez de fetcheado en vivo).
 
 ## Cola de trabajo, en orden
 
