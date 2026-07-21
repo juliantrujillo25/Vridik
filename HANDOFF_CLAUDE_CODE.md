@@ -347,6 +347,73 @@ código. Este archivo es la lista de trabajo delegada, en orden.
   para cerrar con el dev lead antes de escribir el DELETE/UPDATE real.
   4 tests nuevos (2 contra Postgres real incluido el caso IDOR, 2 de
   wiring HTTP). Commit `258d70b`, CI verde (run `29852997582`).
+- **T6 CERRADO (21-jul)**: entorno de staging real y persistente en
+  Railway -- `staging-vridik` (`vridik-api`/`vridik-frontend`/`Postgres`
+  propios). Creado con `railway environment new staging-vridik
+  --duplicate production` (clon ESTRUCTURAL -- servicios y variables,
+  nunca datos: verificado que el volumen de Postgres nace con 0 tablas
+  antes de cualquier deploy). El nombre "staging" a secas chocó con un
+  intento anterior recién borrado (propagación demorada del lado de
+  Railway, no un problema real) -- de ahí "staging-vridik".
+  **Tres hallazgos reales de aislamiento, todos corregidos antes de dar
+  por bueno el entorno** (`--duplicate` clona variables como texto
+  literal, no como referencias -- ninguna de las tres iba a resolverse
+  sola):
+  1. `DATABASE_URL` de `vridik-api` en staging apuntaba LITERAL al proxy
+     público de PRODUCCIÓN (`hayabusa.proxy.rlwy.net`), no al Postgres
+     interno de staging. El primer arranque de staging se conectó de
+     verdad a la base de producción real -- sin daño porque las
+     migraciones son idempotentes y no hubo tráfico real más allá de
+     `/health` (confirmado: 0 despachos nuevos en producción en la
+     ventana). Fix: `DATABASE_URL` reescrito como referencia real de
+     Railway (`${{Postgres.DATABASE_URL}}`), no un valor pegado a mano.
+  2. `VRIDIK_ALLOWED_ORIGINS` apuntaba al frontend de PRODUCCIÓN --
+     hubiera bloqueado por CORS cualquier request real del frontend de
+     staging a su propia API. Corregido al dominio real de staging.
+  3. `frontend/.env.production` (archivo del repo, horneado en el build
+     de Vite) fija `VITE_API_BASE` a la API de producción -- si se
+     buildeaba tal cual para staging, el frontend de staging iba a
+     llamar a la API de producción. Fix: `VITE_API_BASE` seteado como
+     variable de Railway ANTES del build (dotenv no pisa una variable de
+     proceso ya seteada, así que gana sobre el archivo del repo).
+     Verificado bajando el JS ya buildeado y confirmando que contiene la
+     URL de staging y NO la de producción.
+  **Bug real nuevo, encontrado y arreglado en el momento** (el motivo
+  real de tener staging): con una base de Postgres GENUINAMENTE vacía
+  por primera vez, el bootstrap de `app/main.py::_conectar_db` fallaba
+  en cascada -- `ensure_auth_migration_005`/`ensure_despachos_backfill`/
+  etc. asumen que `users` (y su columna `role`) ya existen, cierto en
+  cualquier entorno con historial real (producción, desde hace meses)
+  pero nunca antes puesto a prueba contra un arranque en frío de
+  verdad. Fix: `ensure_users_table()` + `ensure_role_column()`
+  explícitos como los primeros dos pasos del bootstrap. Commits
+  `55ae2da` y `e9a7fe1`, CI verde, verificado en staging (arranque
+  limpio, sin ningún CRITICAL). **Pendiente**: llevar este mismo fix a
+  producción (no urgente, ahí es un no-op porque `users`/`role` ya
+  existen desde hace meses -- bloqueado por el clasificador de permisos
+  al intentarlo durante esta sesión, no una decisión de diseño).
+  `scripts/seed_staging.py` (nuevo): siembra un despacho + admin/
+  abogado/cliente sintéticos + 1 caso de ejemplo contra el ESQUEMA REAL
+  actual (usa las mismas funciones `core/*.py` que la app, no SQL a
+  mano) -- reemplaza en la práctica a `db/seed_railway.sql`, que apunta
+  a un esquema pre-Fase-4 ya desactualizado (`role_id`/`nombre_completo`,
+  sin `despacho_id`). Verificado end-to-end: `POST /auth/login` con las
+  credenciales sembradas devuelve un token real contra la API de
+  staging. `ROLLBACK.md`/`SECURITY.md` actualizados -- la limitación
+  "no hay staging real" ya no aplica; lo que queda pendiente es
+  ensayar ahí un rollback real y una rotación de `JWT_SECRET`, no la
+  existencia del entorno en sí.
+  **Hallazgo tangencial, sin tocar (no es T6)**: producción ya tiene
+  variables `R2_ACCESS_KEY_ID`/`R2_ACCOUNT_ID`/`R2_BUCKET_NAME`/
+  `R2_PUBLIC_URL`/`R2_SECRET_ACCESS_KEY` Y una variable `BACKEND=r2` --
+  nombres que NO coinciden con lo que lee `storage/object_storage.py`
+  (`OBJECT_STORAGE_S3_*`, `OBJECT_STORAGE_BACKEND`). Alguien (otra
+  sesión probablemente) ya avanzó en la integración de R2 con una
+  convención de nombres distinta a la de T5 -- hay que investigar y
+  reconciliar antes de seguir con T5, puede que el trabajo de crear el
+  bucket + token ya esté hecho y solo falte la reconciliación de
+  nombres de variables (o un módulo de storage distinto que no se leyó
+  todavía). Reportado al dev lead, no investigado a fondo en esta pasada.
 
 ## Cola de trabajo, en orden
 
@@ -423,11 +490,19 @@ local efímero (los PDFs mueren en cada redeploy — bug documentado en
 4. Los PDFs viejos con rutas de filesystem quedan 404 con el mensaje de
    "almacenamiento efímero" ya existente — aceptable, documentarlo.
 
-### T6 — Staging mínimo (P1)
-Un servicio Railway clon (API + Postgres propio, seed mínimo) para que
-"verificado en staging" deje de ser una limitación declarada en
-ROLLBACK.md/SECURITY.md. Sin datos reales de producción en staging
-(Ley 1581): usuarios sintéticos.
+### T6 — ~~Staging mínimo~~ CERRADO (21-jul-2026)
+Ver "Ya hecho". Entorno `staging-vridik` real en Railway (API+frontend+
+Postgres propios, clon estructural sin datos reales), tres hallazgos de
+aislamiento corregidos (DATABASE_URL/VRIDIK_ALLOWED_ORIGINS/
+VITE_API_BASE apuntaban a producción tal cual se duplicaron), un bug
+real de arranque en frío encontrado y arreglado (`ensure_users_table`/
+`ensure_role_column` faltaban al principio del bootstrap), seed
+sintético (`scripts/seed_staging.py`) contra el esquema real, verificado
+end-to-end (login real contra la API de staging). **Pendiente, no
+bloqueante**: llevar el fix de arranque a producción (no-op ahí, solo
+falta el deploy); ensayar un rollback real y una rotación de
+`JWT_SECRET` en staging (la infraestructura para hacerlo ya existe, el
+ensayo en sí es trabajo aparte).
 
 ### T7 — Endpoints ARCO + retención (P1, Ley 1581) -- ACCESO CERRADO, SUPRESIÓN PENDIENTE DE DISEÑO
 `GET /me/datos` (`api/datos_personales_endpoint.py` +

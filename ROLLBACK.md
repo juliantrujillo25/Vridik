@@ -72,23 +72,31 @@ deshacer un despliegue problemático es:
    arriba es el punto de partida, pero hay que re-verificarla porque
    sigue cambiando con cada sesión).
 
-## Limitación honesta sobre "ensayado en staging"
+## Staging real (T6 del roadmap, 21-jul-2026)
 
-Este proyecto **no tiene un entorno de staging real** -- solo existen
-Railway producción y el service container de Postgres efímero que usa
-CI (`.github/workflows/ci.yml`, se destruye al terminar cada job). No se
-pudo "ensayar" este rollback contra un staging persistente porque no
-existe uno.
+Ya existe un entorno de staging persistente en Railway (`staging-vridik`
+-- servicios `vridik-api`/`vridik-frontend`/`Postgres` propios, separados
+de producción, creado como clon estructural de producción con
+`railway environment new <nombre> --duplicate production`, **nunca**
+con los datos reales -- el volumen de Postgres nace vacío). Ver
+`SECURITY.md` para el mismo update.
 
-Lo que sí se verificó, sin tocar producción:
+Al levantarlo se encontró (y arregló, commit `55ae2da`) un bug real que
+solo se manifiesta con una base de Postgres genuinamente vacía:
+`ensure_auth_migration_005`/`ensure_despachos_backfill`/etc. asumían que
+`users` ya existía (cierto en producción desde hace meses, nunca antes
+puesto a prueba) -- exactamente el tipo de cosa que "ensayado en
+staging" está pensado para atrapar.
+
+**Todavía no se ensayó un rollback real** (deploy de un commit viejo
+contra el esquema de staging ya migrado) -- este entorno recién se armó,
+el ensayo en sí queda como siguiente paso antes de confiar ciegamente en
+este documento contra producción.
+
+Lo que sí se verificó, sin tocar producción, antes de que staging
+existiera:
 - El mapeo de dependencias de la tabla de arriba (grep real contra el
   código actual, no una suposición).
 - Que el principio "código viejo corre seguro contra esquema nuevo" se
   cumple por diseño en todas las migraciones de este proyecto (regla no
   negociable de aditividad, nunca violada hasta la fecha).
-
-Si en algún momento se arma un entorno de staging real (Postgres
-separado + deploy de Railway aparte), ensayar ahí un rollback de código
-real (deploy de un commit viejo contra el esquema de staging ya
-migrado) antes de confiar ciegamente en este documento contra
-producción.

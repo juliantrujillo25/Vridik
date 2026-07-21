@@ -94,10 +94,14 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 ### Limitación honesta: "ensayado en staging"
 
-El roadmap pide la rotación *"ensayada en staging"*. Este proyecto **no
-tiene un entorno de staging real** — solo Railway producción y el service
-container efímero de Postgres que usa CI (se destruye al terminar cada
-job). Lo que sí se verificó, sin tocar la sesión de nadie en producción:
+El roadmap pide la rotación *"ensayada en staging"*. La rotación real
+del 13-jul (abajo) se hizo antes de que existiera un staging persistente
+-- ya existe uno (`staging-vridik` en Railway, T6 del roadmap,
+21-jul-2026: `vridik-api`/`vridik-frontend`/`Postgres` propios, clon
+estructural de producción SIN datos reales), pero el procedimiento de
+rotación de `JWT_SECRET` todavía no se volvió a ensayar ahí -- queda
+como siguiente paso, no una limitación permanente. Lo que sí se
+verificó en su momento, sin tocar la sesión de nadie en producción:
 
 - **Tests reales del soporte de doble clave** (`tests/test_jwt_rotation.py`):
   token firmado con la clave vieja valida durante la ventana
@@ -117,10 +121,10 @@ job). Lo que sí se verificó, sin tocar la sesión de nadie en producción:
   pero abierta de verdad. Esta ejecución real, con ese hallazgo incluido,
   es más evidencia que cualquier ensayo en un staging que no existe.
 
-Si en algún momento se arma un staging persistente, ensayar ahí el
-procedimiento completo de 5 pasos (con un login real abierto que
-sobreviva la rotación vía refresh) antes de confiar ciegamente en este
-documento contra producción.
+Ahora que `staging-vridik` existe, ensayar ahí el procedimiento completo
+de 5 pasos (con un login real abierto que sobreviva la rotación vía
+refresh) es el siguiente paso lógico, antes de la próxima rotación real
+contra producción.
 
 ## Otras defensas ya implementadas (resumen)
 

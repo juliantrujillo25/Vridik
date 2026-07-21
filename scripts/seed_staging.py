@@ -34,7 +34,8 @@ import asyncpg
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.auth import ensure_role_column, ensure_users_table, hash_password
+from core.admin import ensure_role_column
+from core.auth import ensure_users_table, hash_password
 from core.case import create_caso, ensure_casos_table
 from core.despachos import ensure_despachos_table
 
