@@ -625,11 +625,14 @@ VITE_API_BASE apuntaban a producción tal cual se duplicaron), un bug
 real de arranque en frío encontrado y arreglado (`ensure_users_table`/
 `ensure_role_column` faltaban al principio del bootstrap), seed
 sintético (`scripts/seed_staging.py`) contra el esquema real, verificado
-end-to-end (login real contra la API de staging). **Pendiente, no
-bloqueante**: llevar el fix de arranque a producción (no-op ahí, solo
-falta el deploy); ensayar un rollback real y una rotación de
-`JWT_SECRET` en staging (la infraestructura para hacerlo ya existe, el
-ensayo en sí es trabajo aparte).
+end-to-end (login real contra la API de staging). **Corrección (21-jul,
+más tarde el mismo día)**: el fix de arranque (commits `55ae2da`/
+`e9a7fe1`) YA estaba en producción -- quedan 9 commits detrás del deploy
+`a6667ccd` (el mismo que se verificó para T5), así que "falta el deploy"
+era incorrecto, era no-op de verdad. **Pendiente, no bloqueante**:
+ensayar un rollback real y una rotación de `JWT_SECRET` en staging (la
+infraestructura para hacerlo ya existe, el ensayo en sí es trabajo
+aparte).
 
 ### T7 — Endpoints ARCO + retención (P1, Ley 1581) -- ACCESO CERRADO, SUPRESIÓN PENDIENTE DE DISEÑO
 `GET /me/datos` (`api/datos_personales_endpoint.py` +
@@ -716,10 +719,53 @@ tarde el mismo 21-jul**: la nota de acá abajo sobre TF1 como "deuda
 técnica" fue un error de diagnóstico propio (se chequeó el rol
 equivocado), corregido y re-verificado empíricamente contra el rol real
 `vridik_app` -- TF1 protege de verdad, ver la entrada de corrección más
-arriba en "Ya hecho" y la sección TF1 actualizada más abajo. Pendiente
-separado y real, encontrado en esta misma pasada: subir la versión de
-Postgres de CI (`postgres:15`) para que deje de divergir de la versión
-real de producción (18) -- fue la causa raíz del 500 de TF2.
+arriba en "Ya hecho" y la sección TF1 actualizada más abajo.
+
+**CI subido a Postgres 18 (21-jul, ~23:30) -- CERRADO**: el pendiente de
+subir la versión de Postgres de CI (`postgres:15`) para que deje de
+divergir de la versión real de producción (18) -- causa raíz del 500 de
+TF2 -- ya está hecho. Tres intentos hasta dar con el fix real (todos
+commits reales, no descartados):
+1. `postgres:15` -> `postgres:18` + `pgvector/pgvector:pg15` ->
+   `pgvector/pgvector:pg18` en ambos jobs. Commit `ca9fef2`.
+2. Rompió el paso de hardening RLS: `ALTER ROLE vridik NOSUPERUSER` daba
+   `permission denied to alter role -- The bootstrap superuser must have
+   the SUPERUSER attribute` (protección nueva de PG18). Primer intento de
+   fix: crear un rol `vridik_app` sin superuser/bypassrls y reapuntar
+   `DATABASE_URL` a ese rol para pytest, en vez de degradar `vridik`.
+   Commit `3c843e3` -- **insuficiente solo**: "permission denied for
+   schema public" (desde PG15 el `public` schema no da CREATE por
+   defecto a roles que no son dueños). Commit `1c41fca` agregó el GRANT
+   del schema -- **tampoco alcanzó**: "must be owner of table users"
+   (`ensure_rls_policies()` corre `ALTER TABLE ... FORCE ROW LEVEL
+   SECURITY` + `CREATE POLICY`, que exige ser dueño, no solo tener
+   privilegios). Se probó `REASSIGN OWNED BY vridik TO vridik_app`
+   (commit `0693d93`) -- **tampoco**: "cannot reassign ownership of
+   objects owned by role vridik because they are required by the
+   database system" (misma protección del bootstrap superuser).
+3. **Fix real** (commit `9d517f7`): reordenar el job para crear
+   `vridik_app` y reapuntar `DATABASE_URL`/`TEST_DATABASE_URL` **antes**
+   de aplicar `schema_semana1_vridik.sql`/seed, no después -- así
+   `vridik_app` es dueño de todo lo que crea desde el principio, sin
+   necesitar transferir nunca la propiedad. `pgcrypto`/`citext` son
+   extensiones "trusted" desde PG13, así que `CREATE EXTENSION` funciona
+   para un rol no-superusuario con `CREATE` en el schema. CI verde (run
+   `29877327931`), ambos jobs, 96.7% de tests (526/544, igual que antes
+   del bump -- ver nota de hallazgo abajo).
+
+**Hallazgo aparte, NO nuevo, confirmado explícitamente**: los 18 tests
+que fallan (`test_alertas_terminos`, `test_corpus_curation`,
+`test_datos_personales`, `test_health_score`, todos con
+`UndefinedTableError`/`UndefinedColumnError` sobre `actuaciones`/
+`terminos`/`users.role`/`users.es_superadmin`) fallaban IDÉNTICO en el
+run de CI inmediatamente anterior al bump (`29869746082`, previo a
+tocar nada de PG18) -- mismo 96.7%, mismos 18 nombres. Es un bug
+preexistente de dependencia de orden entre tests (esas tablas/columnas
+se crean de forma perezosa dentro de la transacción con rollback de la
+fixture `db` de algún otro test, no de forma persistente), ajeno a este
+bump y no introducido por él. Sigue por debajo del gate de 90% así que
+CI pasa, pero queda como deuda técnica real de la suite, sin tocar en
+esta pasada (fuera de alcance del bump de Postgres).
 
 ### TF0 — Definición de producto (sin código, 1 semana, dev lead + Ana Luisa)
 Las 4 etapas Forja que Vridik no tiene, ya redactadas en
@@ -727,6 +773,57 @@ Las 4 etapas Forja que Vridik no tiene, ya redactadas en
 20 user stories, pre-mortem). Consolidar en un `PDR_VRIDIK.md`. No es
 trabajo de Claude Code — es decisión de producto; queda apuntado para que
 las fases siguientes tengan norte.
+
+### TF4 — Rediseño UI "Ledger editorial" (P1, no depende del GATE)
+Contexto: el dev lead no está conforme con el UX/UI actual — se ve
+genérico (cards planas, todo con el mismo peso visual, como cualquier
+admin panel). Se evaluaron 3 direcciones (ver conversación de auditoría
+UX); se eligió esta por menor riesgo: extiende el lenguaje visual que YA
+existe en `frontend/src/casos/CasoDetailPage.tsx` (`.caso-hero`: serif
+`Cormorant Garamond`, acento dorado `--gold`, timeline) hacia atrás, en
+vez de inventar un sistema nuevo. Cero librerías nuevas, cero tokens
+nuevos en `index.css` — todo con las variables que ya están definidas
+ahí (`--serif`, `--gold`, `--mono`, `--accent`, semáforos).
+
+Principios (investigados contra tendencias SaaS/legal-tech 2026):
+tipografía editorial con numerales estilo "ledger" (serif + monoespaciada
+tabular para cifras, como un informe bien diseñado, no un dashboard
+genérico) transmite la seriedad que un producto legal necesita;
+disclosure progresivo — el caso más urgente se distingue del resto por
+peso visual, no todos los casos pesan igual en la lista.
+
+Cambios concretos en `frontend/src/casos/CasosListPage.tsx` +
+`frontend/src/layout.css` (no tocar `index.css` salvo que falte algún
+token):
+1. **Jerarquía por health-score, no por fecha de creación.** El caso con
+   `health_score` más alto (o el término más urgente si no hay
+   health_score) se renderiza como una fila "hero": más padding, título
+   en `var(--serif)` a mayor tamaño, borde `1px solid var(--gold)` +
+   `border-left: 3px solid var(--danger)` si está en rojo, descripción
+   visible completa (no truncada). El resto de los casos se comprimen a
+   una fila de una sola línea (título + 2 badges + fecha), sin card
+   individual pesada — más parecido a una lista densa que a una grilla
+   de cards idénticas.
+2. **Numerales tabulares en toda cifra**: `font-variant-numeric:
+   tabular-nums` en `--mono` para `dias_restantes`, `health_score`,
+   montos de `Cobro.tsx` — ya se usa `var(--mono)` en varios lados, solo
+   falta esta propiedad.
+3. **Título de página y nombres de caso en serif**, no solo en
+   `CasoDetailPage`. Aplicar `var(--serif)` a `.page-title` cuando la
+   página es de `casos` (no en `AdminPage`/`AccountPage`, que son
+   utilitarias — el serif es la "voz del expediente", no de la UI en
+   general).
+4. **Un solo sistema de badge por fila**, no tres compitiendo
+   (`badge-termino`, `badge-noleidos`, `EstadoPill` hoy aparecen juntos
+   en `.caso-row-meta`). Consolidar en un badge de mayor jerarquía
+   (riesgo) + un indicador secundario más discreto (no-leídos como punto,
+   no como badge redondo del mismo tamaño).
+
+Verificación: capturas de pantalla antes/después (dev lead ya vio un
+mockup estático en la conversación de auditoría — comparar contra eso,
+no reinventar el diseño). Sin cambios de backend; no requiere
+autorización especial. Probar en mobile (`@media max-width: 560px`, ya
+existe la regla para `.caso-row` — extenderla al nuevo hero).
 
 ### Congelado hasta GATE >=80% (no trabajar sin instrucción explícita)
 Features nuevas de Fases 2-4 (excepto lo listado arriba). Listas
