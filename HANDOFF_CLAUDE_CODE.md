@@ -330,6 +330,23 @@ código. Este archivo es la lista de trabajo delegada, en orden.
   ni Railway** -- sigue pendiente que el dev lead cree el bucket + API
   token en su cuenta (paso no delegable) antes de poder configurar
   `OBJECT_STORAGE_BACKEND=s3` en producción y verificar end-to-end.
+- **T7, Acceso cerrado (21-jul)**: `GET /me/datos` +
+  `core/datos_personales.py::exportar_datos_de_usuario` -- export propio
+  en JSON (perfil, casos, mensajes, actuaciones, términos, documentos
+  generados, eventos de `auth_events`), todo filtrado por ownership real
+  (cliente_id/abogado_id/created_by/autor_id/user_id), nunca por
+  despacho_id solo -- probado explícitamente que el export de un usuario
+  no trae ni una fila de otro participante del mismo caso. Rectificación
+  documentada como delegada a endpoints existentes (sin código nuevo).
+  `PRIVACIDAD.md` nuevo. **Supresión deliberadamente NO implementada**:
+  mismo criterio que la decisión de proveedor de T5 -- no adivinar una
+  política de qué se anonimiza vs qué se conserva por deber legal
+  (expediente procesal, bitácora con hash encadenado que no se puede
+  mutar sin romper la cadena de todos los usuarios posteriores), la
+  propuesta y las preguntas abiertas quedan en `PRIVACIDAD.md` sección 4
+  para cerrar con el dev lead antes de escribir el DELETE/UPDATE real.
+  4 tests nuevos (2 contra Postgres real incluido el caso IDOR, 2 de
+  wiring HTTP). Commit `258d70b`, CI verde (run `29852997582`).
 
 ## Cola de trabajo, en orden
 
@@ -412,15 +429,22 @@ Un servicio Railway clon (API + Postgres propio, seed mínimo) para que
 ROLLBACK.md/SECURITY.md. Sin datos reales de producción en staging
 (Ley 1581): usuarios sintéticos.
 
-### T7 — Endpoints ARCO + retención (P1, Ley 1581)
-Nuevo `api/datos_personales_endpoint.py` (o nombre que prefieras
-consistente con el repo): acceso (export JSON de datos propios),
-rectificación (delegable a los endpoints existentes), supresión
-(soft-delete + anonimización de `users` respetando FKs y la bitácora
-inmutable — diseño a discutir: qué se anonimiza vs qué se conserva por
-deber legal). Documento corto `PRIVACIDAD.md` con política de retención.
-El registro RNBD es trámite del dev lead, no código — solo dejarlo
-apuntado.
+### T7 — Endpoints ARCO + retención (P1, Ley 1581) -- ACCESO CERRADO, SUPRESIÓN PENDIENTE DE DISEÑO
+`GET /me/datos` (`api/datos_personales_endpoint.py` +
+`core/datos_personales.py::exportar_datos_de_usuario`): acceso real,
+export JSON de perfil + casos + mensajes + actuaciones + términos +
+documentos + eventos de auth propios, ownership real (nunca por
+despacho_id solo). Rectificación: delegada a endpoints existentes, sin
+código nuevo. `PRIVACIDAD.md` (nuevo) documenta todo esto y dedica una
+sección explícita a la propuesta de qué se anonimizaría vs qué se
+conservaría por deber legal en una supresión -- **la supresión en sí
+sigue sin implementar a propósito**, es una decisión de producto/legal
+pendiente de cerrar con el dev lead (mismo criterio de "no adivinar
+políticas" que se usó con el proveedor de storage en T5). El registro
+RNBD sigue siendo trámite del dev lead, no código. Tests contra Postgres
+real incluido el caso IDOR (el export de un usuario nunca trae filas de
+otro participante del mismo caso). Commit `258d70b`, CI verde (run
+`29852997582`).
 
 ### T8 — ~~RLS a las 5 tablas restantes~~ CERRADO (21-jul-2026) == TF1
 Misma tarea que TF1 de Track Forja (ver abajo) -- se cerró ahí.
