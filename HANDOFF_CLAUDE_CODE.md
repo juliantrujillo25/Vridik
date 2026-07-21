@@ -471,6 +471,21 @@ código. Este archivo es la lista de trabajo delegada, en orden.
   para el futuro: verificar SIEMPRE contra el `DATABASE_URL` real del
   servicio de aplicación, nunca asumir que coincide con las credenciales
   por defecto del servicio de base de datos.
+- **T4 arrancado (21-jul), autorizado por el dev lead**: segunda cuenta
+  admin de producción creada (`giraldovelascoayc@hotmail.com`, Ana
+  Luisa) vía `POST /admin/users`. Camino de autenticación real: el dev
+  lead pegó su contraseña en el chat por error -- Claude Code se negó a
+  usarla (regla no negociable) y sugirió rotarla; en su lugar el dev
+  lead extrajo su propio `access_token` ya emitido desde las
+  herramientas de desarrollador del navegador (un request `refresh`
+  200 OK en la pestaña Network) y lo pegó, que sí es seguro de usar.
+  Contraseña temporal de la cuenta nueva generada con
+  `secrets.token_urlsafe`, nunca impresa -- solo en un archivo local de
+  la sesión. Verificado `POST /auth/login` con esa temporal (200 OK).
+  **Falta el paso no delegable**: Ana Luisa activa su propio 2FA
+  (necesita escanear el QR con su propia app autenticadora) antes de
+  poder usar el panel de admin -- queda pendiente de que ella lo haga,
+  ver detalle en la sección T4 de la cola de trabajo.
 
 ## Cola de trabajo, en orden
 
@@ -511,11 +526,39 @@ redactados y sin corrida real. Tras T2:
 4. Actualizar `PROMPTS.md` e `Instrucciones - CLAUDE.md` con el resultado
    real, sea cual sea.
 
-### T4 — Segunda cuenta admin de producción (P1) [REQUIERE AUTORIZACIÓN]
-Bus factor 1 hoy. Crear un segundo admin real vía `POST /admin/users`
-(con la cuenta admin existente), enrolarlo en 2FA (`must_enroll` lo va a
-exigir), y verificar login end-to-end. La password temporal NUNCA se
-imprime en salida de herramientas (precedente del 16-jul: archivo local).
+### T4 — Segunda cuenta admin de producción (P1) -- CUENTA CREADA, FALTA QUE ANA LUISA ACTIVE 2FA
+Bus factor 1 hoy. Autorizado por el dev lead (21-jul). **No delegable de
+punta a punta**: la cuenta se creó vía `POST /admin/users`, pero el 2FA
+tiene que activarlo la persona real que va a usar la cuenta (necesita
+escanear el QR con su propia app autenticadora) -- a diferencia de las
+cuentas throwaway de verificación de esta sesión, esta es permanente,
+así que no correspondía que Claude Code hiciera el enrolamiento completo
+él mismo y lo descartara.
+
+**Cómo se autenticó la creación (sin que ninguna contraseña real pasara
+por Claude Code)**: el dev lead pegó su contraseña real en el chat por
+error -- Claude Code se negó a usarla (regla no negociable, sin
+excepción aunque se pida explícito) y recomendó rotarla. En su lugar, el
+dev lead sacó su propio `access_token` ya emitido desde las herramientas
+de desarrollador del navegador (pestaña Network, un request `refresh`
+200 OK) y lo pegó -- ese sí es seguro de usar (es una credencial de
+sesión de corta vida, no la contraseña).
+
+1. ~~Crear la cuenta~~ CERRADO: `POST /admin/users` con el token del
+   dev lead -- `giraldovelascoayc@hotmail.com` (Ana Luisa), rol `admin`,
+   mismo despacho que el admin que la creó (el endpoint lo hereda
+   siempre, nunca acepta despacho_id del request). Contraseña temporal
+   generada con `secrets.token_urlsafe(16)`, escrita SOLO a un archivo
+   local (`scripts`/scratchpad de la sesión, nunca impresa en chat ni en
+   salida de herramientas -- mismo precedente del 16-jul). Verificado
+   `POST /auth/login` con esa temporal: `200 OK`, token real emitido.
+2. **Pendiente, no delegable**: Ana Luisa inicia sesión con la temporal,
+   cambia su contraseña (`POST /auth/password` / panel de cuenta), y
+   activa su propio 2FA (`POST /auth/2fa/setup` + `/verify` desde el
+   panel -- hasta que no lo haga, `get_current_admin` le va a devolver
+   403 en cualquier acción de admin, por diseño). Avisar cuando esté
+   listo para verificar `totp_enabled=true` y el login end-to-end
+   completo sin necesitar más credenciales.
 
 ### T5 — ~~Storage S3/R2 para PDFs~~ CERRADO Y VERIFICADO EN PRODUCCIÓN (21-jul-2026)
 `storage/object_storage.py` ya abstrae local vs S3; producción corre en
