@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 os.environ.setdefault("JWT_SECRET", "vridik-test-secret-nunca-usar-en-produccion")
 
@@ -97,6 +97,40 @@ class _FakeTerminosDB:
             filas.sort(key=lambda t: t["fecha_vencimiento"])
             return [dict(f) for f in filas]
         return []
+
+    async def fetchval(self, query: str, *args):
+        # core/health_score.py::recalcular_health_score -- este fake no
+        # modela `actuaciones`, así que "sin actuaciones" es la única
+        # respuesta posible acá (no afecta lo que estos tests verifican).
+        q = query.strip()
+        if "EXISTS(" in q:
+            caso_id, hoy, ventana = args
+            desde = hoy - timedelta(days=ventana)
+            return any(
+                t["caso_id"] == caso_id and t["estado"] == "pendiente"
+                and t["fecha_vencimiento"] < hoy and t["fecha_vencimiento"] >= desde
+                for t in self.terminos.values()
+            )
+        if "MIN(fecha_vencimiento)" in q:
+            caso_id, hoy = args
+            pendientes = [
+                t for t in self.terminos.values() if t["caso_id"] == caso_id and t["estado"] == "pendiente"
+            ]
+            if not pendientes:
+                return None
+            return (min(t["fecha_vencimiento"] for t in pendientes) - hoy).days
+        if "MAX(created_at) FROM actuaciones" in q:
+            return None
+        if "COUNT(*)" in q and "fecha_vencimiento <" in q:
+            caso_id, hoy = args
+            return sum(
+                1 for t in self.terminos.values()
+                if t["caso_id"] == caso_id and t["estado"] == "pendiente" and t["fecha_vencimiento"] < hoy
+            )
+        if "COUNT(*)" in q:
+            (caso_id,) = args
+            return sum(1 for t in self.terminos.values() if t["caso_id"] == caso_id)
+        return None
 
 
 @pytest.fixture

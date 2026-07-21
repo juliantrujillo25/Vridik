@@ -38,6 +38,7 @@ from core.actuaciones import (
 from core.auth_events import ensure_bitacora_hash_chain, registrar_evento
 from core.case import ensure_casos_table, get_caso
 from core.events import notificar_evento
+from core.health_score import recalcular_health_score
 from julix.client import JuliXClient
 from julix.errors import JuliXError
 from procesal.clasificador_actuaciones import clasificar_actuacion
@@ -101,6 +102,9 @@ async def crear_actuacion_endpoint(
         conn, caso_id=caso_id, created_by=str(current["id"]), texto=payload.texto,
         categoria=resultado.categoria, confianza=resultado.confianza, texto_bruto=resultado.texto_bruto,
     )
+    # TF2: una actuación nueva cambia dias_sin_actuacion -- recalcular ya
+    # mismo, no esperar el job de 6h (ver core/health_score.py).
+    await recalcular_health_score(conn, caso_id=caso_id)
 
     autor_id = str(current["id"])
     destinatarios = {str(caso["cliente_id"]), str(caso["abogado_id"])} if caso["abogado_id"] else {str(caso["cliente_id"])}
@@ -154,9 +158,12 @@ async def set_resultado_actuacion_endpoint(
         raise HTTPException(status_code=404, detail="Actuación no encontrada en este caso")
 
     try:
-        return await set_resultado_actuacion(
+        resultado_actuacion = await set_resultado_actuacion(
             conn, actuacion_id=actuacion_id, resultado=payload.resultado,
             tipo_resolucion_ugpp=payload.tipo_resolucion_ugpp,
         )
     except ActuacionNoEsFalloError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    await recalcular_health_score(conn, caso_id=caso_id)
+    return resultado_actuacion

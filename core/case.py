@@ -42,7 +42,10 @@ from __future__ import annotations
 from core.db_utils import conexion_dedicada, transaccion_si_disponible
 from core.despachos import ensure_despachos_table
 
-COLUMNAS_CASO = "id, cliente_id, abogado_id, despacho_id, titulo, descripcion, estado, materia, created_at, updated_at"
+COLUMNAS_CASO = (
+    "id, cliente_id, abogado_id, despacho_id, titulo, descripcion, estado, materia, "
+    "health_score, health_score_actualizado_en, created_at, updated_at"
+)
 
 _LOCK_KEY_CASOS_BACKFILL = "vridik_casos_despacho_backfill"
 
@@ -90,6 +93,18 @@ async def ensure_casos_table(db_connection) -> None:
         EXCEPTION WHEN duplicate_object THEN NULL;
         END $$
         """
+    )
+    # health_score (Track Forja TF2, migración 11) -- nullable a propósito:
+    # un caso recién creado no tiene score hasta el primer recálculo (ver
+    # core/health_score.py). Vive acá, no en core/health_score.py, porque
+    # COLUMNAS_CASO (get_caso/list_casos_for_user/crear_caso, todos en este
+    # archivo) necesitan la columna ya creada de forma confiable -- mismo
+    # motivo que core/despachos.py::ensure_despachos_table() agrega
+    # users.despacho_id ahí y no en core/case.py: quien sea dueño de la
+    # query que lee la columna es quien debe garantizar que exista.
+    await db_connection.execute("ALTER TABLE casos ADD COLUMN IF NOT EXISTS health_score SMALLINT")
+    await db_connection.execute(
+        "ALTER TABLE casos ADD COLUMN IF NOT EXISTS health_score_actualizado_en TIMESTAMPTZ"
     )
     await db_connection.execute("CREATE INDEX IF NOT EXISTS ix_casos_cliente_id ON casos (cliente_id)")
     await db_connection.execute("CREATE INDEX IF NOT EXISTS ix_casos_abogado_id ON casos (abogado_id)")

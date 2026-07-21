@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 
 from core.events import notificar_evento
+from core.health_score import recalcular_health_score_de_casos_abiertos
 from core.terminos import listar_terminos_para_alertar, marcar_alerta_enviada
 
 logger = logging.getLogger("vridik.procesal.alertas_terminos")
@@ -63,4 +64,7 @@ async def ejecutar_ronda_de_alertas(db_connection) -> int:
                     termino_id, user_id,
                 )
         await marcar_alerta_enviada(db_connection, termino_id=termino_id)
+    # TF2: mismo job de 6h recalcula el health-score de todos los casos
+    # abiertos -- no hace falta un segundo bucle de fondo separado.
+    await recalcular_health_score_de_casos_abiertos(db_connection)
     return len(filas)

@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, field_validator
 from api.admin_endpoint import get_current_user
 from api.auth_endpoint import _get_db
 from core.case import ensure_casos_table, get_caso
+from core.health_score import recalcular_health_score
 from core.terminos import (
     ESTADOS_VALIDOS,
     crear_termino,
@@ -99,6 +100,7 @@ async def crear_termino_endpoint(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    await recalcular_health_score(conn, caso_id=caso_id)
     return _con_dias_restantes(termino)
 
 
@@ -125,4 +127,5 @@ async def cambiar_estado_termino_endpoint(
         raise HTTPException(status_code=404, detail="Término no encontrado")
 
     actualizado = await marcar_estado_termino(conn, termino_id=termino_id, estado=payload.estado)
+    await recalcular_health_score(conn, caso_id=caso_id)
     return _con_dias_restantes(actualizado)
