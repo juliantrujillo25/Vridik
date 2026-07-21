@@ -419,6 +419,58 @@ código. Este archivo es la lista de trabajo delegada, en orden.
   activa R2 de inmediato en producción (porque `BACKEND=r2` ya está
   seteada ahí) -- se dejó sin desplegar a propósito, pendiente de
   autorización explícita como cualquier cambio real de producción.
+- **T5 CERRADO Y VERIFICADO (21-jul), autorizado por el dev lead**:
+  deploy de `vridik-api` con la reconciliación de R2 (deploy `52f6e5a8`,
+  SUCCESS). Verificación end-to-end real: primer intento de `POST
+  /casos/{id}/documents` con `generar_pdf=true` dio **500 real**
+  (`InsufficientPrivilegeError` en `julix_calls`) -- bug real
+  encontrado, no relacionado con R2. Ver el detalle completo (causa,
+  fix, y por qué este mismo bug es la prueba de que TF1 protege de
+  verdad) en la entrada siguiente y en la sección T5/TF1 de la cola de
+  trabajo. Con el fix desplegado (deploy `a6667ccd`), segundo intento
+  exitoso: documento generado con una llamada real a Anthropic, PDF
+  subido de verdad al bucket R2 (`pdf_url` fue una URL firmada real de
+  `*.r2.cloudflarestorage.com`, `GET .../pdf` redirigió 307 a esa misma
+  URL). Cuenta throwaway limpiada de la base (el objeto de prueba que
+  quedó en el bucket R2 real no se borró, impacto mínimo).
+- **Bug real encontrado y arreglado verificando T5 -- despacho_id
+  faltante rompía la generación de documentos (21-jul)**:
+  `api/case_documents_endpoint.py::_generar_contenido_y_pdf` nunca
+  pasaba `despacho_id` a `JuliXService.generar_documento(...)` --
+  quedaba en `None`, y el INSERT a `julix_calls` con `despacho_id=NULL`
+  nunca puede satisfacer la política RLS de tenant isolation
+  (`WITH CHECK despacho_id::text = app.despacho_id`) bajo un contexto ya
+  angosteado. `api/julix_endpoint.py::julix_query`/`julix_stream` ya
+  resolvían y pasaban `despacho_id` correctamente desde antes -- este
+  endpoint se armó antes de que RLS llegara a `julix_calls` y nunca se
+  actualizó. Nunca se había detectado porque nunca se había ejercitado
+  `POST /casos/{id}/documents` end-to-end contra RLS real de producción
+  hasta esta verificación de T5. Fix: `caso["despacho_id"]` (ya
+  disponible en el endpoint desde `_caso_o_404`) se pasa explícito a
+  través de `_generar_contenido_y_pdf` hasta `generar_documento()`.
+  Test de regresión nuevo verificando el kwarg real que recibe el fake
+  de `JuliXService`. Commit `e79aa12`, CI verde, desplegado.
+- **CORRECCIÓN de un error de diagnóstico propio de esta misma sesión --
+  TF1 SÍ protege de verdad en producción (21-jul)**: al investigar el
+  500 de arriba se descubrió que el chequeo de rol hecho más temprano el
+  mismo día (documentado como "TF1 es deuda técnica, `vridik-api` se
+  conecta como `postgres` superusuario") estaba MAL HECHO -- se había
+  chequeado el rol usando las credenciales del propio SERVICIO Postgres
+  de Railway (`railway variables --service Postgres`, que expone el
+  superusuario `postgres` de arranque), nunca el `DATABASE_URL` real que
+  usa el servicio `vridik-api`. Verificado ahora correctamente: `vridik-
+  api` se conecta con el rol **`vridik_app`** (`rolsuper=false`,
+  `rolbypassrls=false`, confirmado con `SELECT rolsuper, rolbypassrls
+  FROM pg_roles` -- un rol de aplicación real, ya provisionado, sin que
+  este handoff supiera de él). Prueba empírica directa conectando como
+  `vridik_app` de verdad (no razonamiento sobre atributos): sin
+  contexto, 0 filas visibles en las 7 tablas de TF1 más `casos`/
+  `julix_calls`, pese a tener datos reales; con `app.bypass_rls=true`,
+  los datos reales vuelven a aparecer. **TF1 queda CERRADO Y VERIFICADO,
+  no deuda técnica** -- ver sección TF1 corregida más abajo. Lección
+  para el futuro: verificar SIEMPRE contra el `DATABASE_URL` real del
+  servicio de aplicación, nunca asumir que coincide con las credenciales
+  por defecto del servicio de base de datos.
 
 ## Cola de trabajo, en orden
 
@@ -465,7 +517,7 @@ Bus factor 1 hoy. Crear un segundo admin real vía `POST /admin/users`
 exigir), y verificar login end-to-end. La password temporal NUNCA se
 imprime en salida de herramientas (precedente del 16-jul: archivo local).
 
-### T5 — Storage S3/R2 para PDFs (P0) -- CÓDIGO LISTO, FALTA SOLO EL DEPLOY [REQUIERE AUTORIZACIÓN]
+### T5 — ~~Storage S3/R2 para PDFs~~ CERRADO Y VERIFICADO EN PRODUCCIÓN (21-jul-2026)
 `storage/object_storage.py` ya abstrae local vs S3; producción corre en
 local efímero (los PDFs mueren en cada redeploy — bug documentado en
 `api/case_documents_endpoint.py`).
@@ -493,13 +545,32 @@ local efímero (los PDFs mueren en cada redeploy — bug documentado en
    deploy de este commit activa el backend R2 de inmediato (sin ningún
    paso manual adicional en Railway) -- la próxima vez que alguien genere
    un PDF (`generar_pdf=true`), el upload va a ir de verdad al bucket R2
-   real, no a disco local. Por eso este deploy [REQUIERE AUTORIZACIÓN]
-   explícita antes de ejecutarse, igual que cualquier otro cambio que
-   toque producción de verdad -- no se desplegó todavía en esta pasada.
-3. Con la autorización: deploy de `vridik-api` + verificar end-to-end
-   real (generar un documento con `generar_pdf=true`, confirmar que
-   `pdf_url` es una URL http(s) del bucket real y que
-   `GET /casos/{id}/documents/{id}/pdf` redirige).
+   real, no a disco local. Autorizado por el dev lead, desplegado
+   (`vridik-api`, deploy `52f6e5a8`, SUCCESS).
+3. **Verificación end-to-end real, autorizada (21-jul)**: primer intento
+   dio **500 real** -- `asyncpg.exceptions.InsufficientPrivilegeError:
+   new row violates row-level security policy for table "julix_calls"`.
+   Causa (bug real, no relacionado con R2 en sí): `api/case_documents_
+   endpoint.py::_generar_contenido_y_pdf` nunca pasaba `despacho_id` a
+   `JuliXService.generar_documento(...)` (quedaba en el default `None`),
+   así que el INSERT a `julix_calls` con `despacho_id=NULL` nunca podía
+   satisfacer la política RLS de tenant isolation bajo un contexto ya
+   angosteado -- `api/julix_endpoint.py` ya lo resolvía bien, este
+   endpoint se armó antes de que RLS llegara a `julix_calls` y nunca se
+   actualizó. **Este bug es también la prueba de que TF1 (y la RLS
+   original de `julix_calls`) protegen de verdad en producción** -- ver
+   la corrección completa en TF1 más abajo. Fix: `caso["despacho_id"]`
+   pasado explícito a través de la cadena de llamadas. Test de regresión
+   nuevo. Commit `e79aa12`, CI verde, desplegado (deploy `a6667ccd`).
+   **Segundo intento, exitoso**: documento generado con `generar_pdf=
+   true` de verdad (llamada real a Anthropic), `pdf_url` fue una URL
+   real firmada del bucket R2
+   (`https://<account>.r2.cloudflarestorage.com/vridik-producs/...`,
+   con `X-Amz-Signature`), y `GET /casos/{id}/documents/{id}/pdf`
+   redirigió (307) a esa misma URL real. Cuenta throwaway limpiada de la
+   base después (el objeto que quedó en el bucket R2 real no se borró --
+   es un PDF de prueba pequeño, impacto mínimo, no se automatizó su
+   borrado esta vez).
 4. Los PDFs viejos con rutas de filesystem quedan 404 con el mensaje de
    "almacenamiento efímero" ya existente — aceptable, documentarlo.
 
@@ -544,19 +615,31 @@ Objetivo: que Vridik deje de ser "un gestor más". Estas tareas NO dependen
 del GATE de JuliX (venden aunque JuliX siga en 35%), así que pueden correr
 en paralelo al track T2/T3. Orden sugerido: TF1 → TF2 → TF3.
 
-### TF1 — RLS completo en las 5 tablas indirectas -- CERRADO EN EL REPO, DEUDA TÉCNICA EN PRODUCCIÓN (21-jul-2026) == T8
+### TF1 — ~~RLS completo en las 5 tablas indirectas~~ CERRADO Y VERIFICADO EN PRODUCCIÓN (21-jul-2026) == T8
 `core/rls.py::ensure_rls_policies_indirectas()`, commit `1c6da1c`,
-desplegado en producción (`ENABLE`+`FORCE ROW LEVEL SECURITY` + políticas
-confirmadas contra `pg_class`/`pg_policies` reales). **Pero no protege
-nada todavía**: `vridik-api` se conecta a Postgres con el rol `postgres`,
-que es superusuario (`rolbypassrls=true`) -- un superusuario SIEMPRE se
-salta RLS, `FORCE` no lo puede anular. Railway no da un rol de aplicación
-separado por defecto. Decisión del dev lead (21-jul): dejarlo como deuda
-técnica documentada, no revertir ni tratarlo como si protegiera de
-verdad. Detalle completo en "Ya hecho". **Para cerrarlo de verdad**: crear
-un rol Postgres sin `SUPERUSER`/`BYPASSRLS` con privilegios suficientes
-para las migraciones idempotentes existentes, y migrar `DATABASE_URL` de
-`vridik-api` a ese rol -- cambio de infraestructura real, no solo código.
+desplegado en producción. **CORRECCIÓN de una conclusión propia
+equivocada de esta misma sesión (21-jul, más tarde el mismo día)**: se
+había documentado acá que TF1 era "deuda técnica" porque `vridik-api` se
+conectaba como el rol `postgres` (superusuario, `rolbypassrls=true`,
+que siempre se salta RLS) -- ESO ERA UN ERROR DE DIAGNÓSTICO: el chequeo
+se hizo contra las credenciales del propio SERVICIO Postgres de Railway
+(`railway variables --service Postgres`), nunca contra el `DATABASE_URL`
+real que usa `vridik-api`. Verificado recién, en el momento correcto
+(mientras se investigaba el bug de `julix_calls` de T5 más abajo):
+`vridik-api` en realidad se conecta con el rol **`vridik_app`**
+(`rolsuper=false`, `rolbypassrls=false` -- confirmado con `SELECT
+rolsuper, rolbypassrls FROM pg_roles`), un rol de aplicación real, ya
+provisionado (por el dev lead o una sesión anterior, no por este
+handoff). **Prueba empírica directa, conectando como `vridik_app` de
+verdad** (no razonamiento sobre atributos de rol): sin contexto seteado,
+`SELECT count(*) FROM <tabla>` da **0 filas** en las 7 tablas de TF1
+(`actuaciones`/`terminos`/`cobro_caso`/`case_documents`/`mensajes`) MÁS
+las 2 originales (`casos`/`julix_calls`), pese a que esas tablas sí
+tienen datos reales (22 casos, confirmado aparte); con
+`set_config('app.bypass_rls', 'true', false)`, esos mismos 22 casos
+vuelven a aparecer -- el mecanismo de GUC funciona en las dos
+direcciones. **TF1 protege de verdad en producción, ahora mismo.** No
+hace falta ningún cambio de infraestructura adicional -- ya está.
 
 ### TF2 — ~~health-score por proceso~~ CERRADO Y VERIFICADO EN PRODUCCIÓN (21-jul-2026)
 `core/health_score.py`, commits `b37a38a` (backend), `045e036` (frontend),
@@ -585,12 +668,15 @@ término vencido), y el gancho de gamificación disparó `termino.cumplido`
 de verdad (fila real en `user_events`, limpiada después).
 
 **Con esto, Track Forja (TF1/TF2/TF3) está desplegado en producción.**
-TF2/TF3 verificados funcionalmente en vivo. TF1 queda desplegado pero
-como deuda técnica explícita (ver arriba) -- las políticas están listas,
-falta el rol de aplicación separado para que empiecen a proteger de
-verdad. Pendiente separado y real, encontrado en esta misma pasada: subir
-la versión de Postgres de CI (`postgres:15`) para que deje de divergir de
-la versión real de producción (18) -- fue la causa raíz del 500 de TF2.
+TF1/TF2/TF3 verificados funcionalmente en vivo -- **actualizado más
+tarde el mismo 21-jul**: la nota de acá abajo sobre TF1 como "deuda
+técnica" fue un error de diagnóstico propio (se chequeó el rol
+equivocado), corregido y re-verificado empíricamente contra el rol real
+`vridik_app` -- TF1 protege de verdad, ver la entrada de corrección más
+arriba en "Ya hecho" y la sección TF1 actualizada más abajo. Pendiente
+separado y real, encontrado en esta misma pasada: subir la versión de
+Postgres de CI (`postgres:15`) para que deje de divergir de la versión
+real de producción (18) -- fue la causa raíz del 500 de TF2.
 
 ### TF0 — Definición de producto (sin código, 1 semana, dev lead + Ana Luisa)
 Las 4 etapas Forja que Vridik no tiene, ya redactadas en
