@@ -138,13 +138,34 @@ código. Este archivo es la lista de trabajo delegada, en orden.
   PDF de Función Pública `i=199983` descargado ENTERO con PyMuPDF, igual
   que el resto de esta pasada, no el de la Rama Judicial que es OCR del
   texto de 1950 sin reformas).
+- **T2 CERRADO -- quinta pasada (21-jul)**: 52 chunks reales en total
+  (32→52). Se resolvió TODO lo que quedaba pendiente: **Ley 100/1993
+  arts. 18/19/23** (re-extraídos del PDF -- confirmado que el art. 18
+  tiene 3 parágrafos más allá de la primera frase, tal como anticipaba
+  el hallazgo de la pasada anterior), **Decreto 1601/2022** (Título 7
+  completo, 6 artículos, con nota de vigencia explícita de que el art.
+  3.2.7.5 quedó superado por Decreto 379/2026 ya cargado), **Ley
+  1562/2012 art. 2** (afiliados al Sistema de Riesgos Laborales),
+  **Ley 52/1975 art. 1** (encontrado por fin al tercer intento --
+  alcaldiabogota.gov.co/sisjur, confirmado por una segunda fuente
+  independiente con contenido idéntico) y **los 12 artículos restantes
+  del CST** (46/159/160/168/179/186/189/192/239/240/249/253 -- el PDF
+  de Función Pública `i=199983` SÍ tiene el texto completo y vigente,
+  con reformas incluidas hasta 2021; contradice el miedo de la pasada
+  anterior de que hiciera falta buscar en otro lado). Todos verificados
+  por límite natural real (dónde empieza el artículo siguiente).
+  **Con esto, prácticamente TODAS las referencias de `norma_clave` de
+  los 20 casos del banco (`eval/banco_casos_vridik.xlsx`) tienen texto
+  verbatim real cargado en `rag_chunks`.** T2 queda cerrado -- el
+  siguiente paso lógico es T3 (correr el GATE de nuevo con esto ya
+  cargado). Sesión de prueba limpiada.
 
 ## Cola de trabajo, en orden
 
 ### T1 — ~~Rotación de credenciales Postgres~~ CERRADO (20-jul-2026)
 Confirmado con el dev lead: password rotada en Railway.
 
-### T2 — Corpus verbatim para el banco (P0, causa raíz del gate reprobado) -- EN CURSO, ver "Ya hecho"
+### T2 — ~~Corpus verbatim para el banco~~ CERRADO (21-jul-2026), ver "Ya hecho"
 Diagnóstico en `PROMPTS.md`: `norma_clave` del banco guarda solo la CITA
 (p.ej. "Ley 1607 de 2012, Art. 179"), nunca el texto del artículo. JuliX
 no puede citar verbatim lo que no tiene.
@@ -220,6 +241,57 @@ apuntado.
 (hoy dependen de WHERE manual vía join con casos). Mismo patrón
 fail-open-con-narrowing documentado en el propio archivo. Tests contra
 Postgres real de CI (fixture existente), no fakes.
+
+## Track Forja — producto vendible (ref: auditoría "Cuida tus mascotas")
+
+Contexto en `vridik_forja_audit.md` + `vridik_architecture_v2.json`.
+Objetivo: que Vridik deje de ser "un gestor más". Estas tareas NO dependen
+del GATE de JuliX (venden aunque JuliX siga en 35%), así que pueden correr
+en paralelo al track T2/T3. Orden sugerido: TF1 → TF2 → TF3.
+
+### TF1 — RLS completo en las 5 tablas indirectas (P0) == T8
+IMPORTANTE: esta tarea ES la misma que T8 de arriba. El SQL exacto y
+ejecutable está en `vridik_forja_audit.md` (sección "RLS Supabase
+propuesto", migración `007_rls_tablas_indirectas.sql` + política
+`casos_por_rol`). Aplica a `actuaciones`, `terminos`, `cobro_caso`,
+`case_documents`, `mensajes`. Riesgo #1 de un multi-tenant legal (un
+cliente viendo datos de otro despacho = multa SIC). [REQUIERE
+AUTORIZACIÓN para aplicar en producción.]
+Verificación obligatoria (no fakes): test contra Postgres real de CI que
+setea `vridik.current_despacho_id` al despacho A e intenta leer una fila
+del despacho B → 0 filas. Sin ese test, la política es teoría.
+
+### TF2 — health-score por proceso (P1)
+Migración 11 (`vridik_architecture_v2.json`): `ALTER TABLE casos ADD
+COLUMN IF NOT EXISTS health_score SMALLINT` (+ `health_score_actualizado_en`).
+Nuevo `core/health_score.py` con la fórmula EXACTA de
+`vridik_architecture_v2.json::gamificacion_vridik.health_score_formula`
+(score de RIESGO 0-100, calculado SIEMPRE en backend, nunca input del
+cliente — mismo principio que `honorarios_liquidados`). Se recalcula en
+el mismo job de `procesal/alertas_terminos.py` (ya corre cada 6h) y al
+cambiar un término/actuación. Exponer en el detalle del caso + semáforo
+(0-30 verde, 31-70 amarillo, 71-100 rojo). Tests unitarios de la fórmula
+con casos límite (sin término, término a 1 día, todos vencidos). No
+requiere Anthropic ni producción para los tests.
+
+### TF3 — Loop de término escalonado T-5/T-3/T-1 por SSE (P1)
+`procesal/alertas_terminos.py` hoy manda alertas; falta ESCALONAR en tres
+avisos (5/3/1 días antes del vencimiento) y empujarlos por el canal SSE
+existente (`core/events.py::notificar_evento`, tipo de evento nuevo
+`termino.por_vencer`). Al marcar un término atendido antes del
+vencimiento, disparar el gancho de gamificación (por ahora solo el evento
+`termino.cumplido`; las tablas `gamificacion`/`logros` — migs 12/13 — son
+fase 2, no bloquean esto). Idempotencia: no reenviar el mismo escalón dos
+veces (registrar el último escalón notificado por término). Tests contra
+el fake de eventos existente (`tests/test_events.py` patrón) para el
+wiring, y Postgres real para la entrega NOTIFY.
+
+### TF0 — Definición de producto (sin código, 1 semana, dev lead + Ana Luisa)
+Las 4 etapas Forja que Vridik no tiene, ya redactadas en
+`vridik_architecture_v2.json` (personas, journey del loop de término,
+20 user stories, pre-mortem). Consolidar en un `PDR_VRIDIK.md`. No es
+trabajo de Claude Code — es decisión de producto; queda apuntado para que
+las fases siguientes tengan norte.
 
 ### Congelado hasta GATE >=80% (no trabajar sin instrucción explícita)
 Features nuevas de Fases 2-4 (excepto lo listado arriba). Listas
