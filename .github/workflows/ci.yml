@@ -95,10 +95,17 @@ jobs:
         # completo para el CREATE EXTENSION inicial de pgcrypto/citext,
         # igual que en producción ya instalada) y ANTES de pytest. El
         # SELECT final es puro diagnóstico -- confirma en el log qué
-        # atributos quedaron de verdad, en vez de asumirlo.
+        # atributos quedaron de verdad, en vez de asumirlo. El GRANT sobre
+        # el SCHEMA (no solo sobre las tablas ya creadas) es necesario
+        # porque, desde PG15, CREATE en el schema `public` ya NO se otorga
+        # por defecto a roles que no son el dueño -- y varias tablas
+        # (`despachos`, `matriz_riesgo`, etc.) se crean perezosamente vía
+        # `ensure_*_table()` durante los tests mismos, no solo por los .sql
+        # que ya se aplicaron arriba con el rol superusuario.
         run: |
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE ROLE vridik_app WITH LOGIN PASSWORD '${{ secrets.CI_TEST_DB_PASSWORD }}' NOSUPERUSER NOBYPASSRLS;"
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE vridik_test TO vridik_app;"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON SCHEMA public TO vridik_app;"
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO vridik_app;"
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO vridik_app;"
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'vridik_app';"
