@@ -314,6 +314,22 @@ código. Este archivo es la lista de trabajo delegada, en orden.
   cualquier script/alias de deploy que se agregue a futuro** -- ver
   también la nota en `frontend/nixpacks.toml`, que asumía (mal) que el
   Root Directory ya estaba resuelto del lado de Railway.
+- **T5 arrancado (21-jul)**: decisión de proveedor con el dev lead --
+  Cloudflare R2. `storage/object_storage.py::S3StorageBackend` no
+  funcionaba contra R2 tal cual estaba (asumía AWS S3 puro): se agregó
+  `endpoint_url` (nuevo `OBJECT_STORAGE_S3_ENDPOINT_URL`, sin esto boto3
+  apunta a AWS real) y `public_base_url` (nuevo `OBJECT_STORAGE_S3_
+  PUBLIC_BASE_URL`, exigido explícitamente si se combina modo público con
+  un endpoint custom -- R2 no tiene el formato `bucket.s3.region.
+  amazonaws.com` de AWS, solo expone URLs públicas vía subdominio r2.dev
+  o dominio propio). Region default pasa de `"us-east-1"` a `"auto"`
+  (lo que Cloudflare documenta para R2). 5 tests nuevos con fake de
+  boto3 verificando los kwargs reales pasados a `client()`. `boto3` ya
+  estaba en `requirements.txt` desde S7, no hubo que agregarlo. Commit
+  `b1d7434`, CI verde (run `29852363743`). **No se tocó Cloudflare real
+  ni Railway** -- sigue pendiente que el dev lead cree el bucket + API
+  token en su cuenta (paso no delegable) antes de poder configurar
+  `OBJECT_STORAGE_BACKEND=s3` en producción y verificar end-to-end.
 
 ## Cola de trabajo, en orden
 
@@ -360,14 +376,30 @@ Bus factor 1 hoy. Crear un segundo admin real vía `POST /admin/users`
 exigir), y verificar login end-to-end. La password temporal NUNCA se
 imprime en salida de herramientas (precedente del 16-jul: archivo local).
 
-### T5 — Storage S3/R2 para PDFs (P0)
+### T5 — Storage S3/R2 para PDFs (P0) -- EN CURSO, proveedor decidido
 `storage/object_storage.py` ya abstrae local vs S3; producción corre en
 local efímero (los PDFs mueren en cada redeploy — bug documentado en
 `api/case_documents_endpoint.py`).
-1. Crear bucket (R2 de Cloudflare o S3) — decisión de proveedor con el
-   dev lead (costo ~0 a este volumen).
-2. Configurar `OBJECT_STORAGE_BACKEND=s3` + credenciales en Railway
-   (vía `railway variable set --stdin`, nunca en salida de herramientas).
+1. ~~Decisión de proveedor~~ CERRADO (21-jul, dev lead): **Cloudflare
+   R2**. `S3StorageBackend` actualizado para soportarlo de verdad (no es
+   AWS puro): `OBJECT_STORAGE_S3_ENDPOINT_URL` (endpoint de la cuenta,
+   requerido, sin esto boto3 apunta a AWS real), `OBJECT_STORAGE_S3_
+   PUBLIC_BASE_URL` (requerido si se usa modo público -- R2 no tiene el
+   formato de URL pública de AWS), region default `"auto"`. `boto3` ya
+   estaba en `requirements.txt` (S7). Tests con fake de boto3 verificando
+   los kwargs reales. Commit `b1d7434`, CI verde (run `29852363743`).
+2. **Pendiente, requiere acción del dev lead (no delegable)**: crear el
+   bucket R2 + un API token en la cuenta de Cloudflare -- no es algo que
+   Claude Code pueda hacer (necesita acceso a la cuenta). Con eso en
+   mano, configurar en Railway (vía `railway variable set --stdin`, NUNCA
+   en salida de herramientas): `OBJECT_STORAGE_BACKEND=s3`,
+   `OBJECT_STORAGE_S3_BUCKET`, `OBJECT_STORAGE_S3_ENDPOINT_URL`,
+   `OBJECT_STORAGE_S3_REGION=auto` (o dejarlo, ya es el default),
+   credenciales AWS-compatibles del token de R2 (`AWS_ACCESS_KEY_ID`/
+   `AWS_SECRET_ACCESS_KEY`, así lee boto3 por defecto). Si se quiere modo
+   público, además `OBJECT_STORAGE_S3_PUBLIC=true` +
+   `OBJECT_STORAGE_S3_PUBLIC_BASE_URL` (subdominio r2.dev o dominio
+   propio, hay que habilitarlo en el bucket primero).
 3. Verificar end-to-end: generar documento con `generar_pdf=true`,
    confirmar que `pdf_url` es URL http(s) y que
    `GET /casos/{id}/documents/{id}/pdf` redirige. [REQUIERE AUTORIZACIÓN]
