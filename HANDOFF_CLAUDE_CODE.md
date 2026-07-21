@@ -225,6 +225,59 @@ código. Este archivo es la lista de trabajo delegada, en orden.
   completo en el repo** -- falta el deploy a producción de los tres +
   verificación en vivo, requiere autorización explícita antes de tocar
   Postgres de producción.
+- **Deploy de TF1/TF2/TF3 a producción (21-jul), autorizado explícitamente
+  por el dev lead**: `railway up --service vridik-api --detach`, deploy
+  `8eca5855` SUCCESS, sin errores en logs.
+  **Hallazgo real #1 -- TF1 es deuda técnica, no protección real
+  todavía**: las 7 tablas indirectas SÍ tienen `ENABLE`+`FORCE ROW LEVEL
+  SECURITY` con las políticas correctas (confirmado con `pg_class`/
+  `pg_policies` contra producción), pero el rol de Postgres que usa
+  `vridik-api` (`DATABASE_URL`, mismo usuario que `DATABASE_PUBLIC_URL`)
+  es `postgres` y es **superusuario** (`rolsuper=true`,
+  `rolbypassrls=true`, confirmado con `SELECT rolsuper, rolbypassrls
+  FROM pg_roles`). Un superusuario de Postgres SIEMPRE se salta RLS --
+  ni `FORCE ROW LEVEL SECURITY` lo puede anular (`FORCE` solo afecta al
+  dueño de la tabla cuando NO es superusuario). Railway aprovisiona un
+  único rol `postgres` para toda la base, sin un rol de aplicación
+  separado sin privilegios -- así que hoy TF1 es inerte en producción:
+  el único aislamiento real sigue siendo el `WHERE despacho_id = $1` de
+  aplicación, igual que antes de TF1. CI sí prueba el enforcement real
+  porque tiene un paso explícito que le quita `SUPERUSER`/`BYPASSRLS`
+  al rol de test antes de correr `pytest` -- producción nunca tuvo esa
+  separación. **Decisión del dev lead: dejarlo documentado como deuda
+  técnica por ahora** (las políticas quedan listas para cuando exista
+  un rol de aplicación separado), no tratarlo como una migración
+  fallida ni revertirla.
+  **Hallazgo real #2 -- bug real de producción, encontrado y arreglado
+  en el momento**: `POST /casos/{id}/terminos`, `PATCH .../estado`,
+  `POST /casos/{id}/actuaciones` y `PATCH .../resultado` devolvían 500
+  en producción. Causa: `core/health_score.py::recalcular_health_score`
+  tenía `fecha_vencimiento >= $2 - $3` sin casts explícitos --
+  PostgreSQL 18 (la versión REAL de producción, confirmado con `SELECT
+  version()`) infiere el tipo de esa resta distinto que PostgreSQL 15
+  (la versión que usa CI, `postgres:15` en `.github/workflows/ci.yml`),
+  resolviéndola como `integer` en vez de `date` y tirando "operator
+  does not exist: date >= integer". CI nunca lo detectó porque corre
+  contra una versión de Postgres distinta a la real. Fix: `$2::date` y
+  `$3::int` explícitos. Verificado directo contra Postgres de
+  producción antes (falla) y después (pasa) del fix, además de
+  auditadas TODAS las demás queries nuevas de TF2/TF3 contra el schema
+  real de producción para descartar el mismo patrón en otro lado (no
+  apareció en ninguna otra). Commit `b3d6214`, redeploy `933def13`
+  SUCCESS. **Riesgo real pendiente**: CI sigue en `postgres:15` --
+  cualquier SQL nuevo con inferencia de tipos ambigua puede repetir
+  esta clase de bug sin que CI lo vea. Convendría subir CI a `postgres:18`
+  (o al menos agregar el hábito de castear explícitamente cualquier
+  aritmética entre parámetros, no solo entre parámetro y columna).
+  **Verificación funcional en vivo (post-hotfix), con cuenta throwaway
+  limpiada después**: TF2 -- crear un término vencido recalculó
+  `health_score` sincrónicamente (score=75, confirmado vía `GET /casos/
+  {id}`). TF3 -- la query de `listar_terminos_para_alertar` evaluó
+  escalón=1 correctamente contra el schema real; marcar un término
+  futuro como cumplido disparó el evento `termino.cumplido` real (fila
+  en `user_events`). TF1 -- no se pudo verificar aislamiento real por
+  el hallazgo #1 de arriba (queda como deuda técnica, no como
+  verificado).
 
 ## Cola de trabajo, en orden
 
@@ -311,19 +364,29 @@ Objetivo: que Vridik deje de ser "un gestor más". Estas tareas NO dependen
 del GATE de JuliX (venden aunque JuliX siga en 35%), así que pueden correr
 en paralelo al track T2/T3. Orden sugerido: TF1 → TF2 → TF3.
 
-### TF1 — ~~RLS completo en las 5 tablas indirectas~~ CERRADO (21-jul-2026) == T8
-Ver "Ya hecho". `core/rls.py::ensure_rls_policies_indirectas()`, commit
-`1c6da1c`, CI verde contra Postgres real. **Pendiente**: deploy a
-producción + verificación en vivo (mismo release que TF2, [REQUIERE
-AUTORIZACIÓN] para aplicar contra Postgres de producción).
+### TF1 — RLS completo en las 5 tablas indirectas -- CERRADO EN EL REPO, DEUDA TÉCNICA EN PRODUCCIÓN (21-jul-2026) == T8
+`core/rls.py::ensure_rls_policies_indirectas()`, commit `1c6da1c`,
+desplegado en producción (`ENABLE`+`FORCE ROW LEVEL SECURITY` + políticas
+confirmadas contra `pg_class`/`pg_policies` reales). **Pero no protege
+nada todavía**: `vridik-api` se conecta a Postgres con el rol `postgres`,
+que es superusuario (`rolbypassrls=true`) -- un superusuario SIEMPRE se
+salta RLS, `FORCE` no lo puede anular. Railway no da un rol de aplicación
+separado por defecto. Decisión del dev lead (21-jul): dejarlo como deuda
+técnica documentada, no revertir ni tratarlo como si protegiera de
+verdad. Detalle completo en "Ya hecho". **Para cerrarlo de verdad**: crear
+un rol Postgres sin `SUPERUSER`/`BYPASSRLS` con privilegios suficientes
+para las migraciones idempotentes existentes, y migrar `DATABASE_URL` de
+`vridik-api` a ese rol -- cambio de infraestructura real, no solo código.
 
-### TF2 — ~~health-score por proceso~~ CERRADO (21-jul-2026)
-Ver "Ya hecho". `core/health_score.py`, commits `b37a38a` (backend) y
-`045e036` (frontend). **Pendiente**: deploy a producción + verificación
-visual del pill con datos reales (el backend desplegado hoy no tiene la
-columna todavía).
+### TF2 — ~~health-score por proceso~~ CERRADO Y VERIFICADO EN PRODUCCIÓN (21-jul-2026)
+`core/health_score.py`, commits `b37a38a` (backend), `045e036` (frontend),
+`b3d6214` (hotfix de un 500 real en producción, ver "Ya hecho" -- cast de
+tipos faltante que solo se manifestaba en PostgreSQL 18, la versión real
+de producción, no en el PostgreSQL 15 de CI). Verificado en vivo post-fix:
+crear un término vencido recalcula `health_score` sincrónicamente
+(confirmado con cuenta throwaway, score=75, limpiada después).
 
-### TF3 — ~~Loop de término escalonado T-5/T-3/T-1 por SSE~~ CERRADO (21-jul-2026)
+### TF3 — ~~Loop de término escalonado T-5/T-3/T-1 por SSE~~ CERRADO Y VERIFICADO EN PRODUCCIÓN (21-jul-2026)
 `core/terminos.py::DIAS_ESCALONES=(5,3,1)` + `escalon_aplicable()` (pura) +
 `listar_terminos_para_alertar()` reescrito con CASE en SQL, columna nueva
 `ultimo_escalon_notificado` (la vieja `ultima_alerta_enviada` queda sin
@@ -336,14 +399,18 @@ en las 5 fronteras (pura), fake de orquestación, y 3 tests contra
 Postgres real -- incluido el caso central de TF3 (un término notificado
 en T-5 vuelve a aparecer al llegar a T-3; uno notificado en T-1 nunca
 vuelve a aparecer). Commit `4e302ea`, CI verde contra Postgres real (run
-`29829681978`). **Pendiente**: deploy a producción + verificación en
-vivo, junto con TF1/TF2 (mismo release, [REQUIERE AUTORIZACIÓN] para
-tocar Postgres de producción).
+`29829681978`). Verificado en vivo post-hotfix: la query de escalones
+evalúa bien contra el schema real de producción (escalón=1 para un
+término vencido), y el gancho de gamificación disparó `termino.cumplido`
+de verdad (fila real en `user_events`, limpiada después).
 
-**Con esto, Track Forja (TF1/TF2/TF3) queda completo en el repo.** Falta
-únicamente el deploy a producción de los tres (requiere autorización
-explícita del dev lead antes de aplicar contra Postgres de producción,
-regla no negociable del handoff) + la verificación en vivo de cada uno.
+**Con esto, Track Forja (TF1/TF2/TF3) está desplegado en producción.**
+TF2/TF3 verificados funcionalmente en vivo. TF1 queda desplegado pero
+como deuda técnica explícita (ver arriba) -- las políticas están listas,
+falta el rol de aplicación separado para que empiecen a proteger de
+verdad. Pendiente separado y real, encontrado en esta misma pasada: subir
+la versión de Postgres de CI (`postgres:15`) para que deje de divergir de
+la versión real de producción (18) -- fue la causa raíz del 500 de TF2.
 
 ### TF0 — Definición de producto (sin código, 1 semana, dev lead + Ana Luisa)
 Las 4 etapas Forja que Vridik no tiene, ya redactadas en
