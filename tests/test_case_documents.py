@@ -107,10 +107,13 @@ class _FakeCaseDocumentsDB:
 
 
 class _FakeJuliXServiceOK:
+    ultima_llamada: dict | None = None
+
     def __init__(self, **kwargs):
         pass
 
     async def generar_documento(self, **kwargs):
+        _FakeJuliXServiceOK.ultima_llamada = kwargs
         for fragmento in ["Primero. ", "Segundo."]:
             yield fragmento
 
@@ -155,6 +158,26 @@ def test_cliente_of_caso_can_create_document(cd_db, cd_client):
     body = r.json()
     assert body["contenido"] == "Primero. Segundo."
     assert body["caso_id"] == caso["id"]
+
+
+def test_crear_documento_pasa_despacho_id_a_generar_documento(cd_db, cd_client):
+    """Regresión real (encontrada el 21-jul verificando T5 en producción):
+    sin despacho_id, JuliXCallRecord.despacho_id queda None y el INSERT a
+    julix_calls viola la política RLS de tenant isolation bajo un contexto
+    ya angosteado -- api/julix_endpoint.py ya lo resolvía y pasaba
+    correctamente, este endpoint nunca se actualizó cuando se agregó RLS
+    a julix_calls."""
+    cliente = cd_db.seed_user(email="cliente_despacho_id@vridik.local", despacho_id="despacho-xyz")
+    caso = cd_db.seed_caso(cliente_id=cliente["id"], despacho_id="despacho-xyz")
+    token = _token_de(cliente)
+
+    r = cd_client.post(
+        f"/casos/{caso['id']}/documents",
+        json={"pregunta": "¿Qué aportes debo declarar a la UGPP?"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 201, r.text
+    assert _FakeJuliXServiceOK.ultima_llamada["despacho_id"] == "despacho-xyz"
 
 
 def test_abogado_asignado_puede_crear_documento(cd_db, cd_client):

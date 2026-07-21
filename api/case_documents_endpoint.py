@@ -62,7 +62,7 @@ class CrearCaseDocumentRequest(BaseModel):
 
 
 async def _generar_contenido_y_pdf(
-    conn, *, user_id: str, caso_id: str, payload: CrearCaseDocumentRequest,
+    conn, *, user_id: str, caso_id: str, despacho_id: str | None, payload: CrearCaseDocumentRequest,
 ) -> tuple[str, str, str | None]:
     """Genera el documento real con JuliX y, si se pidió, el PDF. Devuelve
     (contenido, tarea, pdf_url)."""
@@ -73,8 +73,16 @@ async def _generar_contenido_y_pdf(
     service = JuliXService(client=client, db_connection=conn)
 
     contenido = ""
+    # despacho_id explícito -- sin esto, JuliXCallRecord.despacho_id queda
+    # None y el INSERT a julix_calls viola la política RLS de tenant
+    # isolation (WITH CHECK exige despacho_id::text = app.despacho_id, y
+    # NULL nunca la satisface bajo un contexto ya angosteado) -- bug real
+    # encontrado el 21-jul verificando T5 en producción: api/julix_
+    # endpoint.py::julix_query/julix_stream ya resolvían y pasaban
+    # despacho_id correctamente, este endpoint se armó antes de RLS en
+    # julix_calls y nunca se actualizó.
     async for fragmento in service.generar_documento(
-        user_id=user_id, caso_id=caso_id, tarea=tarea,
+        user_id=user_id, caso_id=caso_id, tarea=tarea, despacho_id=despacho_id,
         expediente_texto=payload.pregunta, pregunta=payload.pregunta,
     ):
         contenido += fragmento
@@ -128,7 +136,8 @@ async def crear_documento_de_caso(
     _exige_acceso_a_caso(caso, current)
 
     contenido, tarea, pdf_url = await _generar_contenido_y_pdf(
-        conn, user_id=str(current["id"]), caso_id=caso_id, payload=payload,
+        conn, user_id=str(current["id"]), caso_id=caso_id,
+        despacho_id=str(caso["despacho_id"]) if caso["despacho_id"] else None, payload=payload,
     )
     return await insert_case_document(
         conn, caso_id=caso_id, created_by=str(current["id"]), tarea=tarea,
