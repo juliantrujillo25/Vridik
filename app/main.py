@@ -59,6 +59,7 @@ from api.bitacora_endpoint import router as bitacora_router
 from api.mensajes_endpoint import router as mensajes_router
 from api.platform_endpoint import router as platform_router
 from api.terminos_endpoint import router as terminos_router
+from core.admin import ensure_role_column
 from core.auth import ensure_auth_migration_005, ensure_users_table
 from core.auth_events import ensure_bitacora_hash_chain
 from core.case import ensure_casos_despacho_backfill
@@ -175,22 +176,27 @@ async def _conectar_db() -> None:
         # el pool completo.
         app.state.db_connection = await asyncpg.create_pool(database_url, min_size=2, max_size=20)
 
-        # `users` primero, explícito -- TODO lo que sigue en este bootstrap
-        # (migración 005, backfills de despacho_id) asume que `users` ya
-        # existe (hace ALTER TABLE / lee filas de ahí). En cualquier
-        # entorno con historial (producción, siempre) eso es cierto desde
-        # hace meses, así que nunca se notó -- pero en una base
-        # COMPLETAMENTE vacía (staging recién creado, T6 del roadmap,
-        # encontrado ahí el 21-jul) cada paso de abajo fallaba con
-        # "relation users does not exist" hasta que un request real
-        # llamaba a ensure_users_table() de casualidad. Barato de llamar
-        # (CREATE TABLE IF NOT EXISTS) y hace que el arranque en frío sea
-        # silencioso en vez de tirar varios CRITICAL espurios.
+        # `users` + su columna `role` primero, explícito -- TODO lo que
+        # sigue en este bootstrap (migración 005, backfills de
+        # despacho_id) asume que ambas ya existen (hacen ALTER TABLE,
+        # leen `users.role`, etc). En cualquier entorno con historial
+        # (producción, siempre) eso es cierto desde hace meses, así que
+        # nunca se notó -- pero en una base COMPLETAMENTE vacía (staging
+        # recién creado, T6 del roadmap, encontrado ahí el 21-jul) cada
+        # paso de abajo fallaba en cascada ("relation users does not
+        # exist", después "column users.role does not exist") hasta que
+        # un request real llamaba a estas mismas funciones de casualidad.
+        # Baratas de llamar (CREATE TABLE / ALTER COLUMN, ambas IF NOT
+        # EXISTS) y hacen que el arranque en frío sea silencioso en vez
+        # de tirar varios CRITICAL espurios en cadena.
         try:
             async with app.state.db_connection.acquire() as conn:
                 await ensure_users_table(conn)
+                await ensure_role_column(conn)
         except Exception:
-            logger.critical("Vridik: no se pudo crear/verificar la tabla users al arrancar.", exc_info=True)
+            logger.critical(
+                "Vridik: no se pudo crear/verificar users o su columna role al arrancar.", exc_info=True,
+            )
 
         # Bootstrap idempotente de migrations/005_auth_roles_refresh_tokens.sql
         # (refresh_tokens/auth_events/user_credentials/roles) -- UNA sola vez
