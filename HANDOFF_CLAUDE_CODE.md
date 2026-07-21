@@ -159,6 +159,47 @@ código. Este archivo es la lista de trabajo delegada, en orden.
   verbatim real cargado en `rag_chunks`.** T2 queda cerrado -- el
   siguiente paso lógico es T3 (correr el GATE de nuevo con esto ya
   cargado). Sesión de prueba limpiada.
+- **TF1 CERRADO (21-jul)**: `core/rls.py::ensure_rls_policies_indirectas()`
+  -- RLS real de Postgres (`FORCE ROW LEVEL SECURITY`) en las 5+2 tablas
+  que solo tenían aislamiento de aplicación: `actuaciones`, `terminos`,
+  `cobro_caso`, `case_documents` (join directo por `caso_id`) y
+  `mensajes`/`conversaciones`/`conversation_reads` (join indirecto vía
+  `conversacion_id` -- `mensajes` NO tiene `caso_id` propio, hallazgo real
+  de esquema). **No se aplicó el SQL de `vridik_forja_audit.md` tal
+  cual**: usaba nombres de GUC (`vridik.current_despacho_id`) que no
+  coinciden con los reales del proyecto (`app.despacho_id`/
+  `app.bypass_rls`, ya usados en el `ensure_rls_policies()` original) --
+  se reimplementó con los nombres reales y el mismo patrón idempotente
+  `DO $$ ... EXCEPTION WHEN duplicate_object`. Tampoco se implementó la
+  política bonus `casos_por_rol` del audit (fuera del alcance pedido,
+  interacción con la política existente sin analizar). `tests/
+  test_rls_indirectas.py` (6 tests, Postgres real): sin-contexto-no-ve-
+  nada, con-despacho-correcto, bypass-ve-todo, IDOR en INSERT cruzado
+  (WITH CHECK), y el test específico del join de dos saltos de
+  `mensajes`. Suite local en verde, CI verde contra Postgres real (run
+  `29827642734`). Commit `1c6da1c`, desplegado y pendiente de verificar
+  en producción junto con TF2 (mismo release).
+- **TF2 CERRADO (21-jul)**: `core/health_score.py` -- score de riesgo
+  0-100 por caso, fórmula exacta de
+  `vridik_architecture_v2.json::gamificacion_vridik.health_score_formula`,
+  calculado siempre en backend (nunca input del cliente/abogado, mismo
+  principio que `honorarios_liquidados`). Columna `casos.health_score`/
+  `health_score_actualizado_en` vive en `core/case.py::
+  ensure_casos_table()` (no en `core/health_score.py`) porque
+  `COLUMNAS_CASO` necesita la columna creada de forma confiable antes de
+  leerla. Recalculo inmediato al crear/cambiar un término o una actuación
+  (`api/terminos_endpoint.py`, `api/actuaciones_endpoint.py`) + recalculo
+  de todos los casos abiertos en el mismo job de `procesal/
+  alertas_terminos.py` que ya corre cada 6h (sin bucle de fondo nuevo).
+  Expuesto en frontend: `HealthScorePill` (ui.tsx) junto al `EstadoPill`
+  en `CasoDetailPage.tsx`, badge silencioso-en-verde (solo aparece si
+  score > 30) en `CasosListPage.tsx`, mismos umbrales de semáforo que el
+  backend (0-30/31-70/71-100). `tests/test_health_score.py` (9 puras +
+  4 Postgres real). `tsc --noEmit` limpio; verificado en navegador que la
+  app carga sin errores de consola (verificación visual del pill con
+  datos reales de riesgo queda pendiente del deploy, el backend en
+  producción hoy todavía no tiene la columna). Commits `b37a38a`
+  (backend) y `045e036` (frontend).
 
 ## Cola de trabajo, en orden
 
@@ -235,12 +276,8 @@ deber legal). Documento corto `PRIVACIDAD.md` con política de retención.
 El registro RNBD es trámite del dev lead, no código — solo dejarlo
 apuntado.
 
-### T8 — RLS a las 5 tablas restantes (P1)
-`core/rls.py` cubre users/casos/julix_calls/matriz_riesgo. Extender a
-`actuaciones`, `terminos`, `cobro_caso`, `case_documents`, `mensajes`
-(hoy dependen de WHERE manual vía join con casos). Mismo patrón
-fail-open-con-narrowing documentado en el propio archivo. Tests contra
-Postgres real de CI (fixture existente), no fakes.
+### T8 — ~~RLS a las 5 tablas restantes~~ CERRADO (21-jul-2026) == TF1
+Misma tarea que TF1 de Track Forja (ver abajo) -- se cerró ahí.
 
 ## Track Forja — producto vendible (ref: auditoría "Cuida tus mascotas")
 
@@ -249,30 +286,17 @@ Objetivo: que Vridik deje de ser "un gestor más". Estas tareas NO dependen
 del GATE de JuliX (venden aunque JuliX siga en 35%), así que pueden correr
 en paralelo al track T2/T3. Orden sugerido: TF1 → TF2 → TF3.
 
-### TF1 — RLS completo en las 5 tablas indirectas (P0) == T8
-IMPORTANTE: esta tarea ES la misma que T8 de arriba. El SQL exacto y
-ejecutable está en `vridik_forja_audit.md` (sección "RLS Supabase
-propuesto", migración `007_rls_tablas_indirectas.sql` + política
-`casos_por_rol`). Aplica a `actuaciones`, `terminos`, `cobro_caso`,
-`case_documents`, `mensajes`. Riesgo #1 de un multi-tenant legal (un
-cliente viendo datos de otro despacho = multa SIC). [REQUIERE
-AUTORIZACIÓN para aplicar en producción.]
-Verificación obligatoria (no fakes): test contra Postgres real de CI que
-setea `vridik.current_despacho_id` al despacho A e intenta leer una fila
-del despacho B → 0 filas. Sin ese test, la política es teoría.
+### TF1 — ~~RLS completo en las 5 tablas indirectas~~ CERRADO (21-jul-2026) == T8
+Ver "Ya hecho". `core/rls.py::ensure_rls_policies_indirectas()`, commit
+`1c6da1c`, CI verde contra Postgres real. **Pendiente**: deploy a
+producción + verificación en vivo (mismo release que TF2, [REQUIERE
+AUTORIZACIÓN] para aplicar contra Postgres de producción).
 
-### TF2 — health-score por proceso (P1)
-Migración 11 (`vridik_architecture_v2.json`): `ALTER TABLE casos ADD
-COLUMN IF NOT EXISTS health_score SMALLINT` (+ `health_score_actualizado_en`).
-Nuevo `core/health_score.py` con la fórmula EXACTA de
-`vridik_architecture_v2.json::gamificacion_vridik.health_score_formula`
-(score de RIESGO 0-100, calculado SIEMPRE en backend, nunca input del
-cliente — mismo principio que `honorarios_liquidados`). Se recalcula en
-el mismo job de `procesal/alertas_terminos.py` (ya corre cada 6h) y al
-cambiar un término/actuación. Exponer en el detalle del caso + semáforo
-(0-30 verde, 31-70 amarillo, 71-100 rojo). Tests unitarios de la fórmula
-con casos límite (sin término, término a 1 día, todos vencidos). No
-requiere Anthropic ni producción para los tests.
+### TF2 — ~~health-score por proceso~~ CERRADO (21-jul-2026)
+Ver "Ya hecho". `core/health_score.py`, commits `b37a38a` (backend) y
+`045e036` (frontend). **Pendiente**: deploy a producción + verificación
+visual del pill con datos reales (el backend desplegado hoy no tiene la
+columna todavía).
 
 ### TF3 — Loop de término escalonado T-5/T-3/T-1 por SSE (P1)
 `procesal/alertas_terminos.py` hoy manda alertas; falta ESCALONAR en tres
