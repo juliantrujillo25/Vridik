@@ -15,6 +15,13 @@ código. Este archivo es la lista de trabajo delegada, en orden.
 - Migraciones idempotentes. Ningún fallo como éxito silencioso.
 - Limpiar `__pycache__` antes de confiar en pytest/py_compile.
 - Cada tarea = un commit, suite local en verde antes de deploy.
+- Deploy de `vridik-api`: `railway up --service vridik-api --detach` desde
+  la raíz del repo (correcto, el backend vive ahí). Deploy de
+  `vridik-frontend`: **NUNCA** el mismo patrón -- `railway up` no respeta
+  el directorio de trabajo del shell en este monorepo. Usar siempre
+  `railway up frontend --path-as-root --service vridik-frontend --detach`
+  desde la raíz del repo. Ver el incidente real documentado en "Ya hecho"
+  (21-jul) si hace falta el porqué.
 
 ## Ya hecho el 20-jul (no repetir)
 
@@ -278,6 +285,35 @@ código. Este archivo es la lista de trabajo delegada, en orden.
   en `user_events`). TF1 -- no se pudo verificar aislamiento real por
   el hallazgo #1 de arriba (queda como deuda técnica, no como
   verificado).
+- **Incidente real -- deploy de `vridik-frontend` por `railway up` sin
+  `--path-as-root` rompió el sitio en producción (21-jul, mismo release)**:
+  al desplegar el frontend con `railway up --service vridik-frontend
+  --detach` (mismo patrón que siempre funcionó para `vridik-api`, que SÍ
+  vive en la raíz del repo), Railway ignoró por completo el subdirectorio
+  `frontend/` -- `railway up` **no** escala al directorio de trabajo del
+  shell; usa la raíz del proyecto vinculado sin importar desde dónde se
+  invoque (confirmado corriéndolo también parado adentro de `frontend/`:
+  mismo resultado). El build resultante instaló `requirements.txt` del
+  backend y sirvió la API de FastAPI en la URL del frontend --
+  `GET https://vridik-frontend-production.up.railway.app/` devolvía
+  `{"detail":"Not Found"}` en vez del SPA. Diagnosticado con `railway
+  status --json` (`serviceManifest.build.nixpacksConfigPath` mostraba
+  `/nixpacks.toml`, es decir el de la raíz del repo, no
+  `frontend/nixpacks.toml`) y confirmado con `railway logs --build`.
+  **Fix real, la única forma correcta de desplegar `vridik-frontend`
+  desde la CLI en este monorepo**:
+  ```
+  railway up frontend --path-as-root --service vridik-frontend --detach
+  ```
+  (`--path-as-root` es justo el mecanismo documentado por la propia CLI
+  para monorepos: `railway up ./apps/api --path-as-root --service api`).
+  Sin el flag, cualquier futuro deploy manual del frontend por CLI va a
+  repetir este mismo apagón. Restaurado y verificado (200 OK, SPA real,
+  sin errores de consola) en minutos -- ningún dato de usuario se vio
+  afectado, fue solo el contenido servido en esa URL. **Anotalo en
+  cualquier script/alias de deploy que se agregue a futuro** -- ver
+  también la nota en `frontend/nixpacks.toml`, que asumía (mal) que el
+  Root Directory ya estaba resuelto del lado de Railway.
 
 ## Cola de trabajo, en orden
 

@@ -1,8 +1,16 @@
 # Vridik frontend — nixpacks.toml
-# Servicio Railway propio (root directory = frontend/), separado de
-# vridik-api. Build de producción de Vite + servido estático con `serve`
-# (modo SPA -- `-s`, reescribe cualquier ruta no encontrada a index.html,
-# necesario para que un reload en /casos/:id no dé 404 con React Router).
+# Servicio Railway propio, separado de vridik-api. Build de producción de
+# Vite + servido estático con `serve` (modo SPA -- `-s`, reescribe
+# cualquier ruta no encontrada a index.html, necesario para que un reload
+# en /casos/:id no dé 404 con React Router).
+#
+# OJO -- incidente real (21-jul, ver HANDOFF_CLAUDE_CODE.md): este archivo
+# solo se usa si el build efectivamente arranca DESDE frontend/. `railway
+# up --service vridik-frontend` desde la raíz del repo (el mismo patrón
+# que sí funciona para vridik-api) NO usa este archivo -- sube el repo
+# completo y Railway detecta requirements.txt de la raíz, sirviendo el
+# backend en la URL del frontend. El único deploy manual correcto es:
+#   railway up frontend --path-as-root --service vridik-frontend --detach
 
 [phases.setup]
 nixPkgs = ["nodejs_20"]
