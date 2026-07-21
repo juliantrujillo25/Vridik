@@ -483,6 +483,18 @@ def main() -> int:
         async def _run():
             nonlocal client, db_connection
             db_connection = await asyncpg.connect(database_url)
+            # Este script corre como "sistema" -- no está atado a ningún
+            # despacho real (evalúa el banco completo, no la actividad de
+            # un tenant), así que julix_calls.despacho_id queda siempre
+            # NULL para sus registros. Sin este bypass explícito, la
+            # política RLS de tenant isolation (WITH CHECK despacho_id::
+            # text = app.despacho_id) rechaza cada INSERT del ledger --
+            # bug real encontrado el 21-jul corriendo T3 contra producción
+            # real (mismo síntoma que el de api/case_documents_endpoint.py,
+            # causa distinta: ahí faltaba pasar un despacho_id real que sí
+            # existía, acá no hay ninguno que pasar porque el caller
+            # genuinamente no pertenece a un tenant).
+            await db_connection.execute("SELECT set_config('app.bypass_rls', 'true', false)")
             client = JuliXClient(environment=args.environment, db_connection=db_connection)
             try:
                 resumen = await correr_banco(excel_path, client=client, db_connection=db_connection, commit=True)
