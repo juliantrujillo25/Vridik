@@ -21,17 +21,29 @@ Backends:
 Cloudflare R2 (proveedor elegido): compatible con la API S3, pero NO es
 AWS -- dos diferencias reales que este módulo tiene que resolver, no
 asumir "es igual a S3 puro":
-  - Necesita `OBJECT_STORAGE_S3_ENDPOINT_URL` apuntando al endpoint de la
-    cuenta (`https://<account_id>.r2.cloudflarestorage.com`) -- sin esto,
-    boto3 apunta a AWS real y falla.
+  - Necesita un endpoint apuntando a la cuenta
+    (`https://<account_id>.r2.cloudflarestorage.com`) -- sin esto, boto3
+    apunta a AWS real y falla.
   - No tiene el formato de URL pública de AWS
     (`bucket.s3.region.amazonaws.com`) -- un bucket R2 solo es
     públicamente accesible si se habilita el subdominio gratis `r2.dev` o
-    un dominio propio, y esa URL hay que pasarla explícita
-    (`OBJECT_STORAGE_S3_PUBLIC_BASE_URL`). Con `OBJECT_STORAGE_S3_PUBLIC=
-    true` y un endpoint custom configurado, el constructor exige esta
+    un dominio propio, y esa URL hay que pasarla explícita. Con modo
+    público y un endpoint custom configurado, el constructor exige esta
     variable en vez de adivinar/generar una URL de AWS que en R2 no
     existe.
+
+Dos convenciones de nombres de variables de entorno, a propósito -- el
+21-jul se encontró que producción YA tenía un bucket R2 real aprovisionado
+(`R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`/
+`R2_BUCKET_NAME`/`R2_PUBLIC_URL`, más `BACKEND=r2`), con nombres
+distintos a los `OBJECT_STORAGE_S3_*` que este módulo ya usaba (creados
+sin saber que el bucket ya existía). En vez de forzar renombrar variables
+de Railway ya en uso (mover un secreto de un nombre a otro implica verlo
+en texto plano en algún paso, algo que se evita a propósito) o mantener
+dos integraciones separadas, `get_storage_backend()`/`S3StorageBackend`
+leen la variable `OBJECT_STORAGE_*` primero y caen a la `R2_*`
+equivalente si falta -- las dos conviven, ninguna es obligatoria por sí
+sola, y lo que ya está configurado en Railway funciona sin tocarlo.
 
 NO SE EJECUTA CONTRA CLOUDFLARE NI AWS NI CONTRA UN VOLUMEN REAL DE
 RAILWAY EN ESTE ENTREGABLE — `S3StorageBackend` falla explícitamente en
@@ -110,10 +122,11 @@ class S3StorageBackend(ObjectStorageBackend):
                 "no está en requirements.txt todavía porque no se pidió explícitamente "
                 "integrar S3 real; solo esta abstracción, lista para activarse."
             )
-        self.bucket = bucket or os.environ.get("OBJECT_STORAGE_S3_BUCKET")
+        self.bucket = bucket or os.environ.get("OBJECT_STORAGE_S3_BUCKET") or os.environ.get("R2_BUCKET_NAME")
         if not self.bucket:
             raise RuntimeError(
-                "OBJECT_STORAGE_S3_BUCKET no configurado — requerido para S3StorageBackend."
+                "Ni OBJECT_STORAGE_S3_BUCKET ni R2_BUCKET_NAME están configurados — "
+                "requerido para S3StorageBackend."
             )
         # R2 usa "auto" (no hay regiones reales como en AWS) -- default
         # distinto del "us-east-1" de AWS puro, pero cualquiera de los dos
@@ -126,24 +139,47 @@ class S3StorageBackend(ObjectStorageBackend):
         )
         # Endpoint custom (R2: https://<account_id>.r2.cloudflarestorage.com)
         # -- sin esto boto3 apunta a AWS real, que no tiene el bucket de R2.
-        self.endpoint_url = endpoint_url or os.environ.get("OBJECT_STORAGE_S3_ENDPOINT_URL") or None
+        # Si no hay endpoint explícito pero sí un R2_ACCOUNT_ID (el bucket
+        # real que ya existe en producción, encontrado el 21-jul -- ver
+        # docstring del módulo), se arma el endpoint solo.
+        r2_account_id = os.environ.get("R2_ACCOUNT_ID")
+        self.endpoint_url = (
+            endpoint_url
+            or os.environ.get("OBJECT_STORAGE_S3_ENDPOINT_URL")
+            or (f"https://{r2_account_id}.r2.cloudflarestorage.com" if r2_account_id else None)
+        )
         # R2 no tiene el formato de URL pública de AWS
         # (bucket.s3.region.amazonaws.com) -- si el modo público se usa
         # con un endpoint custom, hay que darle la URL pública real
         # (subdominio r2.dev habilitado, o dominio propio), nunca
         # adivinarla.
-        self.public_base_url = public_base_url or os.environ.get("OBJECT_STORAGE_S3_PUBLIC_BASE_URL") or None
+        self.public_base_url = (
+            public_base_url
+            or os.environ.get("OBJECT_STORAGE_S3_PUBLIC_BASE_URL")
+            or os.environ.get("R2_PUBLIC_URL")
+            or None
+        )
         if self.public and self.endpoint_url and not self.public_base_url:
             raise RuntimeError(
-                "OBJECT_STORAGE_S3_PUBLIC=true con OBJECT_STORAGE_S3_ENDPOINT_URL "
-                "configurado (R2 u otro S3-compatible) requiere también "
-                "OBJECT_STORAGE_S3_PUBLIC_BASE_URL -- estos proveedores no exponen "
-                "URLs públicas con el formato de AWS S3."
+                "Modo público con un endpoint custom (R2 u otro S3-compatible) requiere "
+                "también OBJECT_STORAGE_S3_PUBLIC_BASE_URL o R2_PUBLIC_URL -- estos "
+                "proveedores no exponen URLs públicas con el formato de AWS S3."
             )
         self.url_expira_segundos = url_expira_segundos
         cliente_kwargs: dict = {"region_name": self.region}
         if self.endpoint_url:
             cliente_kwargs["endpoint_url"] = self.endpoint_url
+        # Credenciales: boto3 lee AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+        # solas si no se pasa nada acá -- pero el bucket real que ya existe
+        # en producción (21-jul) usa R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY,
+        # así que hay que pasarlas explícitas cuando existan (nunca se
+        # imprimen ni se guardan en este objeto, solo se reenvían a
+        # boto3.client()).
+        r2_access_key = os.environ.get("R2_ACCESS_KEY_ID")
+        r2_secret_key = os.environ.get("R2_SECRET_ACCESS_KEY")
+        if r2_access_key and r2_secret_key:
+            cliente_kwargs["aws_access_key_id"] = r2_access_key
+            cliente_kwargs["aws_secret_access_key"] = r2_secret_key
         self._cliente = boto3.client("s3", **cliente_kwargs)
 
     async def upload_pdf(self, ruta_local: Path, *, key: str) -> str:
@@ -166,15 +202,23 @@ class S3StorageBackend(ObjectStorageBackend):
 
 
 def get_storage_backend() -> ObjectStorageBackend:
-    """Factory: lee `OBJECT_STORAGE_BACKEND` ('local' por defecto, o 's3')
-    y construye el backend correspondiente. `workers/pdf_worker.py` llama a
-    esta función una vez por trabajo procesado — nunca importa
-    `LocalStorageBackend`/`S3StorageBackend` directamente — así que cambiar
-    de backend en Railway es solo una variable de entorno, sin tocar
-    código del worker."""
-    backend = os.environ.get("OBJECT_STORAGE_BACKEND", "local").strip().lower()
-    if backend == "s3":
+    """Factory: lee `OBJECT_STORAGE_BACKEND` ('local' por defecto, 's3' o
+    'r2') y construye el backend correspondiente. Si no está seteada, cae a
+    `BACKEND` -- la variable que ya existe en producción desde antes de
+    que se supiera que el bucket estaba armado (ver docstring del módulo).
+    'r2' es un alias de 's3': mismo `S3StorageBackend`, la diferencia real
+    de R2 está en qué variables de entorno usa para el endpoint/URL
+    pública, no en la clase.
+
+    `workers/pdf_worker.py` llama a esta función una vez por trabajo
+    procesado — nunca importa `LocalStorageBackend`/`S3StorageBackend`
+    directamente — así que cambiar de backend en Railway es solo una
+    variable de entorno, sin tocar código del worker."""
+    backend = (
+        os.environ.get("OBJECT_STORAGE_BACKEND") or os.environ.get("BACKEND") or "local"
+    ).strip().lower()
+    if backend in ("s3", "r2"):
         return S3StorageBackend()
     if backend == "local":
         return LocalStorageBackend()
-    raise RuntimeError(f"OBJECT_STORAGE_BACKEND desconocido: {backend!r} (usa 'local' o 's3')")
+    raise RuntimeError(f"backend de storage desconocido: {backend!r} (usa 'local', 's3' o 'r2')")

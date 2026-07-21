@@ -32,6 +32,7 @@ async def test_local_backend_retorna_la_misma_ruta_local(tmp_path):
 
 def test_get_storage_backend_por_defecto_es_local(monkeypatch):
     monkeypatch.delenv("OBJECT_STORAGE_BACKEND", raising=False)
+    monkeypatch.delenv("BACKEND", raising=False)
     backend = get_storage_backend()
     assert isinstance(backend, LocalStorageBackend)
 
@@ -58,7 +59,8 @@ def test_s3_backend_sin_bucket_falla_explicito(monkeypatch):
 
     monkeypatch.setattr(object_storage_module, "boto3", _FakeBoto3())
     monkeypatch.delenv("OBJECT_STORAGE_S3_BUCKET", raising=False)
-    with pytest.raises(RuntimeError, match="OBJECT_STORAGE_S3_BUCKET"):
+    monkeypatch.delenv("R2_BUCKET_NAME", raising=False)
+    with pytest.raises(RuntimeError, match="R2_BUCKET_NAME"):
         S3StorageBackend()
 
 
@@ -138,6 +140,9 @@ def test_s3_backend_region_por_defecto_es_auto_no_us_east_1(monkeypatch):
     documenta usar, distinto del default histórico de AWS puro."""
     monkeypatch.delenv("OBJECT_STORAGE_S3_REGION", raising=False)
     monkeypatch.delenv("OBJECT_STORAGE_S3_ENDPOINT_URL", raising=False)
+    monkeypatch.delenv("R2_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("R2_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("R2_SECRET_ACCESS_KEY", raising=False)
     fake_cliente = _FakeS3Client()
     fake_boto3 = _FakeBoto3ConCliente(fake_cliente)
     monkeypatch.setattr(object_storage_module, "boto3", fake_boto3)
@@ -149,6 +154,8 @@ def test_s3_backend_region_por_defecto_es_auto_no_us_east_1(monkeypatch):
 
 def test_s3_backend_pasa_endpoint_url_a_boto3(monkeypatch):
     """Sin esto, boto3 apunta a AWS real -- el bucket de R2 no existe ahí."""
+    monkeypatch.delenv("R2_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("R2_SECRET_ACCESS_KEY", raising=False)
     fake_cliente = _FakeS3Client()
     fake_boto3 = _FakeBoto3ConCliente(fake_cliente)
     monkeypatch.setattr(object_storage_module, "boto3", fake_boto3)
@@ -168,6 +175,8 @@ def test_s3_backend_publico_con_endpoint_custom_sin_public_base_url_falla_explic
     modo público con un endpoint custom sin darle la URL pública real
     (r2.dev o dominio propio), debe fallar rápido, no generar una URL de
     AWS que en R2 no funciona."""
+    monkeypatch.delenv("OBJECT_STORAGE_S3_PUBLIC_BASE_URL", raising=False)
+    monkeypatch.delenv("R2_PUBLIC_URL", raising=False)
     fake_cliente = _FakeS3Client()
     monkeypatch.setattr(object_storage_module, "boto3", _FakeBoto3ConCliente(fake_cliente))
 
@@ -195,3 +204,91 @@ async def test_s3_backend_publico_con_public_base_url_usa_esa_url(monkeypatch, t
     url = await backend.upload_pdf(ruta, key="pdf_job_123.pdf")
 
     assert url == "https://pub-xxxx.r2.dev/pdf_job_123.pdf"
+
+
+# ---------------------------------------------------------------------------
+# Bucket real ya aprovisionado en producción (encontrado el 21-jul, antes de
+# saberlo se habían creado las variables OBJECT_STORAGE_S3_* sin saber que
+# ya existían las R2_* -- ver docstring del módulo): S3StorageBackend tiene
+# que funcionar leyendo SOLO las variables R2_* que Railway ya tiene, sin
+# que nadie tenga que renombrar nada ahí.
+# ---------------------------------------------------------------------------
+def test_get_storage_backend_backend_env_var_r2_activa_s3storagebackend(monkeypatch):
+    """BACKEND=r2 es la variable que ya existe en producción -- caer acá
+    cuando no está OBJECT_STORAGE_BACKEND es lo que hace que el bucket real
+    empiece a usarse sin tocar Railway."""
+    monkeypatch.delenv("OBJECT_STORAGE_BACKEND", raising=False)
+    monkeypatch.setenv("BACKEND", "r2")
+    monkeypatch.setenv("R2_BUCKET_NAME", "vridik-pdfs-prod")
+    monkeypatch.delenv("R2_ACCOUNT_ID", raising=False)
+    monkeypatch.delenv("R2_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("R2_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.setattr(object_storage_module, "boto3", _FakeBoto3ConCliente(_FakeS3Client()))
+
+    backend = get_storage_backend()
+
+    assert isinstance(backend, S3StorageBackend)
+    assert backend.bucket == "vridik-pdfs-prod"
+
+
+def test_s3_backend_arma_endpoint_desde_r2_account_id(monkeypatch):
+    """Sin OBJECT_STORAGE_S3_ENDPOINT_URL, pero con R2_ACCOUNT_ID (lo que
+    ya existe en producción), el endpoint de Cloudflare se arma solo."""
+    monkeypatch.delenv("OBJECT_STORAGE_S3_ENDPOINT_URL", raising=False)
+    monkeypatch.setenv("R2_ACCOUNT_ID", "cuenta123")
+    monkeypatch.delenv("R2_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("R2_SECRET_ACCESS_KEY", raising=False)
+    fake_boto3 = _FakeBoto3ConCliente(_FakeS3Client())
+    monkeypatch.setattr(object_storage_module, "boto3", fake_boto3)
+
+    backend = S3StorageBackend(bucket="vridik-pdfs")
+
+    assert backend.endpoint_url == "https://cuenta123.r2.cloudflarestorage.com"
+    assert fake_boto3.llamadas == [
+        {"region_name": "auto", "endpoint_url": "https://cuenta123.r2.cloudflarestorage.com"}
+    ]
+
+
+def test_s3_backend_pasa_credenciales_r2_a_boto3(monkeypatch):
+    """R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY no son nombres que boto3 lea
+    solo (a diferencia de AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY) -- hay
+    que pasárselas explícitas al cliente, nunca guardarlas ni loguearlas."""
+    monkeypatch.setenv("R2_ACCESS_KEY_ID", "fake-access-key")
+    monkeypatch.setenv("R2_SECRET_ACCESS_KEY", "fake-secret-key")
+    fake_boto3 = _FakeBoto3ConCliente(_FakeS3Client())
+    monkeypatch.setattr(object_storage_module, "boto3", fake_boto3)
+
+    S3StorageBackend(bucket="vridik-pdfs")
+
+    assert fake_boto3.llamadas == [
+        {
+            "region_name": "auto",
+            "aws_access_key_id": "fake-access-key",
+            "aws_secret_access_key": "fake-secret-key",
+        }
+    ]
+
+
+def test_s3_backend_cae_a_r2_bucket_name_sin_tocar_object_storage_s3_bucket(monkeypatch):
+    monkeypatch.delenv("OBJECT_STORAGE_S3_BUCKET", raising=False)
+    monkeypatch.setenv("R2_BUCKET_NAME", "vridik-pdfs-prod")
+    monkeypatch.setattr(object_storage_module, "boto3", _FakeBoto3ConCliente(_FakeS3Client()))
+
+    backend = S3StorageBackend()
+
+    assert backend.bucket == "vridik-pdfs-prod"
+
+
+@pytest.mark.asyncio
+async def test_s3_backend_publico_cae_a_r2_public_url(monkeypatch, tmp_path):
+    monkeypatch.setenv("R2_PUBLIC_URL", "https://pub-real.r2.dev")
+    monkeypatch.setattr(object_storage_module, "boto3", _FakeBoto3ConCliente(_FakeS3Client()))
+    ruta = tmp_path / "documento.pdf"
+    ruta.write_bytes(b"%PDF-fake")
+
+    backend = S3StorageBackend(
+        bucket="vridik-pdfs", endpoint_url="https://cuenta123.r2.cloudflarestorage.com", public=True,
+    )
+    url = await backend.upload_pdf(ruta, key="pdf_job_123.pdf")
+
+    assert url == "https://pub-real.r2.dev/pdf_job_123.pdf"
