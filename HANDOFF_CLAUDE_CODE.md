@@ -49,6 +49,40 @@ código. Este archivo es la lista de trabajo delegada, en orden.
   similares, la vía que funcionó fue descargar el PDF oficial y
   extraerlo con PyMuPDF localmente (mismo método ya usado con las
   sentencias), no depender de un fetch en vivo.
+- **T2, segunda pasada (mismo día)**: 15 chunks reales en total (9→15).
+  Se cruzó por primera vez contra `norma_clave` del banco: **Ley
+  1010/2006 arts. 2, 7, 9, 10, 11** (cierra LAB-08 completo) y **Decreto
+  379/2026 art. 3.2.7.5** (cierra UGPP-07 Y de paso el Decreto 780/2016
+  que había quedado pendiente). **Hallazgo metodológico serio, confirmado
+  DOS VECES de forma independiente**: pedirle a WebFetch/WebSearch "el
+  texto literal completo" de un artículo mediano/largo devuelve con
+  total confianza (comillas, formato de cita) un extracto RECORTADO que
+  se presenta como si fuera el artículo entero -- en Ley 1010/2006 art.
+  10 la segunda verificación reveló que faltaba un numeral completo
+  incluso DESPUÉS de "confirmar" la primera extracción; en Ley 100/1993
+  art. 18 la respuesta fue literalmente la primera frase de un artículo
+  con varios párrafos más (topes de 25 SMLMV, aportes progresivos). **No
+  se cargó Ley 100/1993 (arts. 18/19/23) por esto** -- queda pendiente,
+  NO uses lo que ya se extrajo de esos tres artículos en esta sesión, es
+  incompleto. El único método que dio texto genuinamente completo y
+  verificable fue descargar el PDF oficial (aunque WebFetch diga "no
+  puedo parsear este PDF", el binario queda guardado localmente igual,
+  ver ruta en la respuesta de la herramienta) y extraerlo con PyMuPDF --
+  ahí se ven los límites reales de cada artículo (dónde empieza el
+  siguiente). Úsalo SIEMPRE para artículos de más de un par de frases,
+  no solo para códigos grandes.
+  **Pendiente real de `norma_clave` del banco, todavía sin cargar**: E.T.
+  arts. 114-1/635/817/818/823/826/828/831 y CPACA art. 138 (códigos
+  grandes, mismo riesgo de truncamiento que el CST -- usar PDF+PyMuPDF);
+  Decreto 1072/2015 arts. 2.2.4.2.2.1 y ss. (DUR, ídem); Ley 100/1993
+  arts. 18/19/23 (ver hallazgo arriba); Ley 2277/2022 art. 89; Decreto
+  1601/2022; Ley 1739/2014 (resto, ya se cargó el art. 50); Ley 1562/2012
+  art. 2; Ley 361/1997 art. 26; Ley 995/2005; Ley 52/1975 art. 1 (nunca
+  se encontró en Ola 6 tampoco); CST arts. 46/159/160/168/179/186/189/
+  192/239/240/249/253 (el 64 ya está cargado); sentencias SU-049/2017 y
+  SU-213/2024 (ya leídas en fuente oficial en la Ola 8 del corpus, pero
+  nunca cargadas a `rag_chunks` -- son un caso fácil, solo falta
+  re-fetchear y cargar, no requieren investigación nueva).
 
 ## Cola de trabajo, en orden
 
