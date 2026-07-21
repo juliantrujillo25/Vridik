@@ -137,13 +137,20 @@ async def recalcular_health_score(db_connection, *, caso_id: str, hoy: date | No
     )
     total = await db_connection.fetchval("SELECT COUNT(*) FROM terminos WHERE caso_id = $1", caso_id)
 
+    # $2::date y $3::int explícitos -- sin esto, PostgreSQL 15 (CI) y
+    # PostgreSQL 18 (producción) infieren el tipo de "$2 - $3" distinto
+    # cuando $2 se usa también en otra comparación de la misma query:
+    # PG18 lo resolvía como integer y tiraba "operator does not exist:
+    # date >= integer" en cada POST /casos/{id}/terminos real (bug
+    # encontrado recién en verificación de producción, CI con PG15 nunca
+    # lo detectó porque ahí el mismo SQL sí se resolvía bien).
     hubo_incumplimiento = await db_connection.fetchval(
         """
         SELECT EXISTS(
             SELECT 1 FROM terminos
             WHERE caso_id = $1 AND estado = 'pendiente'
-              AND fecha_vencimiento < $2
-              AND fecha_vencimiento >= $2 - $3
+              AND fecha_vencimiento < $2::date
+              AND fecha_vencimiento >= $2::date - $3::int
         )
         """,
         caso_id, hoy, DIAS_VENTANA_INCUMPLIMIENTO,
