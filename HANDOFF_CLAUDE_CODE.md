@@ -200,6 +200,31 @@ código. Este archivo es la lista de trabajo delegada, en orden.
   datos reales de riesgo queda pendiente del deploy, el backend en
   producción hoy todavía no tiene la columna). Commits `b37a38a`
   (backend) y `045e036` (frontend).
+- **TF3 CERRADO (21-jul)**: `core/terminos.py::DIAS_ESCALONES=(5,3,1)` +
+  `escalon_aplicable()` -- tres avisos por término (T-5/T-3/T-1) en vez
+  del aviso único de Fase 2. Columna nueva `ultimo_escalon_notificado`
+  (SMALLINT, la vieja `ultima_alerta_enviada` queda sin usar, no se
+  borró). `listar_terminos_para_alertar()` reescrito con CASE en SQL
+  para traer el escalón de cada fila y filtrar solo los que alcanzaron
+  un escalón MÁS urgente que el último notificado -- un término
+  notificado en T-5 reaparece al llegar a T-3, uno en T-1 (el más
+  urgente) no vuelve a aparecer nunca. Evento SSE nuevo
+  `termino.por_vencer` (reemplaza `termino.alerta`, actualizado en
+  `ActuacionesYTerminos.tsx`/`CasosListPage.tsx`, mismo consumidor de
+  siempre). Gancho de gamificación en `api/terminos_endpoint.py`:
+  marcar un término 'cumplido' ANTES del vencimiento dispara
+  `termino.cumplido` a cliente/abogado del caso; ya vencido no dispara
+  nada (no es un logro) -- solo el evento SSE, las tablas
+  `gamificacion`/`logros` (migs 12/13) siguen siendo fase 2. Tests:
+  `escalon_aplicable` en las 5 fronteras (pura), fake de orquestación
+  (4 tests), 3 tests contra Postgres real incluido el caso central de
+  re-escalar T-5→T-3, y 2 tests del gancho de gamificación (a tiempo
+  dispara, vencido no). Suite local 384 passed/143 skipped, CI verde
+  contra Postgres real (run `29829681978`). `tsc --noEmit` limpio.
+  Commit `4e302ea`. **Con esto, Track Forja (TF1/TF2/TF3) queda
+  completo en el repo** -- falta el deploy a producción de los tres +
+  verificación en vivo, requiere autorización explícita antes de tocar
+  Postgres de producción.
 
 ## Cola de trabajo, en orden
 
@@ -298,17 +323,27 @@ Ver "Ya hecho". `core/health_score.py`, commits `b37a38a` (backend) y
 visual del pill con datos reales (el backend desplegado hoy no tiene la
 columna todavía).
 
-### TF3 — Loop de término escalonado T-5/T-3/T-1 por SSE (P1)
-`procesal/alertas_terminos.py` hoy manda alertas; falta ESCALONAR en tres
-avisos (5/3/1 días antes del vencimiento) y empujarlos por el canal SSE
-existente (`core/events.py::notificar_evento`, tipo de evento nuevo
-`termino.por_vencer`). Al marcar un término atendido antes del
-vencimiento, disparar el gancho de gamificación (por ahora solo el evento
-`termino.cumplido`; las tablas `gamificacion`/`logros` — migs 12/13 — son
-fase 2, no bloquean esto). Idempotencia: no reenviar el mismo escalón dos
-veces (registrar el último escalón notificado por término). Tests contra
-el fake de eventos existente (`tests/test_events.py` patrón) para el
-wiring, y Postgres real para la entrega NOTIFY.
+### TF3 — ~~Loop de término escalonado T-5/T-3/T-1 por SSE~~ CERRADO (21-jul-2026)
+`core/terminos.py::DIAS_ESCALONES=(5,3,1)` + `escalon_aplicable()` (pura) +
+`listar_terminos_para_alertar()` reescrito con CASE en SQL, columna nueva
+`ultimo_escalon_notificado` (la vieja `ultima_alerta_enviada` queda sin
+usar, no se borró). Evento SSE nuevo `termino.por_vencer` (reemplaza
+`termino.alerta`), frontend actualizado (`ActuacionesYTerminos.tsx`,
+`CasosListPage.tsx`). Gancho de gamificación: `api/terminos_endpoint.py`
+dispara `termino.cumplido` cuando se marca un término cumplido ANTES del
+vencimiento (no dispara si ya estaba vencido). Tests: `escalon_aplicable`
+en las 5 fronteras (pura), fake de orquestación, y 3 tests contra
+Postgres real -- incluido el caso central de TF3 (un término notificado
+en T-5 vuelve a aparecer al llegar a T-3; uno notificado en T-1 nunca
+vuelve a aparecer). Commit `4e302ea`, CI verde contra Postgres real (run
+`29829681978`). **Pendiente**: deploy a producción + verificación en
+vivo, junto con TF1/TF2 (mismo release, [REQUIERE AUTORIZACIÓN] para
+tocar Postgres de producción).
+
+**Con esto, Track Forja (TF1/TF2/TF3) queda completo en el repo.** Falta
+únicamente el deploy a producción de los tres (requiere autorización
+explícita del dev lead antes de aplicar contra Postgres de producción,
+regla no negociable del handoff) + la verificación en vivo de cada uno.
 
 ### TF0 — Definición de producto (sin código, 1 semana, dev lead + Ana Luisa)
 Las 4 etapas Forja que Vridik no tiene, ya redactadas en
