@@ -78,22 +78,32 @@ jobs:
       - name: Cargar seed de staging (db/seed_railway.sql)
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/seed_railway.sql
 
-      - name: Hardening RLS -- quitar SUPERUSER/BYPASSRLS al rol antes de pytest
+      - name: Hardening RLS -- crear rol de aplicación sin privilegios especiales y reapuntar DATABASE_URL para pytest
         # POSTGRES_USER=vridik hace que la imagen oficial de postgres lo cree
-        # como superusuario (initdb lo usa para bootstrapear el cluster) --
-        # Postgres nunca aplica row security a un superusuario, sin importar
-        # cuántas políticas/FORCE ROW LEVEL SECURITY existan (core/rls.py).
-        # NOBYPASSRLS además, por las dudas -- es un atributo de rol
-        # independiente de SUPERUSER (rolbypassrls en pg_authid), y quitar
-        # solo SUPERUSER no lo toca si por lo que sea quedó seteado aparte.
-        # Corre DESPUÉS de aplicar schema/seed (que sí necesitan privilegio
+        # como el bootstrap superuser (initdb lo usa para bootstrapear el
+        # cluster). Hasta PG15 se podía hacer ALTER ROLE vridik NOSUPERUSER
+        # sobre sí mismo; en PG18 eso ahora da "permission denied to alter
+        # role / DETAIL: The bootstrap superuser must have the SUPERUSER
+        # attribute" (protección nueva contra dejar el cluster sin ningún
+        # superusuario). Fix: en vez de degradar a vridik, se crea un rol de
+        # aplicación nuevo SIN superuser/bypassrls -- mismo patrón que ya usa
+        # producción de verdad (vridik-api se conecta como el rol `vridik_app`,
+        # no como el superusuario del servicio Postgres de Railway, ver TF1
+        # en HANDOFF_CLAUDE_CODE.md) -- y se reapunta DATABASE_URL/
+        # TEST_DATABASE_URL a ese rol para el resto del job (pytest). Corre
+        # DESPUÉS de aplicar schema/seed (que sí necesitan privilegio
         # completo para el CREATE EXTENSION inicial de pgcrypto/citext,
         # igual que en producción ya instalada) y ANTES de pytest. El
         # SELECT final es puro diagnóstico -- confirma en el log qué
         # atributos quedaron de verdad, en vez de asumirlo.
         run: |
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER ROLE vridik NOSUPERUSER NOBYPASSRLS;"
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'vridik';"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE ROLE vridik_app WITH LOGIN PASSWORD '${{ secrets.CI_TEST_DB_PASSWORD }}' NOSUPERUSER NOBYPASSRLS;"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE vridik_test TO vridik_app;"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO vridik_app;"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO vridik_app;"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'vridik_app';"
+          echo "TEST_DATABASE_URL=postgresql://vridik_app:${{ secrets.CI_TEST_DB_PASSWORD }}@localhost:5432/vridik_test" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=postgresql://vridik_app:${{ secrets.CI_TEST_DB_PASSWORD }}@localhost:5432/vridik_test" >> "$GITHUB_ENV"
 
       - name: pytest -q (JUnit XML para el gate de 90%, cobertura para el gate de 60%)
         run: |
