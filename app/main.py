@@ -62,7 +62,7 @@ from core.auth import ensure_auth_migration_005
 from core.auth_events import ensure_bitacora_hash_chain
 from core.case import ensure_casos_despacho_backfill
 from core.despachos import ensure_despachos_backfill
-from core.rls import ensure_rls_policies
+from core.rls import ensure_rls_policies, ensure_rls_policies_indirectas
 from core.terminos import ensure_terminos_table
 from julix.ledger import ensure_julix_calls_despacho_backfill
 from procesal.alertas_terminos import ejecutar_ronda_de_alertas
@@ -250,6 +250,22 @@ async def _conectar_db() -> None:
                 "Vridik: no se pudieron aplicar las políticas de RLS al arrancar -- el aislamiento "
                 "entre despachos sigue dependiendo solo de los checks de aplicación existentes "
                 "hasta el próximo arranque.",
+                exc_info=True,
+            )
+
+        # Track Forja TF1 / roadmap T8 -- RLS en las 5 tablas indirectas
+        # (actuaciones/terminos/cobro_caso/case_documents/mensajería).
+        # Deliberadamente DESPUÉS de ensure_rls_policies(): depende de que
+        # casos.despacho_id ya esté con FORCE RLS aplicado (ver docstring
+        # de ensure_rls_policies_indirectas).
+        try:
+            async with app.state.db_connection.acquire() as conn:
+                await ensure_rls_policies_indirectas(conn)
+        except Exception:
+            logger.critical(
+                "Vridik: no se pudieron aplicar las políticas de RLS de las tablas indirectas al "
+                "arrancar -- actuaciones/terminos/cobro_caso/case_documents/mensajes siguen "
+                "dependiendo solo de los checks de aplicación hasta el próximo arranque.",
                 exc_info=True,
             )
 

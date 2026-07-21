@@ -1,0 +1,165 @@
+{
+  "meta": {
+    "proyecto": "Vridik",
+    "chat_ia": "JuliX",
+    "panel": "Panel Vridik Pro",
+    "portal": "Portal Cliente Vridik",
+    "referencia_oro": "Cuida tus mascotas (Next.js 16 + Supabase + RLS + PWA)",
+    "fecha": "2026-07-21",
+    "nota_stack": "Recomendación de la auditoría: adoptar el PATRÓN Supabase (RLS por fila, Storage gestionado, PWA) SIN migrar el motor. Vridik ya tiene RLS nativo de Postgres (core/rls.py), 437 tests, refresh tokens y 2FA en producción sobre FastAPI+asyncpg+Railway. Migrar a Supabase implicaría reescribir auth y tests. El SQL RLS de abajo es válido en ambos (Supabase ES Postgres): en Supabase, current_setting('vridik.current_user_id') -> auth.uid()."
+  },
+  "stack_objetivo": "FastAPI + asyncpg + Postgres (Railway) con RLS por fila completo + Storage R2/S3 + frontend React/Vite como PWA + motion. Patrón Supabase adoptado, motor propio conservado.",
+  "score_forja": {
+    "cumplidas": 5.5,
+    "de": 11,
+    "fuertes": ["spec_tecnica", "auditoria_seguridad", "blueprint_fases", "verificacion_db_real"],
+    "faltantes": ["personas", "journey_maps", "user_stories", "pre_mortem"]
+  },
+  "modelo_negocio": {
+    "planes": [
+      {
+        "nombre": "Vridik Solo",
+        "precio_mensual_cop": 89000,
+        "target": "Abogado litigante independiente",
+        "incluye": ["Panel Vridik Pro", "JuliX (cuota mensual de documentos)", "Loop de término T-5/T-3/T-1", "health-score por proceso", "hasta 25 casos activos"],
+        "no_incluye": ["Radar Judicial", "Cobro Inteligente", "Bóveda de Cumplimiento"]
+      },
+      {
+        "nombre": "Vridik Despacho",
+        "precio_mensual_cop": 349000,
+        "target": "Despacho pequeño/mediano (2-8 abogados + secretaria)",
+        "incluye": ["Todo Solo", "multiusuario con roles", "Radar Judicial vía proveedor", "Portal Cliente Vridik", "casos ilimitados", "gamificación de equipo"],
+        "modelo_adicional": "Cobro Inteligente opcional: comisión de éxito del 3-5% sobre glosa/valor efectivamente recuperado, facturado solo al cierre exitoso de etapa (nunca por adelantado)"
+      },
+      {
+        "nombre": "Vridik Cumplimiento",
+        "precio_mensual_cop": 690000,
+        "target": "Despacho corporativo / área legal de empresa",
+        "incluye": ["Todo Despacho", "Bóveda de Cumplimiento (matriz de riesgo + listas restrictivas + bitácora sellada Ley 527)", "SAGRILAFT lite", "analítica de línea decisional", "onboarding asistido"],
+        "nota": "El diferenciador de este plan (listas restrictivas ONU/OFAC/PEP con cruce real) hoy está a medias en core/cumplimiento.py — no vender hasta cerrar datos+cruce"
+      }
+    ],
+    "principio_cobro": "Suscripción base por despacho + comisión de éxito solo en Cobro Inteligente (alinea el precio con el valor recuperado, como mascotas alinea premium con el número de mascotas)"
+  },
+  "pdr": {
+    "problema_real": "El abogado colombiano hace malabares entre TYBA (consultar actuaciones), Excel (llevar términos y honorarios a mano) y WhatsApp (avisar al cliente). Nada se habla entre sí: un término se calcula mal en Excel y se vence; una actuación aparece en TYBA y nadie la ve a tiempo; el cliente pregunta '¿cómo va mi caso?' por WhatsApp y el abogado revisa tres sistemas para responder.",
+    "solucion": "Vridik unifica los tres: JuliX lee/clasifica actuaciones, el motor de términos las calcula SIEMPRE (nunca a mano) y avisa antes del vencimiento, y el Portal Cliente Vridik responde '¿cómo va mi caso?' sin que el abogado abra nada.",
+    "por_que_ahora": "El abogado ya perdió un término por Excel al menos una vez; ese dolor es concreto y costoso (sanción, cliente perdido, responsabilidad disciplinaria).",
+    "no_objetivos": ["No es un TYBA alternativo (se integra, no reemplaza)", "No perfila jueces (Ley 1581)", "No reemplaza el juicio del abogado — JuliX genera borradores con citas verificables"]
+  },
+  "personas": [
+    {
+      "id": "abogado_litigante_solo",
+      "nombre": "Andrés, litigante independiente",
+      "contexto": "Lleva ~30 casos solo, sin secretaria. Trabaja desde el celular entre audiencias.",
+      "dolor": "Perdió un término CPACA por un error de Excel. Vive con miedo al próximo vencimiento.",
+      "exito": "Que algo le avise T-5/T-3/T-1 sin que él tenga que acordarse de mirar."
+    },
+    {
+      "id": "secretaria_despacho",
+      "nombre": "Carolina, secretaria del despacho",
+      "contexto": "Coordina 4 abogados y ~120 casos. Es quien consulta TYBA cada mañana y actualiza el Excel maestro.",
+      "dolor": "Copia-pega actuaciones de TYBA a Excel; si se equivoca en una fecha, un abogado pierde un término.",
+      "exito": "Que las actuaciones entren clasificadas y los términos se calculen solos; dejar de ser el punto único de fallo."
+    },
+    {
+      "id": "cliente_empresa",
+      "nombre": "Marcela, gerente jurídica de una empresa cliente",
+      "contexto": "Contrata al despacho para pleitos UGPP/laborales. Rinde cuentas a su junta.",
+      "dolor": "Pregunta por WhatsApp '¿cómo va?' y recibe respuestas vagas días después. No ve el ahorro logrado.",
+      "exito": "Un Portal Cliente Vridik donde ve estado, próximo hito y el ahorro/valor recuperado en cifras."
+    }
+  ],
+  "journey_loop_termino": {
+    "nombre": "Loop de término (adaptación del loop de comida predictivo)",
+    "disparador": "Se registra o clasifica una actuación que abre un término (procesal/calendario_judicial.py calcula el vencimiento con festivos 2026-27)",
+    "pasos": [
+      {"t": "T-5 días", "accion": "JuliX notifica por SSE + push PWA: 'Término de X vence en 5 días'. health-score del caso sube a amarillo.", "canal": "events_endpoint SSE + PWA push"},
+      {"t": "T-3 días", "accion": "Segundo aviso, tono más firme. JuliX ofrece generar el borrador de respuesta con contexto del expediente.", "canal": "SSE + email"},
+      {"t": "T-1 día", "accion": "Aviso crítico. health-score del caso a rojo. Aparece en el tope del Panel Vridik Pro. Si hay secretaria, se le notifica también.", "canal": "SSE + email + tope del panel"},
+      {"t": "T-0 cumplido", "accion": "Al marcar el término como atendido: +XP, la racha de cumplimiento del abogado/despacho continúa, confetti. health-score vuelve a verde.", "canal": "gamificación"},
+      {"t": "T-0 vencido", "accion": "Si se venció sin atender: racha rota, auth_event/bitácora sellada del vencimiento (evidencia), health-score al máximo. Nunca se oculta.", "canal": "bitácora + alerta"}
+    ],
+    "gancho": "Igual que mascotas te hace volver para que la bolsa no se acabe, Vridik te hace volver para que ningún término se venza — pero acá el costo de no volver es una sanción disciplinaria, no un perro con hambre."
+  },
+  "user_stories": [
+    {"como": "abogado litigante", "quiero": "que me avisen 5, 3 y 1 día antes de cada vencimiento", "para": "no volver a perder un término por olvido"},
+    {"como": "abogado litigante", "quiero": "ver un health-score por caso", "para": "saber de un vistazo cuál está por estallar"},
+    {"como": "abogado litigante", "quiero": "que JuliX me genere el borrador de respuesta con las citas verificables", "para": "responder un requerimiento en minutos, no horas"},
+    {"como": "abogado litigante", "quiero": "instalar Vridik como app en mi celular", "para": "consultarlo en el juzgado sin abrir el navegador"},
+    {"como": "secretaria del despacho", "quiero": "que las actuaciones entren ya clasificadas (auto/requerimiento/fallo/traslado)", "para": "dejar de copiar-pegar de TYBA a Excel"},
+    {"como": "secretaria del despacho", "quiero": "ver todos los términos del despacho en un solo tablero", "para": "priorizar qué caso atender primero"},
+    {"como": "secretaria del despacho", "quiero": "asignar un caso a un abogado del despacho", "para": "repartir la carga sin correos"},
+    {"como": "abogado", "quiero": "que el sistema calcule el vencimiento con festivos oficiales", "para": "no equivocarme contando días hábiles a mano"},
+    {"como": "cliente empresa", "quiero": "ver el estado de mi caso sin llamar al abogado", "para": "rendir cuentas a mi junta con datos"},
+    {"como": "cliente empresa", "quiero": "ver el ahorro/valor recuperado en cifras", "para": "justificar lo que le pago al despacho"},
+    {"como": "cliente empresa", "quiero": "recibir un enlace/QR al estado de mi caso", "para": "consultarlo sin crear otra cuenta más"},
+    {"como": "abogado", "quiero": "compartir una ficha pública de un caso (Modo Urgente)", "para": "darle contexto a mi cliente sin login"},
+    {"como": "socio del despacho", "quiero": "ver la racha de cumplimiento del equipo", "para": "convertir 'no vencer términos' en una meta visible"},
+    {"como": "abogado", "quiero": "ganar XP y logros por términos cumplidos", "para": "que la disciplina se sienta un logro, no una carga"},
+    {"como": "abogado UGPP", "quiero": "que JuliX solo cite normas que están en el corpus", "para": "no presentar un escrito con una norma inventada"},
+    {"como": "admin del despacho", "quiero": "que un cliente jamás vea el caso de otro despacho", "para": "cumplir Ley 1581 y no arriesgar una multa SIC"},
+    {"como": "abogado", "quiero": "liquidar honorarios (fijo/cuota litis/mixto) automáticamente", "para": "cobrar sin armar la cuenta en Excel"},
+    {"como": "socio", "quiero": "ver la tasa de éxito de mis casos UGPP", "para": "decidir qué tipo de caso tomar"},
+    {"como": "abogado", "quiero": "exportar el documento generado a PDF con pie de trazabilidad", "para": "presentarlo formalmente"},
+    {"como": "oficial de cumplimiento", "quiero": "una matriz de riesgo por cliente con bitácora sellada", "para": "documentar el criterio SAGRILAFT de forma auditable"}
+  ],
+  "migraciones": [
+    {"id": 1, "nombre": "roles_base", "sql": "CREATE TABLE IF NOT EXISTS roles (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), codigo TEXT UNIQUE NOT NULL);", "rls": false, "estado": "ya_existe (005)"},
+    {"id": 2, "nombre": "users_citext_credentials", "sql": "users (UUID, email CITEXT UNIQUE) + user_credentials (argon2id/bcrypt)", "rls": true, "estado": "ya_existe (005)"},
+    {"id": 3, "nombre": "refresh_tokens_rotacion", "sql": "refresh_tokens (family_id, reuse detection)", "rls": true, "estado": "ya_existe (005)"},
+    {"id": 4, "nombre": "auth_events_bitacora", "sql": "auth_events (ip, user_agent, hash_anterior, hash_actual)", "rls": false, "estado": "ya_existe (005 + hash chain)"},
+    {"id": 5, "nombre": "totp_2fa", "sql": "totp_secret cifrado + totp_backup_codes JSONB", "rls": true, "estado": "ya_existe (004)"},
+    {"id": 6, "nombre": "despachos_multitenant", "sql": "despachos + users.despacho_id + backfill", "rls": true, "estado": "ya_existe (backfill en arranque)"},
+    {"id": 7, "nombre": "casos", "sql": "casos (cliente_id, abogado_id, despacho_id, estado)", "rls": true, "estado": "ya_existe"},
+    {"id": 8, "nombre": "rls_tablas_directas", "sql": "ENABLE RLS en users, casos, julix_calls, matriz_riesgo", "rls": true, "estado": "ya_existe (core/rls.py)"},
+    {"id": 9, "nombre": "rls_tablas_indirectas", "sql": "ENABLE + FORCE RLS + CREATE POLICY en actuaciones, terminos, cobro_caso, case_documents, mensajes (ver vridik_forja_audit.md, SQL completo)", "rls": true, "estado": "PENDIENTE — quick win #1"},
+    {"id": 10, "nombre": "casos_por_rol_policy", "sql": "CREATE POLICY casos_por_rol: cliente ve solo cliente_id propio; abogado/admin ven el despacho (ver vridik_forja_audit.md)", "rls": true, "estado": "PENDIENTE — quick win #1"},
+    {"id": 11, "nombre": "health_score_procesos", "sql": "ALTER TABLE casos ADD COLUMN IF NOT EXISTS health_score SMALLINT; ADD COLUMN IF NOT EXISTS health_score_actualizado_en TIMESTAMPTZ; -- calculado en backend, nunca input", "rls": false, "estado": "PENDIENTE — quick win #2"},
+    {"id": 12, "nombre": "gamificacion", "sql": "CREATE TABLE IF NOT EXISTS gamificacion (user_id UUID REFERENCES users(id), despacho_id UUID, xp INT DEFAULT 0, nivel INT DEFAULT 1, racha_dias INT DEFAULT 0, racha_actualizada_en DATE, PRIMARY KEY (user_id));", "rls": true, "estado": "PENDIENTE — fase 2"},
+    {"id": 13, "nombre": "logros", "sql": "CREATE TABLE IF NOT EXISTS logros (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID REFERENCES users(id), codigo TEXT NOT NULL, obtenido_en TIMESTAMPTZ DEFAULT now(), UNIQUE(user_id, codigo));", "rls": true, "estado": "PENDIENTE — fase 2"},
+    {"id": 14, "nombre": "caso_publico_token", "sql": "CREATE TABLE IF NOT EXISTS caso_publico_token (token TEXT PRIMARY KEY, caso_id UUID REFERENCES casos(id), expira_en TIMESTAMPTZ NOT NULL, creado_por UUID REFERENCES users(id)); -- Modo Urgente: ficha pública read-only por QR, sin login", "rls": false, "estado": "PENDIENTE — fase 2"}
+  ],
+  "features_adaptadas": [
+    {"origen_mascotas": "loop de comida predictivo", "destino_vridik": "loop de término T-5/T-3/T-1", "spec": "procesal/alertas_terminos.py (ya corre cada 6h) escalona 3 avisos por caso según vencimiento calculado; empuja por events_endpoint SSE + push PWA; al cumplir, dispara gamificación"},
+    {"origen_mascotas": "care-score por mascota", "destino_vridik": "health-score por proceso (0-100)", "spec": "fórmula en gamificacion_vridik.health_score_formula; calculado en backend a partir de terminos/actuaciones; migración 11; semáforo verde/amarillo/rojo en el panel"},
+    {"origen_mascotas": "racha de cuidado", "destino_vridik": "racha de cumplimiento", "spec": "días consecutivos del despacho sin ningún término vencido; se rompe al vencer uno; visible como meta de equipo"},
+    {"origen_mascotas": "XP + nivel del dueño", "destino_vridik": "XP por término cumplido a tiempo", "spec": "tabla gamificacion (mig 12); +XP al marcar término atendido antes del vencimiento; nivel del abogado/despacho"},
+    {"origen_mascotas": "logros", "destino_vridik": "logros legales", "spec": "tabla logros (mig 13); ej '10 tutelas ganadas', '100 términos sin vencer', 'primer caso cerrado con éxito'"},
+    {"origen_mascotas": "modo Perdido + QR", "destino_vridik": "Modo Urgente (ficha pública por QR)", "spec": "tabla caso_publico_token (mig 14); endpoint público read-only GET /publico/caso/{token} que muestra estado + próximo término, sin datos sensibles; token firmado con expiración; QR generado con qrcode (ya en requirements)"},
+    {"origen_mascotas": "PWA instalable", "destino_vridik": "PWA Vridik", "spec": "vite-plugin-pwa en frontend/; manifest + service worker; push notifications para el loop de término"},
+    {"origen_mascotas": "Supabase Storage", "destino_vridik": "R2/S3", "spec": "storage/object_storage.py ya abstrae local vs S3; setear OBJECT_STORAGE_BACKEND=s3 (handoff T5)"},
+    {"origen_mascotas": "canvas-confetti", "destino_vridik": "confetti al cerrar caso ganado o cumplir racha", "spec": "canvas-confetti en el frontend, disparado por evento SSE de cierre exitoso o hito de racha"}
+  ],
+  "gamificacion_vridik": {
+    "xp": "+50 XP por término cumplido antes del vencimiento; +200 XP por caso cerrado con éxito; +25 XP por actuación clasificada y respondida en <24h. Persistido en tabla gamificacion (mig 12).",
+    "nivel": "nivel = floor(sqrt(xp / 100)) + 1 — curva que desacelera; nivel del abogado individual y agregado del despacho",
+    "racha": "racha_dias = días consecutivos del despacho sin ningún término vencido; se incrementa en el job diario de alertas; se resetea a 0 el día que un término se vence sin atender; visible con 🔥 como meta de equipo",
+    "health_score_formula": "min(100, round(40*urgencia_termino + 25*silencio_judicial + 20*proporcion_terminos_vencidos + 15*incumplimiento_previo)). urgencia_termino: 1.0 si <=1d, 0.7 si <=3d, 0.4 si <=5d, 0.1 si <=15d, 0.0 sin término. silencio_judicial=min(1.0, dias_sin_actuacion/90). proporcion_terminos_vencidos=vencidos_abiertos/max(1,total_del_caso). incumplimiento_previo=1.0 si rompió racha en 30d, si no 0.0. Semáforo: 0-30 verde, 31-70 amarillo, 71-100 rojo. Es score de RIESGO (100=crítico), calculado siempre en backend, nunca input del cliente.",
+    "logros_ejemplo": ["primer_caso_cerrado", "10_tutelas_ganadas", "100_terminos_sin_vencer", "racha_30_dias", "primer_documento_juliX"]
+  },
+  "pre_mortem": {
+    "pregunta": "Estamos 6 meses en el futuro y Vridik fracasó. ¿Qué lo mató?",
+    "escenarios": [
+      {"causa": "JuliX alucinó una norma en un escrito real y un abogado la presentó", "probabilidad": "alta si el GATE sigue en 35%", "mitigacion": "GATE >=80% antes de vender el generador como confiable; validar_citas_post_generacion ya marca [revisar]; corpus con texto verbatim (handoff T2, en progreso)"},
+      {"causa": "Un cliente vio el caso de otro despacho por RLS incompleto", "probabilidad": "media", "mitigacion": "migración 007/010 (quick win #1) + test de aislamiento contra Postgres real; multa SIC = fin del negocio"},
+      {"causa": "El proveedor de datos judiciales (TusDatos/Aliado) cambió su API o subió el precio y el Radar dejó de funcionar", "probabilidad": "media", "mitigacion": "contrato con SLA; adaptador delgado que permite cambiar de proveedor; NUNCA scraper propio (mantenimiento perpetuo + riesgo legal por evasión de controles)"},
+      {"causa": "El generador de Word se rompió en un release y nadie lo notó (sin cobertura del path)", "probabilidad": "baja hoy", "mitigacion": "437 tests + coverage gate 60%; agregar test de humo del export PDF/Word en CI"},
+      {"causa": "Los PDFs de documentos legales se perdieron en un redeploy (storage efímero)", "probabilidad": "alta hoy", "mitigacion": "storage R2/S3 (handoff T5); bug ya documentado en case_documents_endpoint.py"},
+      {"causa": "Se construyeron features de Fase 2-4 sobre un core (JuliX) que nunca pasó su gate — se invirtió en carrocería, no en motor", "probabilidad": "alta (ya pasó)", "mitigacion": "congelar features nuevas hasta GATE >=80%, excepto lo que vende sin JuliX (loop de término, health-score)"},
+      {"causa": "Bus factor 1: una sola cuenta admin de producción, se perdió el acceso", "probabilidad": "media", "mitigacion": "segunda cuenta admin con 2FA (handoff T4)"},
+      {"causa": "La SIC pidió atender una supresión de datos (Ley 1581) y no había forma de hacerlo en términos", "probabilidad": "media al primer cliente real", "mitigacion": "endpoints ARCO + política de retención (handoff T7)"}
+    ]
+  },
+  "verificacion_dataset_prueba": {
+    "analogia": "Como mascotas se probó con la perra 'Pipa' (datos reales de una mascota real), Vridik se prueba con 3 procesos ficticios pero con actuaciones y normas reales.",
+    "principio": "Radicados INVENTADOS (nunca radicados reales de terceros — Ley 1581/SAMAI), pero tipos de actuación, términos y normas REALES para que el cálculo y JuliX se ejerciten de verdad.",
+    "casos": [
+      {"id": "PRUEBA-UGPP-01", "tipo": "Laboral UGPP", "radicado_ficticio": "11001-33-42-000-2026-99001-00", "actuaciones_reales": ["requerimiento ordinario UGPP por presunta omisión de aportes", "respuesta con IBC de independiente (Ley 2277/2022 art. 89)", "acto de liquidación oficial"], "termino_a_probar": "traslado para descargos (CPACA art. 138)", "verifica": "cálculo de término con festivos + JuliX cita Ley 2277 art. 89 desde el corpus, no inventada"},
+      {"id": "PRUEBA-FAM-01", "tipo": "Familia", "radicado_ficticio": "11001-31-10-000-2026-99002-00", "actuaciones_reales": ["demanda de custodia", "auto admisorio", "traslado a la contraparte"], "termino_a_probar": "contestación de la demanda (CGP)", "verifica": "clasificador de actuaciones reconoce 'auto admisorio' y 'traslado'; health-score sube al acercarse el término"},
+      {"id": "PRUEBA-EJEC-01", "tipo": "Ejecutivo", "radicado_ficticio": "11001-40-03-000-2026-99003-00", "actuaciones_reales": ["demanda ejecutiva con título valor", "mandamiento de pago", "excepciones del ejecutado"], "termino_a_probar": "traslado de excepciones", "verifica": "loop de término escalonado T-5/T-3/T-1 dispara por SSE; racha de cumplimiento avanza al atender a tiempo"}
+    ],
+    "criterio_exito": "Los 3 casos cargados, términos calculados con festivos correctos, clasificador acierta el tipo de actuación, JuliX responde citando SOLO normas del corpus (0 alucinaciones), health-score coherente con la urgencia, y RLS confirmado: un usuario del despacho A no ve ninguno de estos 3 casos si se cargan en el despacho B."
+  },
+  "pwa": true
+}

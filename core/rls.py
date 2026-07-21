@@ -7,11 +7,14 @@ ya existen (`WHERE despacho_id = $1` a mano en cada query). No reemplaza
 esos checks -- los respalda: si algún día un endpoint se olvida de filtrar
 por despacho, la base de datos misma rechaza la fila ajena.
 
-Alcance de esta pasada: solo las 4 tablas que ya tienen `despacho_id` como
-columna DIRECTA -- `users`, `casos`, `julix_calls`, `matriz_riesgo`. Las
-que solo lo tienen indirecto vía join con `casos` (`actuaciones`,
-`terminos`, `cobro_caso`, `case_documents`, `mensajes`) quedan fuera de
-esta pasada, seguimiento futuro documentado.
+Dos niveles de alcance:
+  - `ensure_rls_policies()`: las 4 tablas que tienen `despacho_id` como
+    columna DIRECTA -- `users`, `casos`, `julix_calls`, `matriz_riesgo`.
+  - `ensure_rls_policies_indirectas()` (Track Forja TF1 / T8 del roadmap):
+    las 5 tablas que solo tienen `despacho_id` indirecto vía join con
+    `casos` -- `actuaciones`, `terminos`, `cobro_caso`, `case_documents` y
+    la mensajería (`conversaciones`/`mensajes`/`conversation_reads`, ver
+    docstring de esa función para el porqué de 3 tablas en vez de 1).
 
 Diseño (fail-open con narrowing explícito, decisión confirmada con el
 usuario -- la alternativa era fail-closed de punta a punta, que hubiera
@@ -34,25 +37,51 @@ exigido auditar y tocar ~8 rutas de auth adicionales):
     esto sería un no-op total tanto en producción como en tests.
 
 Riesgo residual del diseño fail-open: un endpoint FUTURO que lea/escriba
-alguna de las 4 tablas sin pasar por `_resolver_usuario`/
+alguna de las tablas protegidas sin pasar por `_resolver_usuario`/
 `aplicar_contexto_despacho` heredaría el bypass en silencio (exactamente lo
 que pasaba hoy con `api/julix_endpoint.py::julix_query`/`julix_stream`,
 encontrado y corregido en esta misma pasada). Mitigación acordada:
 `tests/test_rls_coverage.py` recorre `api/*_endpoint.py` y falla si
-encuentra una ruta nueva en esa situación.
+encuentra una ruta nueva en esa situación -- ya cubre `actuaciones_
+endpoint.py`/`terminos_endpoint.py`/`cobro_endpoint.py`/`case_documents_
+endpoint.py`/`mensajes_endpoint.py` porque todos sus handlers ya dependían
+de `get_current_user`/`get_current_admin` desde antes de esta pasada (el
+gate de acceso de aplicación siempre existió; lo que faltaba era el
+respaldo de RLS).
 """
 
 from __future__ import annotations
 
 import logging
 
+from core.actuaciones import ensure_actuaciones_table
 from core.auth import ensure_users_table
 from core.case import ensure_casos_table
+from core.cobro import ensure_cobro_table
+from core.case_documents import ensure_case_documents_table
 from core.cumplimiento import ensure_matriz_riesgo_table
 from core.despachos import ensure_despachos_table
+from core.mensajes import ensure_mensajes_tables
+from core.terminos import ensure_terminos_table
 from julix.ledger import ensure_julix_calls_table
 
 logger = logging.getLogger("vridik.rls")
+
+# Tablas indirectas cuya fila apunta a un caso vía `caso_id` DIRECTO --
+# `casos.despacho_id` ya es NOT NULL para cuando esta función corre (se
+# invoca después de ensure_casos_despacho_backfill en app/main.py, mismo
+# orden que ensure_rls_policies), así que a diferencia de las 4 tablas
+# directas no hace falta un chequeo de "filas pendientes de backfill": todo
+# caso_id referenciado ya apunta a un caso con despacho_id poblado (la FK
+# lo garantiza -- no puede haber un caso_id huérfano).
+_TABLAS_CASO_DIRECTO = ("actuaciones", "terminos", "cobro_caso", "case_documents", "conversaciones")
+
+# mensajes/conversation_reads NO tienen caso_id propio -- cuelgan de
+# conversaciones vía conversacion_id (ver core/mensajes.py). El join extra
+# es real, no un atajo: sin él, un mensaje de otro despacho sería invisible
+# solo si alguien recordara filtrar a mano, exactamente el gap que RLS
+# existe para cerrar.
+_TABLAS_VIA_CONVERSACION = ("mensajes", "conversation_reads")
 
 # Cada tabla necesita su propio chequeo de "filas pendientes de backfill"
 # antes de aplicar FORCE -- users/casos/matriz_riesgo tienen despacho_id
@@ -154,3 +183,94 @@ async def aplicar_contexto_despacho(conn, *, despacho_id: str | None, es_superad
         return
     await conn.execute("SELECT set_config('app.bypass_rls', 'false', false)")
     await conn.execute("SELECT set_config('app.despacho_id', $1, false)", str(despacho_id))
+
+
+async def ensure_rls_policies_indirectas(conn) -> None:
+    """Track Forja TF1 / roadmap T8: cierra RLS en las 5 tablas que hasta
+    ahora solo tenían aislamiento de aplicación (`WHERE caso_id = ...` a
+    mano, nunca respaldado por la base). Mismo diseño fail-open-con-
+    narrowing que `ensure_rls_policies()` -- reusa los mismos GUCs
+    (`app.bypass_rls`/`app.despacho_id`) que ya setea
+    `aplicar_contexto_despacho()`, así que no hace falta tocar el
+    middleware de conexión-por-request ni ningún endpoint: en cuanto la
+    conexión del request ya está angosteada para las 4 tablas directas,
+    automáticamente lo está para estas también.
+
+    Debe correr DESPUÉS de `ensure_rls_policies()` (que a su vez corre
+    después de los backfills de despacho_id) -- depende de que
+    `casos.despacho_id` ya sea NOT NULL y de que las 5+ tablas de acá
+    existan (`ensure_*_table()` de cada módulo se llama primero, mismo
+    patrón).
+
+    `conversaciones`/`mensajes`/`conversation_reads` son 3 tablas, no 1,
+    porque la mensajería de un caso cuelga de una `conversacion_id`, no de
+    un `caso_id` directo (ver core/mensajes.py) -- dejar `mensajes` sin
+    RLS mientras se protege todo lo demás sería el mismo tipo de hueco que
+    esta pasada busca cerrar, así que se protegen las 3."""
+    await conn.execute("SELECT set_config('app.bypass_rls', 'true', false)")
+
+    await ensure_actuaciones_table(conn)
+    await ensure_terminos_table(conn)
+    await ensure_cobro_table(conn)
+    await ensure_case_documents_table(conn)
+    await ensure_mensajes_tables(conn)  # crea conversaciones, mensajes, conversation_reads
+
+    for tabla in _TABLAS_CASO_DIRECTO:
+        await conn.execute(f"ALTER TABLE {tabla} ENABLE ROW LEVEL SECURITY")
+        await conn.execute(f"ALTER TABLE {tabla} FORCE ROW LEVEL SECURITY")
+        await conn.execute(
+            f"""
+            DO $$ BEGIN
+                CREATE POLICY {tabla}_tenant_isolation ON {tabla}
+                    USING (
+                        current_setting('app.bypass_rls', true) = 'true'
+                        OR EXISTS (
+                            SELECT 1 FROM casos c
+                            WHERE c.id = {tabla}.caso_id
+                              AND c.despacho_id::text = current_setting('app.despacho_id', true)
+                        )
+                    )
+                    WITH CHECK (
+                        current_setting('app.bypass_rls', true) = 'true'
+                        OR EXISTS (
+                            SELECT 1 FROM casos c
+                            WHERE c.id = {tabla}.caso_id
+                              AND c.despacho_id::text = current_setting('app.despacho_id', true)
+                        )
+                    );
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END $$
+            """
+        )
+
+    for tabla in _TABLAS_VIA_CONVERSACION:
+        await conn.execute(f"ALTER TABLE {tabla} ENABLE ROW LEVEL SECURITY")
+        await conn.execute(f"ALTER TABLE {tabla} FORCE ROW LEVEL SECURITY")
+        await conn.execute(
+            f"""
+            DO $$ BEGIN
+                CREATE POLICY {tabla}_tenant_isolation ON {tabla}
+                    USING (
+                        current_setting('app.bypass_rls', true) = 'true'
+                        OR EXISTS (
+                            SELECT 1 FROM conversaciones conv
+                            JOIN casos c ON c.id = conv.caso_id
+                            WHERE conv.id = {tabla}.conversacion_id
+                              AND c.despacho_id::text = current_setting('app.despacho_id', true)
+                        )
+                    )
+                    WITH CHECK (
+                        current_setting('app.bypass_rls', true) = 'true'
+                        OR EXISTS (
+                            SELECT 1 FROM conversaciones conv
+                            JOIN casos c ON c.id = conv.caso_id
+                            WHERE conv.id = {tabla}.conversacion_id
+                              AND c.despacho_id::text = current_setting('app.despacho_id', true)
+                        )
+                    );
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END $$
+            """
+        )
+
+    await conn.execute("RESET app.bypass_rls")
