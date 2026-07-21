@@ -67,9 +67,45 @@ jobs:
         run: ruff check . --output-format=github
         continue-on-error: true # el gate real de esta corrida es el ratio de tests (ver más abajo); ruff bloquea aparte en S3 ("romper CI a propósito una vez")
 
-      - name: Aplicar esquema base de Vridik (S1) en PostgreSQL del service container
+      - name: Instalar cliente psql
+        run: sudo apt-get update -y && sudo apt-get install -y postgresql-client
+
+      - name: Hardening RLS -- crear rol de aplicación sin privilegios especiales y reapuntar DATABASE_URL ANTES de aplicar schema/seed
+        # POSTGRES_USER=vridik hace que la imagen oficial de postgres lo cree
+        # como el bootstrap superuser (initdb lo usa para bootstrapear el
+        # cluster). Hasta PG15 se podía crear todo con vridik y después
+        # hacer ALTER ROLE vridik NOSUPERUSER sobre sí mismo; en PG18 eso da
+        # "permission denied to alter role / DETAIL: The bootstrap superuser
+        # must have the SUPERUSER attribute" (protección nueva). Se probó
+        # también degradar vía REASSIGN OWNED BY vridik TO vridik_app
+        # DESPUÉS de aplicar schema/seed -- tampoco funciona en PG18: "cannot
+        # reassign ownership of objects owned by role vridik because they
+        # are required by the database system" (mismo tipo de protección
+        # sobre el bootstrap superuser). Fix real: crear vridik_app ANTES de
+        # aplicar schema/seed, y que sea vridik_app quien los aplique --
+        # así es DUEÑO de todo lo que crea desde el principio (mismo patrón
+        # que ya usa producción real: vridik-api se conecta como el rol
+        # `vridik_app`, dueño de sus propias tablas, no como el superusuario
+        # del servicio Postgres de Railway, ver TF1 en
+        # HANDOFF_CLAUDE_CODE.md). El GRANT sobre el SCHEMA (no solo sobre
+        # tablas) es necesario porque, desde PG15, CREATE en `public` ya no
+        # se otorga por defecto a roles que no son el dueño del schema --
+        # pgcrypto/citext son extensiones "trusted" desde PG13, así que
+        # vridik_app puede instalarlas sin ser superusuario, solo con CREATE
+        # en el schema. El SELECT final es puro diagnóstico.
         run: |
-          sudo apt-get update -y && sudo apt-get install -y postgresql-client
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE ROLE vridik_app WITH LOGIN PASSWORD '${{ secrets.CI_TEST_DB_PASSWORD }}' NOSUPERUSER NOBYPASSRLS;"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE vridik_test TO vridik_app;"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON SCHEMA public TO vridik_app;"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'vridik_app';"
+          echo "TEST_DATABASE_URL=postgresql://vridik_app:${{ secrets.CI_TEST_DB_PASSWORD }}@localhost:5432/vridik_test" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=postgresql://vridik_app:${{ secrets.CI_TEST_DB_PASSWORD }}@localhost:5432/vridik_test" >> "$GITHUB_ENV"
+
+      - name: Aplicar esquema base de Vridik (S1) en PostgreSQL del service container
+        # A partir de acá $DATABASE_URL ya es vridik_app (reapuntado arriba
+        # vía GITHUB_ENV) -- vridik_app crea y por lo tanto es DUEÑO de
+        # todas estas tablas, sin necesitar REASSIGN OWNED después.
+        run: |
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schema_semana1_vridik.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f julix/sql/ledger_schema.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/003_pdf_jobs.sql
@@ -77,49 +113,6 @@ jobs:
 
       - name: Cargar seed de staging (db/seed_railway.sql)
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/seed_railway.sql
-
-      - name: Hardening RLS -- crear rol de aplicación sin privilegios especiales y reapuntar DATABASE_URL para pytest
-        # POSTGRES_USER=vridik hace que la imagen oficial de postgres lo cree
-        # como el bootstrap superuser (initdb lo usa para bootstrapear el
-        # cluster). Hasta PG15 se podía hacer ALTER ROLE vridik NOSUPERUSER
-        # sobre sí mismo; en PG18 eso ahora da "permission denied to alter
-        # role / DETAIL: The bootstrap superuser must have the SUPERUSER
-        # attribute" (protección nueva contra dejar el cluster sin ningún
-        # superusuario). Fix: en vez de degradar a vridik, se crea un rol de
-        # aplicación nuevo SIN superuser/bypassrls -- mismo patrón que ya usa
-        # producción de verdad (vridik-api se conecta como el rol `vridik_app`,
-        # no como el superusuario del servicio Postgres de Railway, ver TF1
-        # en HANDOFF_CLAUDE_CODE.md) -- y se reapunta DATABASE_URL/
-        # TEST_DATABASE_URL a ese rol para el resto del job (pytest). Corre
-        # DESPUÉS de aplicar schema/seed (que sí necesitan privilegio
-        # completo para el CREATE EXTENSION inicial de pgcrypto/citext,
-        # igual que en producción ya instalada) y ANTES de pytest. El
-        # SELECT final es puro diagnóstico -- confirma en el log qué
-        # atributos quedaron de verdad, en vez de asumirlo. El GRANT sobre
-        # el SCHEMA (no solo sobre las tablas ya creadas) es necesario
-        # porque, desde PG15, CREATE en el schema `public` ya NO se otorga
-        # por defecto a roles que no son el dueño -- y varias tablas
-        # (`despachos`, `matriz_riesgo`, etc.) se crean perezosamente vía
-        # `ensure_*_table()` durante los tests mismos, no solo por los .sql
-        # que ya se aplicaron arriba con el rol superusuario. Un simple
-        # GRANT no alcanza para las tablas que YA existen (users, casos,
-        # julix_calls, ...): `ensure_rls_policies()` corre ALTER TABLE ...
-        # ENABLE/FORCE ROW LEVEL SECURITY + CREATE POLICY sobre ellas, y
-        # eso exige ser DUEÑO de la tabla, no solo tener privilegios
-        # (descubierto en este mismo bump: "must be owner of table users").
-        # REASSIGN OWNED BY vridik TO vridik_app resuelve esto de una --
-        # transfiere la propiedad real de todo lo que creó vridik (schema/
-        # seed ya aplicados) a vridik_app, igual que en producción real
-        # (vridik_app ya es dueño ahí, por eso ensure_rls_policies() corre
-        # bien contra producción sin ser superusuario).
-        run: |
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE ROLE vridik_app WITH LOGIN PASSWORD '${{ secrets.CI_TEST_DB_PASSWORD }}' NOSUPERUSER NOBYPASSRLS;"
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON DATABASE vridik_test TO vridik_app;"
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT ALL PRIVILEGES ON SCHEMA public TO vridik_app;"
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "REASSIGN OWNED BY vridik TO vridik_app;"
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'vridik_app';"
-          echo "TEST_DATABASE_URL=postgresql://vridik_app:${{ secrets.CI_TEST_DB_PASSWORD }}@localhost:5432/vridik_test" >> "$GITHUB_ENV"
-          echo "DATABASE_URL=postgresql://vridik_app:${{ secrets.CI_TEST_DB_PASSWORD }}@localhost:5432/vridik_test" >> "$GITHUB_ENV"
 
       - name: pytest -q (JUnit XML para el gate de 90%, cobertura para el gate de 60%)
         run: |
