@@ -110,6 +110,34 @@ código. Este archivo es la lista de trabajo delegada, en orden.
   sirve; probar el PDF de Función Pública (`norma_pdf.php?i=199983`,
   el mismo que se usó para leer el art. 64 en vivo, pero descargado
   entero y extraído local en vez de fetcheado en vivo).
+- **T2, cuarta pasada (21-jul)**: 32 chunks reales en total (20→32). Se
+  resolvieron los 3 códigos/DUR grandes pendientes, todos con PDF+PyMuPDF
+  desde el arranque (nunca se intentó fetch en vivo primero, para no
+  perder tiempo con el patrón ya conocido de truncamiento): **Estatuto
+  Tributario** (358 páginas, PDF de Función Pública `i=6533` -- arts.
+  114-1/635/817/818/823/826/828/831, cierra UGPP-04/08/09/11), **CPACA**
+  (128 páginas, `i=41249` -- art. 138, cierra UGPP-10), **Decreto
+  1072/2015 DUR Sector Trabajo** (335 páginas, `i=72173` -- Sección 2
+  completa, arts. 2.2.4.2.2.1 a 2.2.4.2.2.4, ARL de contratistas
+  independientes en alto riesgo, cierra UGPP-12). Los 8 artículos del
+  E.T. se ubicaron por regex sobre el texto extraído completo (mucho más
+  rápido y confiable que pedirle a un LLM que busque uno por uno dentro
+  de un documento de 1.7M caracteres) y se verificaron por límite natural
+  real (dónde empieza el artículo siguiente en el propio texto, no
+  "aparenta estar completo"). Sesión de prueba limpiada.
+  **Con esto, del banco de 20 casos: LAB-03/07/08 completos; UGPP-04/05/
+  07/09/10/11 y LAB-01/05 con al menos una norma real cargada.**
+  **Pendiente real, acotado**: Ley 100/1993 arts. 18/19/23 (UGPP-06/08 --
+  re-extraer del PDF, sigue sin hacerse); Decreto 1601/2022 (UGPP-07);
+  Ley 1562/2012 art. 2 (UGPP-12, aunque ya referenciado indirectamente
+  dentro del extracto de Decreto 1072/2015 cargado); Ley 52/1975 art. 1
+  (LAB-06, nunca encontrado en 2 pasadas distintas ni en la Ola 6 del
+  corpus -- candidato a "no existe en gestores normativos digitales,
+  buscar en el Diario Oficial escaneado o marcar pendiente para Ana
+  Luisa"); resto del CST (LAB-02/04/06/07, el art. 64 ya está -- usar
+  PDF de Función Pública `i=199983` descargado ENTERO con PyMuPDF, igual
+  que el resto de esta pasada, no el de la Rama Judicial que es OCR del
+  texto de 1950 sin reformas).
 
 ## Cola de trabajo, en orden
 
