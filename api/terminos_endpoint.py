@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, field_validator
 from api.admin_endpoint import get_current_user
 from api.auth_endpoint import _get_db
 from core.case import ensure_casos_table, get_caso
+from core.events import notificar_evento
 from core.health_score import recalcular_health_score
 from core.terminos import (
     ESTADOS_VALIDOS,
@@ -120,12 +121,34 @@ async def cambiar_estado_termino_endpoint(
 ):
     conn = _get_db(request)
     await _preparar(conn)
-    await _caso_con_acceso(conn, caso_id, current)
+    caso = await _caso_con_acceso(conn, caso_id, current)
 
     termino = await get_termino(conn, termino_id)
     if termino is None or str(termino["caso_id"]) != caso_id:
         raise HTTPException(status_code=404, detail="Término no encontrado")
 
+    # Track Forja TF3: gancho de gamificación -- solo cuando el término
+    # pasa de 'pendiente' a 'cumplido' ANTES del vencimiento (dias_restantes
+    # >= 0). Marcarlo cumplido ya vencido no es un logro, no dispara nada
+    # (mismas tablas gamificacion/logros de fase 2 no bloquean esto, ver
+    # vridik_architecture_v2.json -- acá solo se emite el evento SSE).
+    cumplido_a_tiempo = (
+        payload.estado == "cumplido"
+        and termino["estado"] == "pendiente"
+        and dias_restantes(termino["fecha_vencimiento"]) >= 0
+    )
+
     actualizado = await marcar_estado_termino(conn, termino_id=termino_id, estado=payload.estado)
     await recalcular_health_score(conn, caso_id=caso_id)
+
+    if cumplido_a_tiempo:
+        destinatarios = {str(caso["cliente_id"])}
+        if caso["abogado_id"] is not None:
+            destinatarios.add(str(caso["abogado_id"]))
+        for user_id in destinatarios:
+            await notificar_evento(
+                conn, user_id=user_id, tipo="termino.cumplido",
+                payload={"caso_id": caso_id, "termino_id": termino_id, "descripcion": termino["descripcion"]},
+            )
+
     return _con_dias_restantes(actualizado)

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, SesionExpiradaError } from "../api/client";
 import type {
-  Actuacion, ActuacionNuevaEvent, EventoSSE, ResultadoActuacion, Termino, TerminoAlertaEvent,
+  Actuacion, ActuacionNuevaEvent, EventoSSE, ResultadoActuacion, Termino, TerminoPorVencerEvent,
 } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { CATEGORIA_LABEL, fechaCorta, fechaHora, RESULTADO_LABEL, ResultadoPill, semaforoTermino } from "../ui";
@@ -12,8 +12,8 @@ function esActuacionNueva(ev: EventoSSE, casoId: string): ev is ActuacionNuevaEv
   return ev.type === "actuacion.nueva" && (ev as ActuacionNuevaEvent).caso_id === casoId;
 }
 
-function esTerminoAlerta(ev: EventoSSE, casoId: string): ev is TerminoAlertaEvent {
-  return ev.type === "termino.alerta" && (ev as TerminoAlertaEvent).caso_id === casoId;
+function esTerminoPorVencer(ev: EventoSSE, casoId: string): ev is TerminoPorVencerEvent {
+  return ev.type === "termino.por_vencer" && (ev as TerminoPorVencerEvent).caso_id === casoId;
 }
 
 function etiquetaDiasRestantes(t: Termino): string {
@@ -88,7 +88,7 @@ export function ActuacionesYTerminos({ casoId, onGenerarBorrador }: Props) {
   useEffect(() => {
     const detener = api.streamEvents((ev) => {
       if (esActuacionNueva(ev, casoId)) void cargarActuaciones();
-      if (esTerminoAlerta(ev, casoId)) void cargarTerminos();
+      if (esTerminoPorVencer(ev, casoId)) void cargarTerminos();
     });
     return detener;
   }, [casoId, cargarActuaciones, cargarTerminos]);

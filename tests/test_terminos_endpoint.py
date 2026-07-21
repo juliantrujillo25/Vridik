@@ -34,6 +34,7 @@ class _FakeTerminosDB:
         self.users: dict[str, dict] = {}
         self.casos: dict[str, dict] = {}
         self.terminos: dict[str, dict] = {}
+        self.user_events: list[dict] = []
 
     def seed_user(self, *, email: str, role: str = "cliente", despacho_id: str = "despacho-1") -> dict:
         user_id = str(uuid.uuid4())
@@ -87,6 +88,11 @@ class _FakeTerminosDB:
                 return None
             t["estado"] = estado
             return dict(t)
+        if q.startswith("INSERT INTO user_events"):
+            user_id, event_type, _payload = args
+            evento_id = len(self.user_events) + 1
+            self.user_events.append({"id": evento_id, "user_id": user_id, "event_type": event_type})
+            return {"id": evento_id}
         return None
 
     async def fetch(self, query: str, *args):
@@ -244,6 +250,56 @@ def test_cambiar_estado_termino_a_cumplido(tdb, tclient):
     )
     assert r.status_code == 200, r.text
     assert r.json()["estado"] == "cumplido"
+
+
+def test_cambiar_estado_termino_cumplido_a_tiempo_dispara_evento_gamificacion(tdb, tclient):
+    """Track Forja TF3: marcar un término cumplido ANTES del vencimiento
+    dispara el gancho de gamificación (evento termino.cumplido) -- creado
+    con fecha_inicio de HOY (no la fecha fija de 2026-02-02 que usan el
+    resto de estos tests, que ya quedó en el pasado y por lo tanto nunca
+    dispararía el evento)."""
+    cliente = tdb.seed_user(email="cliente8@vridik.local")
+    caso = tdb.seed_caso(cliente_id=cliente["id"])
+    token = _token_de(cliente)
+
+    creado = tclient.post(
+        f"/casos/{caso['id']}/terminos",
+        json={"descripcion": "x", "fecha_inicio": date.today().isoformat(), "dias_habiles": 5},
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()
+
+    r = tclient.patch(
+        f"/casos/{caso['id']}/terminos/{creado['id']}/estado",
+        json={"estado": "cumplido"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200, r.text
+    eventos = [e for e in tdb.user_events if e["event_type"] == "termino.cumplido"]
+    assert len(eventos) == 1
+    assert eventos[0]["user_id"] == cliente["id"]
+
+
+def test_cambiar_estado_termino_cumplido_ya_vencido_no_dispara_gamificacion(tdb, tclient):
+    """Marcarlo cumplido DESPUÉS del vencimiento no es un logro -- no
+    dispara el evento (fecha_inicio fija en el pasado, como el resto de
+    estos tests)."""
+    cliente = tdb.seed_user(email="cliente9@vridik.local")
+    caso = tdb.seed_caso(cliente_id=cliente["id"])
+    token = _token_de(cliente)
+
+    creado = tclient.post(
+        f"/casos/{caso['id']}/terminos",
+        json={"descripcion": "x", "fecha_inicio": "2026-02-02", "dias_habiles": 1},
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()
+
+    r = tclient.patch(
+        f"/casos/{caso['id']}/terminos/{creado['id']}/estado",
+        json={"estado": "cumplido"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200, r.text
+    assert [e for e in tdb.user_events if e["event_type"] == "termino.cumplido"] == []
 
 
 def test_cambiar_estado_termino_invalido_da_422(tdb, tclient):

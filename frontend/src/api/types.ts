@@ -160,14 +160,17 @@ export interface ActuacionNuevaEvent extends EventoSSE {
   categoria: CategoriaActuacion;
 }
 
-// Alerta proactiva de un término en riesgo (roadmap Fase 2, ver
-// procesal/alertas_terminos.py) -- llega aunque nadie haya abierto el caso.
-export interface TerminoAlertaEvent extends EventoSSE {
-  type: "termino.alerta";
+// Aviso escalonado de un término por vencer (Track Forja TF3 --
+// T-5/T-3/T-1, ver core/terminos.py::DIAS_ESCALONES y
+// procesal/alertas_terminos.py) -- llega aunque nadie haya abierto el
+// caso. Reemplaza el "termino.alerta" de un solo aviso de Fase 2.
+export interface TerminoPorVencerEvent extends EventoSSE {
+  type: "termino.por_vencer";
   caso_id: string;
   termino_id: string;
   descripcion: string;
   fecha_vencimiento: string;
+  escalon: number;
 }
 
 // --- panel admin (roadmap S2) ----------------------------------------------

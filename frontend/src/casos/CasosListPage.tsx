@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { SesionExpiradaError } from "../api/client";
-import type { Caso, MessageNewEvent, Termino, TerminoAlertaEvent } from "../api/types";
+import type { Caso, MessageNewEvent, Termino, TerminoPorVencerEvent } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { EstadoPill, fechaCorta, semaforoHealthScore, type SemaforoColor } from "../ui";
 import { AhorroWidget } from "./AhorroWidget";
@@ -86,8 +86,8 @@ export function CasosListPage() {
       // procesal/alertas_terminos.py) -- puede llegar sin que nadie haya
       // recargado el dashboard, así que el badge se actualiza en vivo
       // igual que el de no-leídos.
-      if (ev.type === "termino.alerta") {
-        const casoId = (ev as TerminoAlertaEvent).caso_id;
+      if (ev.type === "termino.por_vencer") {
+        const casoId = (ev as TerminoPorVencerEvent).caso_id;
         void api.listTerminos(casoId).then((terminos) =>
           setTerminosUrgentes((prev) => ({ ...prev, [casoId]: peorSemaforoUrgente(terminos) })),
         );

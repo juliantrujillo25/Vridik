@@ -4,8 +4,8 @@ Roadmap Semana 11: canal de eventos genérico y multiplexado sobre
 PostgreSQL NOTIFY/LISTEN (cero infra nueva, tal como pide el roadmap) --
 GET /api/events/stream (api/events_endpoint.py) es el consumidor.
 `message.new` es el primer tipo de evento; `pdf.ready`/`error` (Fase D) y
-los de Fase 2 del roadmap (`actuacion.nueva`, `termino.alerta`) se agregan
-después sin cambiar el canal ni el formato.
+los de Fase 2 del roadmap (`actuacion.nueva`, `termino.por_vencer`,
+`termino.cumplido`) se agregan después sin cambiar el canal ni el formato.
 
 Patrón "notificar-y-buscar": el evento NUNCA lleva el contenido completo,
 solo IDs -- quien lo recibe hace un fetch normal contra la API REST
