@@ -167,3 +167,50 @@ async def test_salida_del_juez_invalida_nunca_aprueba():
     resultado = await calificar_con_juez(_FakeClientJuezRoto(), _CasoStub(), "respuesta")
     assert resultado["score"] == 0
     assert resultado["hallucination_flag"] is True
+
+
+class _FakeClientJuezIntermitente:
+    """Simula el ruido real encontrado el 21-jul corriendo T3 contra
+    producción: el mismo input a veces devuelve JSON inválido y a veces
+    válido -- reintentar antes de aplicar el fallback punitivo evita que
+    ese ruido de formato se cuente como si JuliX hubiera alucinado."""
+
+    def __init__(self, fallos_antes_de_ok: int):
+        self.fallos_antes_de_ok = fallos_antes_de_ok
+        self.llamadas = 0
+
+    async def stream_completion(self, **kwargs):
+        self.llamadas += 1
+        if self.llamadas <= self.fallos_antes_de_ok:
+            yield "esto no es json"
+        else:
+            yield '{"score": 3, "precision_normativa": 3, "cita_correcta": true, "hallucination_flag": false, "comentario": "ok"}'
+
+    @staticmethod
+    def validar_json(texto):
+        from julix.client import JuliXClient
+        return JuliXClient.validar_json(texto)
+
+
+@pytest.mark.asyncio
+async def test_reintenta_cuando_la_salida_del_juez_es_intermitente():
+    """Regresión real (21-jul, T3 contra producción): re-enviar el MISMO
+    input al juez a veces produce JSON inválido y a veces válido -- no es
+    un bug determinístico de un caso puntual. Sin reintento, ~15% de los
+    casos del banco caían al fallback punitivo solo por este ruido."""
+    fake = _FakeClientJuezIntermitente(fallos_antes_de_ok=1)
+    resultado = await calificar_con_juez(fake, _CasoStub(), "respuesta")
+    assert fake.llamadas == 2
+    assert resultado["score"] == 3
+    assert resultado["hallucination_flag"] is False
+
+
+@pytest.mark.asyncio
+async def test_fallback_punitivo_solo_tras_agotar_los_reintentos():
+    """Si el ruido persiste más allá de los reintentos configurados, el
+    fail-closed de siempre sigue aplicando -- el reintento no vuelve
+    permisivo al juez, solo lo hace tolerante a ruido transitorio."""
+    fake = _FakeClientJuezIntermitente(fallos_antes_de_ok=99)
+    resultado = await calificar_con_juez(fake, _CasoStub(), "respuesta")
+    assert resultado["score"] == 0
+    assert resultado["hallucination_flag"] is True

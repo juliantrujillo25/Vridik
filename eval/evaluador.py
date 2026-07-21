@@ -218,9 +218,21 @@ async def generar_respuesta_julix(client: JuliXClient, caso: CasoEval) -> tuple[
     return texto, tarea
 
 
+JUEZ_REINTENTOS_FORMATO = 2  # además del intento inicial, no cuenta reintentos de red (esos ya los hace client.stream_completion)
+
+
 async def calificar_con_juez(client: JuliXClient, caso: CasoEval, respuesta_julix: str) -> dict:
     """Llama al 'Claude juez' (misma infraestructura de client.py, tarea
-    'evaluacion_juez') y valida que la salida sea el JSON esperado."""
+    'evaluacion_juez') y valida que la salida sea el JSON esperado.
+
+    Reintenta si la salida no parsea como JSON -- encontrado el 21-jul
+    corriendo T3 contra producción real: el mismo input, re-enviado tal
+    cual, a veces produce JSON válido y a veces no (no es un bug
+    determinístico de un caso puntual, es ruido real del modelo). Sin
+    reintento, ~15% de los casos del banco caían al fallback punitivo
+    (score=0, hallucination_flag=True) solo por este ruido de formato,
+    no por la calidad real de la respuesta de JuliX -- inflaba
+    artificialmente el % de reprobación del GATE."""
     user_content = (
         f"Pregunta:\n{caso.pregunta}\n\n"
         f"Norma clave (única fuente permitida):\n{caso.norma_clave}\n\n"
@@ -228,34 +240,42 @@ async def calificar_con_juez(client: JuliXClient, caso: CasoEval, respuesta_juli
         f"Respuesta de JuliX a calificar:\n{respuesta_julix}"
     )
 
-    texto = ""
-    try:
-        async for chunk in client.stream_completion(
-            tarea="evaluacion_juez",
-            system_prompt=JUEZ_SYSTEM_PROMPT,
-            user_content=user_content,
-            user_id=USER_ID_BANCO,
-            caso_id=f"juez-{caso.id}",
-            prompt_version=1,
-            prompt_hash=_hash_prompt(JUEZ_SYSTEM_PROMPT),
-        ):
-            texto += chunk
-    except JuliXError as exc:
-        logger.error("Vridik/JuliX: fallo en el juez para %s: %s", caso.id, exc)
-        # Fallo del juez nunca se traduce en aprobación silenciosa: score 0
-        return {
-            "score": 0, "precision_normativa": 0, "cita_correcta": False,
-            "hallucination_flag": True, "comentario": f"Juez falló: {exc}",
-        }
+    ultimo_error_formato: JuliXInvalidFormatError | None = None
+    for intento in range(1 + JUEZ_REINTENTOS_FORMATO):
+        texto = ""
+        try:
+            async for chunk in client.stream_completion(
+                tarea="evaluacion_juez",
+                system_prompt=JUEZ_SYSTEM_PROMPT,
+                user_content=user_content,
+                user_id=USER_ID_BANCO,
+                caso_id=f"juez-{caso.id}",
+                prompt_version=1,
+                prompt_hash=_hash_prompt(JUEZ_SYSTEM_PROMPT),
+            ):
+                texto += chunk
+        except JuliXError as exc:
+            logger.error("Vridik/JuliX: fallo en el juez para %s: %s", caso.id, exc)
+            # Fallo del juez nunca se traduce en aprobación silenciosa: score 0
+            return {
+                "score": 0, "precision_normativa": 0, "cita_correcta": False,
+                "hallucination_flag": True, "comentario": f"Juez falló: {exc}",
+            }
 
-    try:
-        return JuliXClient.validar_json(texto)
-    except JuliXInvalidFormatError as exc:
-        logger.error("Vridik/JuliX: salida del juez no es JSON válido para %s: %s", caso.id, exc)
-        return {
-            "score": 0, "precision_normativa": 0, "cita_correcta": False,
-            "hallucination_flag": True, "comentario": "Salida del juez con formato inválido",
-        }
+        try:
+            return JuliXClient.validar_json(texto)
+        except JuliXInvalidFormatError as exc:
+            ultimo_error_formato = exc
+            logger.warning(
+                "Vridik/JuliX: salida del juez no es JSON válido para %s (intento %s/%s): %s",
+                caso.id, intento + 1, 1 + JUEZ_REINTENTOS_FORMATO, exc,
+            )
+
+    logger.error("Vridik/JuliX: salida del juez siguió inválida para %s tras reintentos: %s", caso.id, ultimo_error_formato)
+    return {
+        "score": 0, "precision_normativa": 0, "cita_correcta": False,
+        "hallucination_flag": True, "comentario": "Salida del juez con formato inválido (persistió tras reintentos)",
+    }
 
 
 async def registrar_resultado(db_connection, run_id: str, resultado: ResultadoCaso) -> None:
