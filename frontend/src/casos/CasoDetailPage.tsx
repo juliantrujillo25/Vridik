@@ -210,7 +210,7 @@ export function CasoDetailPage() {
       <div className="page-head">
         <div>
           <p className="eyebrow">Caso</p>
-          <h1 className="page-title">{caso.titulo}</h1>
+          <h1 className="page-title page-title-serif">{caso.titulo}</h1>
         </div>
         <div className="page-head-pills">
           <HealthScorePill score={caso.health_score} />

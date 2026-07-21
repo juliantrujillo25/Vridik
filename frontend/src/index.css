@@ -192,7 +192,10 @@ h1, h2, h3 { letter-spacing: -0.01em; text-wrap: balance; }
 .alert.success { background: var(--good-bg); color: var(--good); border-color: color-mix(in srgb, var(--good) 30%, transparent); }
 
 /* --- utilidades --- */
-.mono { font-family: var(--mono); }
+/* tabular-nums: cifras (dias_restantes, health_score, montos COP) no saltan
+   de ancho al cambiar de dígito -- TF4, punto 2. Inocuo en el resto de usos
+   de --mono (fechas, códigos), no solo aplica a números. */
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .faint { color: var(--ink-faint); }
 .muted { color: var(--ink-soft); }
 .spinner {

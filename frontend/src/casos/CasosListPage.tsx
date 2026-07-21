@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { SesionExpiradaError } from "../api/client";
@@ -20,6 +20,26 @@ function peorSemaforoUrgente(terminos: Termino[]): { color: SemaforoColor; count
   return { color, count: enRiesgo.length };
 }
 
+/** TF4, punto 1: el caso con health_score más alto (por encima del umbral
+ *  ya usado en el badge, >30 -- "no limpiamente verde") se promueve a fila
+ *  hero; si ninguno tiene un health_score que amerite atención, se usa el
+ *  caso con el término más urgente (rojo antes que amarillo). Sin ninguna
+ *  señal real, no se fuerza un hero -- la lista queda plana. */
+function elegirHeroId(
+  lista: Caso[],
+  terminosUrgentes: Record<string, { color: SemaforoColor; count: number } | null>,
+): string | null {
+  const conScore = lista.filter((c) => c.health_score !== null && c.health_score > 30);
+  if (conScore.length > 0) {
+    return conScore.reduce((peor, c) => (c.health_score! > peor.health_score! ? c : peor)).id;
+  }
+  const rojo = lista.find((c) => terminosUrgentes[c.id]?.color === "rojo");
+  if (rojo) return rojo.id;
+  const amarillo = lista.find((c) => terminosUrgentes[c.id]?.color === "amarillo");
+  if (amarillo) return amarillo.id;
+  return null;
+}
+
 export function CasosListPage() {
   const navigate = useNavigate();
   const { perfil } = useAuth();
@@ -27,6 +47,7 @@ export function CasosListPage() {
   const [error, setError] = useState<string | null>(null);
   const [noLeidos, setNoLeidos] = useState<Record<string, number>>({});
   const [terminosUrgentes, setTerminosUrgentes] = useState<Record<string, { color: SemaforoColor; count: number } | null>>({});
+  const [documentCounts, setDocumentCounts] = useState<Record<string, number>>({});
 
   const [titulo, setTitulo] = useState("");
   const [descripcion, setDescripcion] = useState("");
@@ -55,6 +76,20 @@ export function CasosListPage() {
     });
   }
 
+  /** KPI "documentos generados por JuliX" (TF4, punto 6) -- no hay endpoint
+   *  agregado, así que se reusa GET /casos/{id}/documents por caso, mismo
+   *  patrón N+1 que ya usan cargarNoLeidos/cargarTerminos arriba. */
+  async function cargarDocumentos(lista: Caso[]) {
+    const resultados = await Promise.allSettled(lista.map((c) => api.listDocumentos(c.id)));
+    setDocumentCounts((prev) => {
+      const siguiente = { ...prev };
+      resultados.forEach((r, i) => {
+        if (r.status === "fulfilled") siguiente[lista[i].id] = r.value.length;
+      });
+      return siguiente;
+    });
+  }
+
   async function cargar() {
     setError(null);
     try {
@@ -62,6 +97,7 @@ export function CasosListPage() {
       setCasos(lista);
       void cargarNoLeidos(lista);
       void cargarTerminos(lista);
+      void cargarDocumentos(lista);
     } catch (err) {
       if (err instanceof SesionExpiradaError) return navigate("/login", { replace: true });
       setError(err instanceof Error ? err.message : "No se pudieron cargar los casos.");
@@ -114,12 +150,61 @@ export function CasosListPage() {
     }
   }
 
+  /** Único badge de riesgo por fila (TF4, punto 4): el término urgente manda
+   *  sobre el health-score cuando ambos aplican -- es la señal más accionable
+   *  (tiene una fecha límite real), el health-score es una medida más
+   *  general. Nunca se muestran los dos badges juntos. */
+  function riesgoBadge(c: Caso): ReactNode {
+    const t = terminosUrgentes[c.id];
+    if (t) {
+      return (
+        <span
+          className={`badge-termino ${t.color}`}
+          title={t.color === "rojo" ? `${t.count} término(s) vencido(s)` : `${t.count} término(s) por vencer`}
+        >
+          {t.count}
+        </span>
+      );
+    }
+    if (c.health_score !== null && c.health_score > 30) {
+      return (
+        <span className={`badge-termino ${semaforoHealthScore(c.health_score)}`} title={`Health-score de riesgo: ${c.health_score}/100`}>
+          {c.health_score}
+        </span>
+      );
+    }
+    return null;
+  }
+
+  function noLeidosIndicador(c: Caso): ReactNode {
+    const n = noLeidos[c.id];
+    if (!n) return null;
+    return (
+      <span className="indicador-noleidos" title={`${n} mensaje(s) sin leer`}>
+        <span className="indicador-noleidos-dot" aria-hidden="true" />
+        {n}
+      </span>
+    );
+  }
+
+  const heroId = casos ? elegirHeroId(casos, terminosUrgentes) : null;
+  const heroCaso = casos?.find((c) => c.id === heroId) ?? null;
+  const restCasos = casos?.filter((c) => c.id !== heroId) ?? [];
+  const heroEsRiesgo =
+    !!heroCaso &&
+    ((heroCaso.health_score !== null && heroCaso.health_score > 70) || terminosUrgentes[heroCaso.id]?.color === "rojo");
+
+  const casosEnRiesgo = casos
+    ? casos.filter((c) => (c.health_score !== null && c.health_score > 70) || !!terminosUrgentes[c.id]).length
+    : 0;
+  const totalDocumentos = Object.values(documentCounts).reduce((a, b) => a + b, 0);
+
   return (
     <div className="page">
       <div className="page-head">
         <div>
           <p className="eyebrow">Casos</p>
-          <h1 className="page-title">Tus casos</h1>
+          <h1 className="page-title page-title-serif">Tus casos</h1>
         </div>
         <button className="btn btn-primary" onClick={() => setMostrarForm((v) => !v)}>
           {mostrarForm ? "Cancelar" : "Nuevo caso"}
@@ -173,47 +258,55 @@ export function CasosListPage() {
           <p className="muted">Creá el primero para empezar a generar documentos con JuliX.</p>
         </div>
       ) : (
-        <ul className="caso-list">
-          {casos.map((c) => (
-            <li key={c.id}>
-              <Link className="caso-row card" to={`/casos/${c.id}`}>
-                <div className="caso-row-main">
-                  <span className="caso-row-title">{c.titulo}</span>
-                  {c.descripcion && <span className="caso-row-desc muted">{c.descripcion}</span>}
+        <>
+          <div className="kpi-row">
+            <div className="kpi-card">
+              <span className="kpi-label">Casos</span>
+              <span className="kpi-value">{casos.length}</span>
+            </div>
+            <div className="kpi-card">
+              <span className="kpi-label">En riesgo</span>
+              <span className={`kpi-value${casosEnRiesgo > 0 ? " riesgo" : ""}`}>{casosEnRiesgo}</span>
+            </div>
+            <div className="kpi-card">
+              <span className="kpi-label">Documentos JuliX</span>
+              <span className="kpi-value">{totalDocumentos}</span>
+            </div>
+          </div>
+
+          {heroCaso && (
+            <Link className={`card caso-row-hero${heroEsRiesgo ? " es-riesgo" : ""}`} to={`/casos/${heroCaso.id}`}>
+              <div className="caso-row-hero-head">
+                <h2 className="caso-row-hero-titulo">{heroCaso.titulo}</h2>
+                <div className="caso-row-hero-meta">
+                  {riesgoBadge(heroCaso)}
+                  {noLeidosIndicador(heroCaso)}
+                  <EstadoPill estado={heroCaso.estado} />
                 </div>
-                <div className="caso-row-meta">
-                  {c.health_score !== null && c.health_score > 30 && (
-                    <span
-                      className={`badge-termino ${semaforoHealthScore(c.health_score)}`}
-                      title={`Health-score de riesgo: ${c.health_score}/100`}
-                    >
-                      {c.health_score}
-                    </span>
-                  )}
-                  {terminosUrgentes[c.id] && (
-                    <span
-                      className={`badge-termino ${terminosUrgentes[c.id]!.color}`}
-                      title={
-                        terminosUrgentes[c.id]!.color === "rojo"
-                          ? `${terminosUrgentes[c.id]!.count} término(s) vencido(s)`
-                          : `${terminosUrgentes[c.id]!.count} término(s) por vencer`
-                      }
-                    >
-                      {terminosUrgentes[c.id]!.count}
-                    </span>
-                  )}
-                  {noLeidos[c.id] > 0 && (
-                    <span className="badge-noleidos" title={`${noLeidos[c.id]} mensajes sin leer`}>
-                      {noLeidos[c.id]}
-                    </span>
-                  )}
-                  <EstadoPill estado={c.estado} />
-                  <span className="faint mono caso-row-date">{fechaCorta(c.created_at)}</span>
-                </div>
-              </Link>
-            </li>
-          ))}
-        </ul>
+              </div>
+              {heroCaso.descripcion && <p className="caso-row-hero-desc muted">{heroCaso.descripcion}</p>}
+              <span className="faint mono caso-row-date">{fechaCorta(heroCaso.created_at)}</span>
+            </Link>
+          )}
+
+          {restCasos.length > 0 && (
+            <ul className="card caso-dense-list">
+              {restCasos.map((c) => (
+                <li key={c.id}>
+                  <Link className="caso-row-compact" to={`/casos/${c.id}`}>
+                    <span className="caso-row-compact-title">{c.titulo}</span>
+                    <div className="caso-row-compact-meta">
+                      {riesgoBadge(c)}
+                      {noLeidosIndicador(c)}
+                      <EstadoPill estado={c.estado} />
+                      <span className="faint mono caso-row-date">{fechaCorta(c.created_at)}</span>
+                    </div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </div>
   );

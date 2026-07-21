@@ -14,25 +14,97 @@
 .login-form .alert { margin: 0; }
 .login-sub-link { margin: 0; font-size: 0.88rem; text-align: center; }
 
-/* --- app shell --- */
-.app-shell { min-height: 100%; display: flex; flex-direction: column; }
-.app-header {
+/* --- app shell (TF4: sidebar fijo en desktop, drawer en mobile) --- */
+.app-shell { min-height: 100%; display: flex; }
+
+.app-sidebar {
+  width: 232px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem 1.1rem 1.2rem;
+  border-right: 1px solid var(--hair);
+  background: var(--surface);
   position: sticky;
   top: 0;
-  z-index: 10;
-  background: color-mix(in srgb, var(--paper) 88%, transparent);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--hair);
+  height: 100vh;
+  overflow-y: auto;
 }
-.app-header-inner {
-  max-width: 860px;
-  margin: 0 auto;
-  padding: 0.85rem 1.25rem;
+.sidebar-nav { display: flex; flex-direction: column; gap: 0.15rem; margin-top: 1.8rem; flex: 1; }
+.sidebar-link {
+  display: block;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius);
+  color: var(--ink-soft);
+  text-decoration: none;
+  font-size: 0.92rem;
+  font-weight: 550;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.sidebar-link:hover { background: var(--surface-2); color: var(--ink); }
+.sidebar-link.active { background: var(--accent-soft); color: var(--accent); }
+.sidebar-footer {
+  margin-top: auto;
+  padding-top: 1rem;
+  border-top: 1px solid var(--hair);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 0.7rem;
 }
-.app-nav { display: flex; align-items: center; gap: 0.5rem; }
+.sidebar-user { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.sidebar-user-email { font-size: 0.84rem; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-user-role { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.sidebar-footer-actions { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+
+.app-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.app-topbar { display: none; }
+.sidebar-toggle {
+  display: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-soft);
+  padding: 0.4rem;
+  border-radius: var(--radius);
+}
+.sidebar-toggle:hover { background: var(--surface-2); color: var(--ink); }
+.sidebar-backdrop { display: none; }
+.brand-topbar { display: none; }
+
+@media (max-width: 900px) {
+  .app-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 40;
+    width: 260px;
+    transform: translateX(-100%);
+    transition: transform 0.18s ease;
+    box-shadow: var(--shadow);
+  }
+  .app-sidebar.open { transform: translateX(0); }
+  .app-sidebar .brand { display: none; }
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(10, 15, 14, 0.45);
+    z-index: 35;
+  }
+  .app-topbar {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 0.85rem 1.1rem;
+    border-bottom: 1px solid var(--hair);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(8px);
+  }
+  .sidebar-toggle { display: inline-flex; align-items: center; justify-content: center; }
+  .brand-topbar { display: inline-flex; }
+}
 .theme-toggle {
   display: inline-flex;
   align-items: center;
@@ -105,22 +177,12 @@
 .caso-row-desc { font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46ch; }
 .caso-row-meta { display: flex; align-items: center; gap: 0.9rem; flex: none; }
 .caso-row-date { font-size: 0.78rem; }
-.badge-noleidos {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 1.3rem;
-  height: 1.3rem;
-  padding: 0 0.35rem;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-size: 0.72rem;
-  font-weight: 700;
-  font-family: var(--mono);
-}
 
-/* --- badge de términos en riesgo (roadmap Fase 2: semáforo en el dashboard) --- */
+/* --- badge de riesgo (roadmap Fase 2: semáforo en el dashboard) -- único
+   sistema de badge por fila desde TF4 (antes competían badge-termino,
+   badge-noleidos y EstadoPill con el mismo peso visual): este es el
+   indicador de mayor jerarquía (riesgo por health-score o término
+   urgente), el resto se degradó a indicadores más discretos. --- */
 .badge-termino {
   display: inline-flex;
   align-items: center;
@@ -138,6 +200,79 @@
 .badge-termino.rojo { background: var(--danger); color: #fff; }
 .badge-termino.amarillo { background: var(--warn); color: #2a1f05; }
 .badge-termino.verde { background: var(--good); color: #fff; }
+
+/* --- indicador secundario de no-leídos: un punto discreto, no un badge
+   redondo del mismo peso que el de riesgo (TF4, punto 4) --- */
+.indicador-noleidos {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32em;
+  font-size: 0.74rem;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.indicador-noleidos-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
+
+/* --- fila de KPIs del dashboard (TF4, punto 6) --- */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.9rem;
+  margin-bottom: 1.8rem;
+}
+.kpi-card {
+  background: var(--surface);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.kpi-label { font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+.kpi-value { font-family: var(--mono); font-size: 1.55rem; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.kpi-value.riesgo { color: var(--danger); }
+
+/* --- lista de casos con jerarquía por urgencia (TF4, punto 1): el caso más
+   urgente se distingue por peso visual; el resto se comprime en una lista
+   densa, no una grilla de cards idénticas. --- */
+.caso-row-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 1.5rem 1.6rem;
+  text-decoration: none;
+  color: inherit;
+  border: 1px solid var(--gold);
+  margin-bottom: 0.9rem;
+  transition: box-shadow 0.14s ease;
+}
+.caso-row-hero.es-riesgo { border-left: 3px solid var(--danger); }
+.caso-row-hero-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.caso-row-hero-titulo { font-family: var(--serif); font-size: 1.3rem; font-weight: 500; margin: 0; line-height: 1.3; }
+.caso-row-hero-desc { margin: 0; max-width: 68ch; font-size: 0.92rem; }
+.caso-row-hero-meta { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; }
+
+.caso-dense-list { list-style: none; margin: 0; display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.caso-row-compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 1.1rem;
+  text-decoration: none;
+  color: inherit;
+  border-bottom: 1px solid var(--hair);
+  transition: background 0.12s ease;
+}
+.caso-row-compact:last-child { border-bottom: none; }
+.caso-row-compact:hover { background: var(--surface-2); }
+.caso-row-compact-title { font-weight: 550; font-size: 0.92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.caso-row-compact-meta { display: flex; align-items: center; gap: 0.7rem; flex: none; }
+
+/* --- título de página en serif para el "expediente" (TF4, punto 3) --- */
+.page-title-serif { font-family: var(--serif); font-weight: 500; }
 
 /* --- detalle de caso --- */
 .caso-desc { margin: 0 0 1.4rem; max-width: 68ch; }
@@ -227,6 +362,10 @@
   .caso-row { flex-direction: column; align-items: flex-start; gap: 0.6rem; }
   .caso-row-desc { max-width: 100%; }
   .caso-row-meta { flex-wrap: wrap; }
+  .caso-row-hero-head { flex-direction: column; }
+  .caso-row-compact { flex-direction: column; align-items: flex-start; gap: 0.4rem; }
+  .caso-row-compact-meta { flex-wrap: wrap; }
+  .kpi-row { grid-template-columns: repeat(2, 1fr); }
 }
 
 /* --- mensajes (caso) --- */
