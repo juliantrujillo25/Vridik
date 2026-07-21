@@ -53,6 +53,7 @@ from api.casos_endpoint import router as casos_router
 from api.clientes_endpoint import router as clientes_router
 from api.cobro_endpoint import router as cobro_router
 from api.corpus_endpoint import router as corpus_router
+from api.datos_personales_endpoint import router as datos_personales_router
 from api.events_endpoint import router as events_router
 from api.bitacora_endpoint import router as bitacora_router
 from api.mensajes_endpoint import router as mensajes_router
@@ -144,6 +145,13 @@ app.include_router(clientes_router)
 # roadmap), solo agrega los resultados que el propio despacho registra
 # (ver core/analitica.py).
 app.include_router(analitica_router)
+
+# Roadmap T7 (Ley 1581 de 2012, derecho ARCO de Acceso) -- GET /me/datos,
+# export propio en JSON (ver core/datos_personales.py). Rectificación se
+# ejerce con los endpoints existentes; Supresión queda pendiente de una
+# decisión de diseño (qué se anonimiza vs qué se conserva por deber
+# legal), no implementada todavía a propósito.
+app.include_router(datos_personales_router)
 
 
 @app.on_event("startup")
