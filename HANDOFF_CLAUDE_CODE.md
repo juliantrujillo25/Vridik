@@ -403,17 +403,22 @@ código. Este archivo es la lista de trabajo delegada, en orden.
   "no hay staging real" ya no aplica; lo que queda pendiente es
   ensayar ahí un rollback real y una rotación de `JWT_SECRET`, no la
   existencia del entorno en sí.
-  **Hallazgo tangencial, sin tocar (no es T6)**: producción ya tiene
-  variables `R2_ACCESS_KEY_ID`/`R2_ACCOUNT_ID`/`R2_BUCKET_NAME`/
-  `R2_PUBLIC_URL`/`R2_SECRET_ACCESS_KEY` Y una variable `BACKEND=r2` --
-  nombres que NO coinciden con lo que lee `storage/object_storage.py`
-  (`OBJECT_STORAGE_S3_*`, `OBJECT_STORAGE_BACKEND`). Alguien (otra
-  sesión probablemente) ya avanzó en la integración de R2 con una
-  convención de nombres distinta a la de T5 -- hay que investigar y
-  reconciliar antes de seguir con T5, puede que el trabajo de crear el
-  bucket + token ya esté hecho y solo falte la reconciliación de
-  nombres de variables (o un módulo de storage distinto que no se leyó
-  todavía). Reportado al dev lead, no investigado a fondo en esta pasada.
+- **T5, investigación del hallazgo de R2 (21-jul)**: se confirmó por qué
+  producción tenía `R2_ACCESS_KEY_ID`/`R2_ACCOUNT_ID`/`R2_BUCKET_NAME`/
+  `R2_PUBLIC_URL`/`R2_SECRET_ACCESS_KEY`/`BACKEND=r2` sin que ningún
+  código las leyera: `grep` de todo el repo (incluido el worktree
+  paralelo `corpus+propuesta-ola1`, tampoco ahí) no encontró ninguna
+  referencia -- no es una integración a medio hacer en otra rama, es
+  infraestructura real (bucket + credenciales ya creados en Cloudflare,
+  valores confirmados reales por forma/longitud vía `railway variables
+  --json`, nunca impresos) que simplemente nunca se conectó al código.
+  Reconciliado: `storage/object_storage.py` ahora lee `OBJECT_STORAGE_*`
+  primero y cae a la `R2_*` equivalente si falta -- ver detalle completo
+  en la sección T5 de la cola de trabajo. Commit `eb7684a`, CI verde.
+  **Consecuencia real, todavía no desplegada**: el deploy de este commit
+  activa R2 de inmediato en producción (porque `BACKEND=r2` ya está
+  seteada ahí) -- se dejó sin desplegar a propósito, pendiente de
+  autorización explícita como cualquier cambio real de producción.
 
 ## Cola de trabajo, en orden
 
@@ -460,33 +465,41 @@ Bus factor 1 hoy. Crear un segundo admin real vía `POST /admin/users`
 exigir), y verificar login end-to-end. La password temporal NUNCA se
 imprime en salida de herramientas (precedente del 16-jul: archivo local).
 
-### T5 — Storage S3/R2 para PDFs (P0) -- EN CURSO, proveedor decidido
+### T5 — Storage S3/R2 para PDFs (P0) -- CÓDIGO LISTO, FALTA SOLO EL DEPLOY [REQUIERE AUTORIZACIÓN]
 `storage/object_storage.py` ya abstrae local vs S3; producción corre en
 local efímero (los PDFs mueren en cada redeploy — bug documentado en
 `api/case_documents_endpoint.py`).
 1. ~~Decisión de proveedor~~ CERRADO (21-jul, dev lead): **Cloudflare
    R2**. `S3StorageBackend` actualizado para soportarlo de verdad (no es
-   AWS puro): `OBJECT_STORAGE_S3_ENDPOINT_URL` (endpoint de la cuenta,
-   requerido, sin esto boto3 apunta a AWS real), `OBJECT_STORAGE_S3_
-   PUBLIC_BASE_URL` (requerido si se usa modo público -- R2 no tiene el
-   formato de URL pública de AWS), region default `"auto"`. `boto3` ya
-   estaba en `requirements.txt` (S7). Tests con fake de boto3 verificando
-   los kwargs reales. Commit `b1d7434`, CI verde (run `29852363743`).
-2. **Pendiente, requiere acción del dev lead (no delegable)**: crear el
-   bucket R2 + un API token en la cuenta de Cloudflare -- no es algo que
-   Claude Code pueda hacer (necesita acceso a la cuenta). Con eso en
-   mano, configurar en Railway (vía `railway variable set --stdin`, NUNCA
-   en salida de herramientas): `OBJECT_STORAGE_BACKEND=s3`,
-   `OBJECT_STORAGE_S3_BUCKET`, `OBJECT_STORAGE_S3_ENDPOINT_URL`,
-   `OBJECT_STORAGE_S3_REGION=auto` (o dejarlo, ya es el default),
-   credenciales AWS-compatibles del token de R2 (`AWS_ACCESS_KEY_ID`/
-   `AWS_SECRET_ACCESS_KEY`, así lee boto3 por defecto). Si se quiere modo
-   público, además `OBJECT_STORAGE_S3_PUBLIC=true` +
-   `OBJECT_STORAGE_S3_PUBLIC_BASE_URL` (subdominio r2.dev o dominio
-   propio, hay que habilitarlo en el bucket primero).
-3. Verificar end-to-end: generar documento con `generar_pdf=true`,
-   confirmar que `pdf_url` es URL http(s) y que
-   `GET /casos/{id}/documents/{id}/pdf` redirige. [REQUIERE AUTORIZACIÓN]
+   AWS puro). Commit `b1d7434`, CI verde (run `29852363743`).
+2. ~~Bucket + credenciales~~ **YA EXISTÍAN, investigado el 21-jul**: al
+   armar el entorno de staging (T6) se encontró que producción YA tenía
+   un bucket R2 real aprovisionado --
+   `R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`/
+   `R2_BUCKET_NAME`/`R2_PUBLIC_URL` + `BACKEND=r2`, valores reales
+   confirmados por forma/longitud sin imprimirlos nunca -- pero con
+   nombres que no coincidían con lo que `storage/object_storage.py` leía
+   (`OBJECT_STORAGE_S3_*`), así que no se usaban. Nadie tuvo que crear
+   nada nuevo: se reconcilió el código para leer `OBJECT_STORAGE_*`
+   primero y caer a la variable `R2_*` equivalente si falta (`BACKEND=r2`
+   como alias de `OBJECT_STORAGE_BACKEND=s3`, `R2_BUCKET_NAME` como
+   bucket, `R2_ACCOUNT_ID` arma el endpoint solo, `R2_ACCESS_KEY_ID`/
+   `R2_SECRET_ACCESS_KEY` se pasan explícitas a boto3, `R2_PUBLIC_URL`
+   como URL pública) -- sin tocar ni renombrar ninguna variable ya
+   configurada en Railway. 6 tests nuevos con fake de boto3. Commit
+   `eb7684a`, CI verde (run `29863162851`).
+   **IMPORTANTE -- consecuencia real de este commit, todavía sin
+   desplegar**: como `BACKEND=r2` YA está seteada en producción, el
+   deploy de este commit activa el backend R2 de inmediato (sin ningún
+   paso manual adicional en Railway) -- la próxima vez que alguien genere
+   un PDF (`generar_pdf=true`), el upload va a ir de verdad al bucket R2
+   real, no a disco local. Por eso este deploy [REQUIERE AUTORIZACIÓN]
+   explícita antes de ejecutarse, igual que cualquier otro cambio que
+   toque producción de verdad -- no se desplegó todavía en esta pasada.
+3. Con la autorización: deploy de `vridik-api` + verificar end-to-end
+   real (generar un documento con `generar_pdf=true`, confirmar que
+   `pdf_url` es una URL http(s) del bucket real y que
+   `GET /casos/{id}/documents/{id}/pdf` redirige).
 4. Los PDFs viejos con rutas de filesystem quedan 404 con el mensaje de
    "almacenamiento efímero" ya existente — aceptable, documentarlo.
 
