@@ -97,3 +97,18 @@ export function semaforoTermino(diasRestantes: number, estado: "pendiente" | "cu
   if (diasRestantes <= 3) return "amarillo";
   return "verde";
 }
+
+/** Track Forja TF2 -- mismos umbrales que core/health_score.py::
+ *  semaforo_health_score (0-30 verde, 31-70 amarillo, 71-100 rojo). A
+ *  diferencia de semaforoTermino, acá el número YA es un score de riesgo
+ *  0-100 calculado en backend, no algo que el frontend derive de una fecha. */
+export function semaforoHealthScore(score: number): SemaforoColor {
+  if (score <= 30) return "verde";
+  if (score <= 70) return "amarillo";
+  return "rojo";
+}
+
+export function HealthScorePill({ score }: { score: number | null | undefined }) {
+  if (typeof score !== "number") return null;
+  return <span className={`pill ${semaforoHealthScore(score)}`}>Riesgo {score}</span>;
+}

@@ -93,6 +93,10 @@ export interface Caso {
   descripcion: string | null;
   estado: EstadoCaso;
   materia: Materia | null;
+  // Track Forja TF2 -- score de riesgo 0-100 calculado SIEMPRE en backend
+  // (core/health_score.py), null hasta el primer recálculo de un caso nuevo.
+  health_score: number | null;
+  health_score_actualizado_en: string | null;
   created_at: string;
   updated_at: string;
 }

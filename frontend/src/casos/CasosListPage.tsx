@@ -4,7 +4,7 @@ import { api } from "../api/client";
 import { SesionExpiradaError } from "../api/client";
 import type { Caso, MessageNewEvent, Termino, TerminoAlertaEvent } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
-import { EstadoPill, fechaCorta, type SemaforoColor } from "../ui";
+import { EstadoPill, fechaCorta, semaforoHealthScore, type SemaforoColor } from "../ui";
 import { AhorroWidget } from "./AhorroWidget";
 import { NotificacionesWidget } from "./NotificacionesWidget";
 
@@ -182,6 +182,14 @@ export function CasosListPage() {
                   {c.descripcion && <span className="caso-row-desc muted">{c.descripcion}</span>}
                 </div>
                 <div className="caso-row-meta">
+                  {c.health_score !== null && c.health_score > 30 && (
+                    <span
+                      className={`badge-termino ${semaforoHealthScore(c.health_score)}`}
+                      title={`Health-score de riesgo: ${c.health_score}/100`}
+                    >
+                      {c.health_score}
+                    </span>
+                  )}
                   {terminosUrgentes[c.id] && (
                     <span
                       className={`badge-termino ${terminosUrgentes[c.id]!.color}`}

@@ -5,7 +5,7 @@ import type { Actuacion, AdminUser, Caso, CaseDocument, Cobro, EstadoCaso, Mater
 import { useAuth } from "../auth/AuthContext";
 import {
   CATEGORIA_LABEL, ESTADOS, ESTADO_LABEL, EstadoPill, fechaCorta, fechaHora,
-  MATERIA_LABEL, MATERIAS, RESULTADO_LABEL, separarAvisoRevisar,
+  HealthScorePill, MATERIA_LABEL, MATERIAS, RESULTADO_LABEL, separarAvisoRevisar,
 } from "../ui";
 import { ActuacionesYTerminos } from "./ActuacionesYTerminos";
 import { CobroPanel } from "./Cobro";
@@ -212,7 +212,10 @@ export function CasoDetailPage() {
           <p className="eyebrow">Caso</p>
           <h1 className="page-title">{caso.titulo}</h1>
         </div>
-        <EstadoPill estado={caso.estado} />
+        <div className="page-head-pills">
+          <HealthScorePill score={caso.health_score} />
+          <EstadoPill estado={caso.estado} />
+        </div>
       </div>
 
       {error && <div className="alert error" role="alert">{error}</div>}

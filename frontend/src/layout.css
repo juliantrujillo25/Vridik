@@ -72,6 +72,7 @@
 /* --- páginas --- */
 .page { max-width: 860px; margin: 0 auto; padding: 2.2rem 1.25rem 5rem; }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.6rem; }
+.page-head-pills { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
 .page-title { font-size: 1.9rem; margin: 0.35rem 0 0; }
 .back-link { display: inline-block; font-size: 0.85rem; text-decoration: none; margin-bottom: 1.2rem; color: var(--ink-soft); }
 .back-link:hover { color: var(--accent); }
