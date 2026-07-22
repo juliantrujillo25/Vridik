@@ -101,7 +101,7 @@ async def test_crear_borrador_propone_chunks_y_metadata_heuristica(db):
     await ensure_corpus_drafts_table(db)
     texto = "palabra " * 1000
     borrador = await crear_borrador(
-        db, nombre_fuente="Sentencia SL17063-2017 Corte Suprema", texto=texto, creado_por=None,
+        db, nombre_fuente="Sentencia SL17063-2017 Corte Suprema de Justicia", texto=texto, creado_por=None,
     )
     assert borrador["estado"] == "borrador"
     assert len(borrador["chunks"]) > 1
