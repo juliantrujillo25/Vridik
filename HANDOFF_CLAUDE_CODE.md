@@ -511,13 +511,31 @@ no puede citar verbatim lo que no tiene.
    ejercicio S5 (fuente única permitida) también lo tenga. Eso cambia el
    banco — dejar el xlsx original respaldado y versionar el cambio.
 
-### T3 — Corrida 3 del GATE con prompts v3 (P0) [REQUIERE AUTORIZACIÓN]
+### T3 — Corrida 3 del GATE con prompts v3 (P0) [REQUIERE AUTORIZACIÓN] -- INTENTADA 21-jul, BLOQUEADA POR SALDO
 `julix/prompts/v3_laboral_colombia.md` y `v3_litigio_colombia.md` están
-redactados y sin corrida real. Tras T2:
+redactados. **Ya se intentó correr por primera vez el 21-jul contra
+Anthropic + Postgres reales, encontrando y arreglando dos bugs reales
+en el camino, pero sin completar una corrida oficial todavía** (ver
+detalle completo en `Instrucciones - CLAUDE.md::S5-GAP-01` y los
+commits `d200c30`/`f6f5533`):
+1. `bypass_rls` faltante en `eval/evaluador.py --commit` rompía el
+   primer INSERT real al ledger (`julix_calls`, RLS de tenant
+   isolation) -- arreglado.
+2. Ruido de parseo del juez tumbaba casos válidos al fallback punitivo
+   -- arreglado con reintento (fail-closed si el ruido persiste).
+3. Con ambos bugs ya arreglados, la corrida oficial completa (20 casos)
+   quedó **bloqueada por saldo insuficiente en la cuenta de Anthropic**
+   -- no hay todavía ningún % de una corrida v3 real. El último
+   resultado persistido sigue siendo 35% (16-jul, v2).
+
+**Antes de reintentar**: confirmar con el dev lead que la cuenta de
+Anthropic tiene saldo real, y pedir autorización explícita para el
+gasto de esta corrida puntual (regla no negociable). Una vez
+autorizado y con saldo:
 1. `python eval/evaluador.py --excel eval/banco_casos_vridik.xlsx --commit`
    contra Anthropic real + Postgres real (mismo procedimiento que las
-   corridas del 15/16-jul; costo esperado <1 USD por corrida, techo en el
-   ledger).
+   corridas del 15/16-jul y el intento del 21-jul; costo esperado <1 USD
+   por corrida, techo en el ledger).
 2. Meta intermedia honesta: >=60%. Si <60%: FRENO Y REVISIÓN (regla del
    roadmap S6) — diagnóstico por causa raíz antes de otra iteración, no
    prompt v4 a ciegas.

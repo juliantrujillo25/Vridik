@@ -134,13 +134,37 @@ auditoría).
   que citaba SÍ existe; el juez del evaluador lo marcó mal, o sea el
   evaluador también necesita calibración; (b) el diagnóstico de
   PROMPTS.md apunta a un límite estructural del banco (`norma_clave`
-  guarda solo la cita, nunca el texto verbatim del artículo); (c) los
-  prompts v3 están redactados y sin corrida real. Regla del propio
-  roadmap ignorada hasta ahora: "<60% → freno y revisión" — las Fases
-  2-4 se construyeron igual. Próximos pasos (ver vridik_audit.md, plan
-  30-60-90): cargar texto verbatim de ~30 artículos vía
-  `core/corpus_curation.py`, correr v3 contra el banco, y recalibrar el
-  juez con UGPP-07 como caso de regresión.
+  guarda solo la cita, nunca el texto verbatim del artículo) — **cerrado
+  el 21-jul (T2), el corpus ya tiene texto verbatim real cargado para
+  prácticamente toda `norma_clave` del banco**. Regla del propio
+  roadmap ignorada hasta la corrida de 16-jul: "<60% → freno y
+  revisión" — las Fases 2-4 se construyeron igual.
+  **T3 (corrida con prompts v3), intentada por primera vez el 21-jul
+  contra Anthropic + Postgres reales -- NO completó una corrida oficial
+  todavía:**
+  1. Primer bug real encontrado en el primer intento: `eval/
+     evaluador.py --commit` corre como "sistema" (sin `despacho_id`
+     propio) y el INSERT al ledger de `julix_calls` crasheaba con
+     `InsufficientPrivilegeError` bajo RLS de tenant isolation. Fix:
+     `bypass_rls` explícito en la conexión dedicada del script (`d200c30`,
+     caso legítimo de herramienta administrativa, no un agujero).
+  2. Continuando la corrida, 3/20 casos (UGPP-03/06/07) cayeron al
+     fallback punitivo (score=0) por ruido de parseo del juez, no por
+     mala calidad real de la respuesta (confirmado reenviando el mismo
+     input al juez fuera de la corrida: dio JSON válido con score=3).
+     Fix: reintento hasta 2 veces antes del fallback punitivo, sigue
+     fail-closed si el ruido persiste (`f6f5533`).
+  3. Con ambos bugs ya arreglados, la corrida OFICIAL completa (20
+     casos, `--commit` persistido como la corrida real de T3) quedó
+     **bloqueada por saldo insuficiente en la cuenta de Anthropic** —
+     hallazgo real del 21-jul, nunca antes documentado en detalle en
+     ningún archivo (solo sobrevivía en el título de un commit de docs).
+     **No hay todavía ningún resultado (%) de una corrida v3 oficial** --
+     el último número medido y persistido sigue siendo el 35% de la
+     corrida de 16-jul (v2). Antes de reintentar T3: confirmar con el
+     dev lead que la cuenta de Anthropic tiene saldo, y que se autoriza
+     explícitamente el gasto real de esa corrida puntual (regla no
+     negociable del proyecto).
 - **S6-GAP-01 (media) — CERRADO.** `PROMPTS.md` consolidado, honesto
   sobre que ningún prompt tiene corrida de evaluación medida todavía
   (bloqueado en S5).
