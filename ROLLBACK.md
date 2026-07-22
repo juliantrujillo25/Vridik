@@ -88,10 +88,44 @@ solo se manifiesta con una base de Postgres genuinamente vacía:
 puesto a prueba) -- exactamente el tipo de cosa que "ensayado en
 staging" está pensado para atrapar.
 
-**Todavía no se ensayó un rollback real** (deploy de un commit viejo
-contra el esquema de staging ya migrado) -- este entorno recién se armó,
-el ensayo en sí queda como siguiente paso antes de confiar ciegamente en
-este documento contra producción.
+**Rollback real ensayado y verificado en staging (22-jul-2026):**
+1. Se desplegó primero `main` actual (`15af70e`, ya con TF1-TF4/PR2 --
+   RLS indirectas, health-score, escalones de términos, storage R2, y
+   el fix de dependencia de orden de la suite de tests) contra
+   `vridik-api` de `staging-vridik`, estableciendo el esquema ya
+   migrado hacia adelante como línea base. `GET /health` 200,
+   `POST /auth/register` + `/auth/login` reales 200/201.
+2. Se hizo `git checkout e9a7fe1` (el commit exacto con el que se armó
+   `staging-vridik` originalmente, T6 -- ya incluye Fase 4/despachos,
+   TF1/TF2/TF3, pero es anterior a T5 (reconciliación R2), TF4, y al
+   fix de la suite de tests) y se redesplegó ese código viejo contra el
+   MISMO Postgres de staging, ahora con el esquema más nuevo ya
+   aplicado por el paso 1. `GET /health` 200, `POST /auth/register` +
+   `/auth/login` reales 200/201 -- código viejo corriendo sin errores
+   contra esquema más nuevo, exactamente la hipótesis central de este
+   documento. Único hallazgo en logs: un warning cosmético trampeado de
+   `passlib`/`bcrypt` (`AttributeError: module 'bcrypt' has no
+   attribute '__about__'`), no relacionado con el rollback, no afecta
+   el hash/verificación real de contraseñas (register/login
+   funcionaron).
+3. Se redesplegó `main` de nuevo para restaurar `staging-vridik` a la
+   línea base -- `GET /health` 200, la cuenta creada en el paso 1 pudo
+   loguearse normalmente después de la restauración (continuidad de
+   datos confirmada, ningún dato se perdió en el ciclo completo).
+4. Las 3 cuentas throwaway (una por paso) + sus despachos, credenciales,
+   refresh tokens y eventos de auth se limpiaron de la base real de
+   staging al cerrar el ensayo.
+
+**Conclusión: el principio "código viejo corre seguro contra esquema
+nuevo" queda verificado empíricamente, no solo por diseño de las
+migraciones.** El procedimiento de la sección de arriba (identificar
+último deployment bueno, `git checkout` + `railway up`, verificar
+`/health` + register/login + logs) es el que de verdad hay que correr
+contra producción si hace falta un rollback real -- no quedó ensayado
+el camino alternativo de "rollback nativo de Railway sobre un
+deployment anterior" (la CLI no expone un comando directo para eso,
+solo `redeploy` del último deployment) -- si se necesita ese camino,
+usar el dashboard de Railway.
 
 Lo que sí se verificó, sin tocar producción, antes de que staging
 existiera:

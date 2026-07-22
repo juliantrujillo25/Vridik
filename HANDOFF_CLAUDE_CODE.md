@@ -629,10 +629,24 @@ end-to-end (login real contra la API de staging). **Corrección (21-jul,
 más tarde el mismo día)**: el fix de arranque (commits `55ae2da`/
 `e9a7fe1`) YA estaba en producción -- quedan 9 commits detrás del deploy
 `a6667ccd` (el mismo que se verificó para T5), así que "falta el deploy"
-era incorrecto, era no-op de verdad. **Pendiente, no bloqueante**:
-ensayar un rollback real y una rotación de `JWT_SECRET` en staging (la
+era incorrecto, era no-op de verdad.
+
+**Rollback ensayado y verificado en staging (22-jul-2026)** -- ver
+`ROLLBACK.md` para el detalle completo: se desplegó `main` actual
+(`15af70e`) como línea base, se hizo rollback real a un commit viejo
+(`e9a7fe1`, el mismo con el que se armó `staging-vridik` originalmente)
+contra el MISMO Postgres ya migrado hacia adelante, y se restauró `main`
+de nuevo -- `/health` + `POST /auth/register`/`/auth/login` reales 200
+en los tres pasos, ningún dato se perdió en el ciclo, único hallazgo un
+warning cosmético de `passlib`/`bcrypt` sin impacto real. Confirma
+empíricamente el principio de aditividad del proyecto ("código viejo
+corre seguro contra esquema nuevo"), no solo por diseño. Cuentas
+throwaway del ensayo limpiadas de la base real de staging.
+
+**Sigue pendiente, no bloqueante**: ensayar la rotación de `JWT_SECRET`
+en staging (procedimiento de 5 pasos en `SECURITY.md` -- la
 infraestructura para hacerlo ya existe, el ensayo en sí es trabajo
-aparte).
+aparte, no ejecutado en esta pasada).
 
 ### T7 — Endpoints ARCO + retención (P1, Ley 1581) -- ACCESO CERRADO, SUPRESIÓN PENDIENTE DE DISEÑO
 `GET /me/datos` (`api/datos_personales_endpoint.py` +
