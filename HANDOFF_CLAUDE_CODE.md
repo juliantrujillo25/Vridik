@@ -753,19 +753,46 @@ commits reales, no descartados):
    `29877327931`), ambos jobs, 96.7% de tests (526/544, igual que antes
    del bump -- ver nota de hallazgo abajo).
 
-**Hallazgo aparte, NO nuevo, confirmado explícitamente**: los 18 tests
-que fallan (`test_alertas_terminos`, `test_corpus_curation`,
-`test_datos_personales`, `test_health_score`, todos con
-`UndefinedTableError`/`UndefinedColumnError` sobre `actuaciones`/
-`terminos`/`users.role`/`users.es_superadmin`) fallaban IDÉNTICO en el
-run de CI inmediatamente anterior al bump (`29869746082`, previo a
-tocar nada de PG18) -- mismo 96.7%, mismos 18 nombres. Es un bug
-preexistente de dependencia de orden entre tests (esas tablas/columnas
-se crean de forma perezosa dentro de la transacción con rollback de la
-fixture `db` de algún otro test, no de forma persistente), ajeno a este
-bump y no introducido por él. Sigue por debajo del gate de 90% así que
-CI pasa, pero queda como deuda técnica real de la suite, sin tocar en
-esta pasada (fuera de alcance del bump de Postgres).
+**Hallazgo aparte -- CERRADO (22-jul)**: los 18 tests que fallaban
+(`test_alertas_terminos`, `test_corpus_curation`, `test_datos_personales`,
+`test_health_score`, todos con `UndefinedTableError`/
+`UndefinedColumnError` sobre `actuaciones`/`terminos`/`users.role`/
+`users.es_superadmin`) fallaban IDÉNTICO en el run de CI inmediatamente
+anterior al bump de Postgres 18 (`29869746082`) -- mismo 96.7%, mismos 18
+nombres, bug preexistente ajeno al bump. Resuelto en dos pasadas, ambas
+en [PR #2](https://github.com/juliantrujillo25/Vridik/pull/2)
+(`claude/cool-bardeen-6476f1` → `main`, mergeado squash como `997128e`):
+1. Primera pasada (commit `68a59ed`): causa raíz real, dependencia de
+   orden entre fixtures -- varias tablas/columnas (`actuaciones`,
+   `terminos`, `users.role`, `users.es_superadmin`) se creaban de forma
+   perezosa DENTRO de la transacción con rollback de la fixture `db`,
+   así que nunca persistían para el resto de la sesión. Fix: mover los
+   `ensure_*()` correspondientes al fixture de sesión
+   `_backfill_de_sesion` (`tests/conftest.py`), que usa su propia
+   conexión que sí comitea -- mismo patrón que ya usaba para el backfill
+   de despachos. 12 de 18 tests arreglados.
+2. Segunda pasada (commit `cd394e4`, misma rama): quedaban 6 fallando
+   por TRES causas distintas.
+   - `case_documents` faltaba en la lista de tablas movidas al fixture
+     de sesión -- misma causa raíz de la primera pasada, tabla que el
+     diagnóstico original no incluyó. Agregada.
+   - Bug real en el TEST, no en producción: `test_exportar_datos_de_
+     usuario_junta_todo_lo_propio` comparaba `despacho_id` tal como lo
+     devuelve asyncpg de una columna UUID (`uuid.UUID`) contra el `str`
+     de Python que genera el fixture `make_despacho` -- mismo valor,
+     tipos distintos. Se compara como string.
+   - Test desactualizado, no bug de producción: `test_recalcular_con_
+     termino_vencido_sube_el_score` esperaba 60, pero la fórmula real de
+     `core/health_score.py` (exacta a
+     `vridik_architecture_v2.json::gamificacion_vridik.health_score_
+     formula`) también activa `incumplimiento_previo` (+15) para un
+     término ya vencido pero todavía `pendiente` -- no existe la tabla
+     `gamificacion` (fase 2) para distinguir una racha rota de un
+     vencido que sigue abierto, así que ambos componentes de la fórmula
+     se disparan con la misma fila. Corregido el valor esperado a 75,
+     con comentario explicando por qué.
+CI verde en ambos jobs contra Postgres real (run `29890029741`), suite
+completa en verde -- ya no queda deuda técnica de dependencia de orden.
 
 ### TF0 — Definición de producto (sin código, 1 semana, dev lead + Ana Luisa)
 Las 4 etapas Forja que Vridik no tiene, ya redactadas en
