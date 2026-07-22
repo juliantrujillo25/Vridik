@@ -774,7 +774,7 @@ Las 4 etapas Forja que Vridik no tiene, ya redactadas en
 trabajo de Claude Code — es decisión de producto; queda apuntado para que
 las fases siguientes tengan norte.
 
-### TF4 — Rediseño UI "Ledger editorial" (P1, no depende del GATE)
+### TF4 — ~~Rediseño UI "Ledger editorial"~~ CERRADO Y VERIFICADO EN PRODUCCIÓN (21-jul-2026)
 Contexto: el dev lead no está conforme con el UX/UI actual — se ve
 genérico (cards planas, todo con el mismo peso visual, como cualquier
 admin panel). Se evaluaron 3 direcciones (ver conversación de auditoría
@@ -871,6 +871,27 @@ mockup estático en la conversación de auditoría — comparar contra eso,
 no reinventar el diseño). Sin cambios de backend; no requiere
 autorización especial. Probar en mobile (`@media max-width: 560px`, ya
 existe la regla para `.caso-row` — extenderla al nuevo hero).
+
+**Implementado y verificado (21-jul-2026)**: `Layout.tsx` (sidebar fijo
++ drawer mobile, `NavLink` para resaltar sección activa),
+`CasosListPage.tsx` (fila de KPIs + fila hero por caso urgente + lista
+densa + badge de riesgo consolidado), `index.css`/`layout.css`
+(tabular-nums, `page-title-serif`). Racha de cumplimiento omitida a
+propósito (no existe la tabla `gamificacion`, mismo criterio de "no
+mostrar un 0 falso" del roadmap). Commit `1fe5b1d`, mergeado directo a
+`main` (fast-forward desde una rama que había quedado desviada por un
+cruce de sesiones concurrentes sobre el mismo working directory).
+`tsc -b`/`npm run build` limpios; el shell autenticado no se pudo
+verificar visualmente por Claude Code (requeriría credenciales reales,
+prohibido) -- **verificado en cambio por el dev lead en vivo, en
+producción, tras el deploy** (`railway up frontend --path-as-root
+--service vridik-frontend --detach`, servicio `vridik-frontend` Online).
+Incidente durante el deploy: la primera corrida de `railway up` se hizo
+desde un worktree temporal sin el link de Railway CLI establecido (vive
+fuera de git), y en vez de fallar creó un proyecto nuevo llamado
+"frontend" -- la producción real nunca se tocó. Corregido reintentando
+desde el directorio real del repo (si tiene el link) y borrando el
+proyecto accidental.
 
 ### Congelado hasta GATE >=80% (no trabajar sin instrucción explícita)
 Features nuevas de Fases 2-4 (excepto lo listado arriba). Listas
