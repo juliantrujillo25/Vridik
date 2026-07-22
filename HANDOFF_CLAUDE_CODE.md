@@ -819,6 +819,53 @@ token):
    (riesgo) + un indicador secundario más discreto (no-leídos como punto,
    no como badge redondo del mismo tamaño).
 
+**Ampliación (21-jul): app-shell organizado, referencia JURIS IA
+modernizada.** El dev lead pidió explícitamente algo "organizado, tipo
+JURIS IA pero mejorado" — se revisó el HTML real de la referencia
+(`JURIS IA/Juris IA-Colombia.html`, carpeta legacy): sidebar fijo +
+barra de KPIs arriba + secciones, con Tailwind CDN, Chart.js, iconos
+Phosphor en badges degradados, ticker animado, teal saturado. La
+organización estructural (sidebar + KPIs) es buena; la ejecución visual
+está anticuada para 2026 (gradientes, sombras que levantan la card al
+hover, ticker). Se adopta la ESTRUCTURA, no el estilo visual.
+
+Cambios adicionales en `frontend/src/Layout.tsx` (hoy es un header
+horizontal simple, `app-header` + `app-nav` con links en fila — ver
+archivo actual) + `layout.css`:
+
+5. **Convertir el header horizontal en sidebar fijo** (breakpoint
+   `>900px`; en mobile colapsa a drawer, patrón ya usado en
+   `.sidebar.open` de JURIS IA pero implementado con React state, no
+   `display` a mano). Contenido del sidebar: marca "Vridik" en serif
+   arriba, nav vertical (Casos, Mensajes, Cobro, Cumplimiento —
+   condicionados por rol igual que hoy, Cuenta), bloque de usuario
+   (nombre + rol) abajo, sin avatar con iniciales en gradiente (ese
+   patrón sí es genérico — usar solo texto, sans, `--ink-soft`).
+6. **Fila de KPIs arriba de `CasosListPage`** (nueva, antes de la lista):
+   4 métricas calculadas en el propio frontend a partir de datos que YA
+   trae la API (no requiere endpoint nuevo) — casos abiertos (`length`),
+   casos en riesgo (`health_score > 70` o término `dias_restantes <= 3`),
+   racha de cumplimiento (ya existe el concepto en `gamificacion_vridik`
+   del Track Forja — si la tabla `gamificacion` de la migración 12
+   todavía no existe, este KPI se omite del grid en vez de mostrar un
+   0 falso), documentos generados por JuliX (`GET /casos/{id}/documents`
+   agregado, o un conteo si ya existe un endpoint agregado). Tarjetas
+   flat (`background: var(--surface)`, `border: 1px solid var(--hair)`,
+   sin gradiente, sin hover-lift), número en `var(--mono)` +
+   `font-variant-numeric: tabular-nums`, label en mayúscula pequeña
+   encima — mismo patrón que el punto 2 de arriba.
+7. **Nada de ticker, nada de iconos con gradiente, nada de Chart.js
+   todavía** — deliberadamente fuera de esta pasada. Si más adelante hace
+   falta un gráfico (p. ej. tendencia de casos cerrados), evaluarlo
+   aparte con el mismo criterio flat/sin-gradiente, no agregar Chart.js
+   solo porque JURIS IA lo tenía.
+
+Verificación: mismo criterio que arriba (capturas antes/después,
+mobile incluido). El sidebar cambia el layout global — probar que
+`ProtectedLayout` sigue funcionando en las ~12 rutas protegidas
+existentes (Admin, Cuenta, Analítica UGPP, Plataforma, Corpus, Clientes,
+Casos) antes de dar por cerrado.
+
 Verificación: capturas de pantalla antes/después (dev lead ya vio un
 mockup estático en la conversación de auditoría — comparar contra eso,
 no reinventar el diseño). Sin cambios de backend; no requiere

@@ -173,8 +173,12 @@ async def test_recalcular_con_termino_vencido_sube_el_score(db, make_despacho, m
     )
 
     score = await recalcular_health_score(db, caso_id=caso_id, hoy=hoy)
-    # dias_restantes=-2 -> urgencia 1.0 (40) + vencidos 1/1 (20) = 60
-    assert score == 60
+    # dias_restantes=-2 -> urgencia 1.0 (40) + vencidos 1/1 (20) = 60. El
+    # mismo término vencido hace también True a incumplimiento_previo (+15,
+    # ver core/health_score.py: "pendiente" y vencido hace <30 días, sin
+    # tabla `gamificacion` para distinguir una racha rota de un vencido que
+    # sigue abierto) -> 60 + 15 = 75.
+    assert score == 75
 
 
 @pytest.mark.asyncio
