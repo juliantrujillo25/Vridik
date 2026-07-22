@@ -161,11 +161,45 @@ código. Este archivo es la lista de trabajo delegada, en orden.
   con reformas incluidas hasta 2021; contradice el miedo de la pasada
   anterior de que hiciera falta buscar en otro lado). Todos verificados
   por límite natural real (dónde empieza el artículo siguiente).
-  **Con esto, prácticamente TODAS las referencias de `norma_clave` de
+  **Con esto, la gran mayoría de las referencias de `norma_clave` de
   los 20 casos del banco (`eval/banco_casos_vridik.xlsx`) tienen texto
   verbatim real cargado en `rag_chunks`.** T2 queda cerrado -- el
   siguiente paso lógico es T3 (correr el GATE de nuevo con esto ya
   cargado). Sesión de prueba limpiada.
+- **Corrección de T2 -- gaps reales confirmados con consulta de solo
+  lectura contra `rag_chunks` de producción (22-jul-2026)**: el cierre
+  de arriba decía "prácticamente TODAS las referencias... cargado" --
+  desactualizado. Cruzando `norma_clave` de los 20 casos del banco
+  contra un `SELECT DISTINCT norma, articulo` real (autorizado
+  explícitamente por el dev lead para esta consulta puntual, solo
+  lectura, nunca producción con `--commit`/escritura), aparecen 6/20
+  casos (30%) con al menos una cita sin cargar:
+  - **UGPP-01/02**: `Ley 1607 de 2012, art. 179` (y `.1`) -- nunca se
+    cargó, pese a que los arts. 178 y 180 de la MISMA ley sí están.
+  - **UGPP-03**: mismo hueco del art. 179.2, más `Ley 1739 de 2014,
+    art. 50` -- existe solo como nota descriptiva DENTRO del chunk de
+    1607/178-180 ("mod. art. 50 Ley 1739/2014"), no como chunk propio
+    citable.
+  - **UGPP-06**: `CST arts. 127 y 128` -- el barrido del CST cubrió 13
+    artículos distintos, nunca estos dos.
+  - **LAB-02**: `Ley 2466 de 2025, arts. 10 y 14` -- no aparece en
+    ninguna de las 5 pasadas (probablemente una ley agregada al banco
+    después del trabajo de corpus).
+  - **LAB-08**: `Resolución 3461 de 2025` -- la cita principal (Ley
+    1010/2006) sí está cargada, esta secundaria no.
+  - **LAB-04** (menor prioridad): "jurisprudencia constitucional sobre
+    estabilidad reforzada por maternidad" sin sentencia puntual citada
+    en el banco -- los chunks de CST arts. 239/240 ya llevan anotación
+    de Corte Constitucional, así que es más un cabo suelto que un gap
+    duro.
+  **T2 sigue funcionalmente cerrado para T3** (la mayoría del banco sí
+  tiene verbatim real), pero la cobertura NO es total -- si T3 vuelve a
+  correr y alguno de estos 6 casos reprueba por falta de norma citable,
+  esta es la causa raíz a revisar antes de tocar los prompts. Buscar y
+  cargar estos 6 huecos (misma metodología de T2: fuente oficial,
+  PDF+PyMuPDF para artículos largos) es trabajo pendiente, no hecho en
+  esta pasada -- requiere autorización aparte para publicar a
+  `rag_chunks` de producción.
 - **TF1 CERRADO (21-jul)**: `core/rls.py::ensure_rls_policies_indirectas()`
   -- RLS real de Postgres (`FORCE ROW LEVEL SECURITY`) en las 5+2 tablas
   que solo tenían aislamiento de aplicación: `actuaciones`, `terminos`,

@@ -134,9 +134,14 @@ auditoría).
   que citaba SÍ existe; el juez del evaluador lo marcó mal, o sea el
   evaluador también necesita calibración; (b) el diagnóstico de
   PROMPTS.md apunta a un límite estructural del banco (`norma_clave`
-  guarda solo la cita, nunca el texto verbatim del artículo) — **cerrado
-  el 21-jul (T2), el corpus ya tiene texto verbatim real cargado para
-  prácticamente toda `norma_clave` del banco**. Regla del propio
+  guarda solo la cita, nunca el texto verbatim del artículo) — **T2
+  (21-jul) cargó texto verbatim real para la mayoría de `norma_clave`
+  del banco, pero NO para todo**: confirmado con una consulta de solo
+  lectura real contra `rag_chunks` de producción (22-jul), quedan 6/20
+  casos (30%) con al menos una cita sin cargar -- Ley 1607/2012 art.
+  179 (UGPP-01/02/03), CST arts. 127/128 (UGPP-06), Ley 2466/2025
+  (LAB-02), Resolución 3461/2025 (LAB-08). Ver detalle completo en
+  `HANDOFF_CLAUDE_CODE.md` ("Corrección de T2"). Regla del propio
   roadmap ignorada hasta la corrida de 16-jul: "<60% → freno y
   revisión" — las Fases 2-4 se construyeron igual.
   **T3 (corrida con prompts v3), intentada por primera vez el 21-jul
