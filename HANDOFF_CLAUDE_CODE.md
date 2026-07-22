@@ -193,13 +193,56 @@ código. Este archivo es la lista de trabajo delegada, en orden.
     de Corte Constitucional, así que es más un cabo suelto que un gap
     duro.
   **T2 sigue funcionalmente cerrado para T3** (la mayoría del banco sí
-  tiene verbatim real), pero la cobertura NO es total -- si T3 vuelve a
-  correr y alguno de estos 6 casos reprueba por falta de norma citable,
-  esta es la causa raíz a revisar antes de tocar los prompts. Buscar y
-  cargar estos 6 huecos (misma metodología de T2: fuente oficial,
-  PDF+PyMuPDF para artículos largos) es trabajo pendiente, no hecho en
-  esta pasada -- requiere autorización aparte para publicar a
-  `rag_chunks` de producción.
+  tiene verbatim real), pero la cobertura NO era total en este punto --
+  ver la sexta pasada, inmediatamente abajo, que cerró los 5 de estos 6
+  huecos que sí tenían texto citable disponible.
+- **T2, sexta pasada -- CERRADO EL RESTO DE LOS GAPS REALES (22-jul-2026),
+  autorizado explícitamente por el dev lead**: 61 chunks reales en total
+  (52→61), publicados vía `rag/ingest_corpus.py::insertar_chunk` (mismo
+  pipeline de siempre -- embedding LOCAL con sentence-transformers, sin
+  costo de Anthropic; la autorización requerida era por la escritura
+  real a Postgres de producción, no por gasto). Sin colisiones de dedup
+  (los 9 chunks eran genuinamente nuevos).
+  - **Ley 1607 de 2012, art. 179** (UGPP-01/02/03) -- **hallazgo real
+    importante durante la verificación**: la primera fuente (Función
+    Pública) tenía el texto ORIGINAL de 2012 (tabla de sanciones por
+    rango de empleados); el banco necesita la versión **vigente,
+    modificada por la Ley 1819 de 2016 art. 314** (sanciones planas
+    5%/10%/35%/60%), confirmada cruzando DOS fuentes independientes
+    (SUIN-Juriscol vía IGAC + una búsqueda que citó textualmente "5%
+    ... tope 100%" de la reforma 2016). Cargar la versión original
+    hubiera sido peor que no cargar nada -- una cita "verbatim" pero
+    derogada. UGPP-03 queda completo (el art. 179.2 nuevo + el art. 180
+    con la modificación de Ley 1739/2014 art. 50 que ya estaba cargado).
+  - **CST arts. 127 y 128** (UGPP-06) -- mismo PDF de Función Pública ya
+    verificado como completo/vigente en la quinta pasada.
+  - **Ley 2466 de 2025, arts. 10 y 14** (LAB-02) -- **hallazgo real
+    adicional, no solo una cita faltante**: estos dos artículos
+    MODIFICAN directamente CST arts. 160 y 179 (los que ya estaban
+    cargados desde la quinta pasada) -- los chunks viejos de CST 160/179
+    quedan **superados/desactualizados**, no solo incompletos. La nueva
+    redacción del art. 179 CST incluye una implementación gradual del
+    recargo dominical (80% desde jul-2025, 90% desde jul-2026 -- la
+    tasa vigente HOY, 100% recién desde jul-2027) -- un dato con
+    vigencia temporal real que JuliX necesita citar con precisión.
+    **Pendiente real, no resuelto en esta pasada**: reemplazar o marcar
+    como superados los chunks viejos de CST 160/179 (siguen en
+    `rag_chunks`, JuliX podría recuperar la versión vieja junto con la
+    nueva y confundirse) -- decisión de diseño (¿borrar el viejo?
+    ¿anotarlo?) antes de tocarlos.
+  - **Resolución 3461 de 2025** (LAB-08) -- arts. 1, 2 (objeto/ámbito) y
+    6 (funciones del Comité de Convivencia Laboral, incluida la ruta
+    procesal cuando el caso no se resuelve) descargados de la
+    Cancillería (`normograma/compilacion`, WebFetch dio 403 ahí --
+    `curl` con user-agent de navegador sí funcionó).
+  - **LAB-04** (jurisprudencia constitucional sobre maternidad, sin
+    sentencia puntual citada en el banco) queda deliberadamente sin
+    cargar -- no hay una norma/sentencia concreta que buscar, es un cabo
+    suelto del banco mismo, no un hueco del corpus.
+  **Con esto, 5 de los 6 gaps reales quedan cerrados** (UGPP-01/02/03/06,
+  LAB-02, LAB-08 -- LAB-04 excluido a propósito). Verificado con
+  `SELECT` real post-publicación: 9/9 chunks con embedding de 384 dims,
+  sin nulos. Scripts y PDFs de la sesión limpiados del scratchpad.
 - **TF1 CERRADO (21-jul)**: `core/rls.py::ensure_rls_policies_indirectas()`
   -- RLS real de Postgres (`FORCE ROW LEVEL SECURITY`) en las 5+2 tablas
   que solo tenían aislamiento de aplicación: `actuaciones`, `terminos`,

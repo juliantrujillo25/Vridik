@@ -135,12 +135,16 @@ auditoría).
   evaluador también necesita calibración; (b) el diagnóstico de
   PROMPTS.md apunta a un límite estructural del banco (`norma_clave`
   guarda solo la cita, nunca el texto verbatim del artículo) — **T2
-  (21-jul) cargó texto verbatim real para la mayoría de `norma_clave`
-  del banco, pero NO para todo**: confirmado con una consulta de solo
-  lectura real contra `rag_chunks` de producción (22-jul), quedan 6/20
-  casos (30%) con al menos una cita sin cargar -- Ley 1607/2012 art.
-  179 (UGPP-01/02/03), CST arts. 127/128 (UGPP-06), Ley 2466/2025
-  (LAB-02), Resolución 3461/2025 (LAB-08). Ver detalle completo en
+  (21-jul, quinta pasada, + sexta pasada 22-jul) cargó texto verbatim
+  real para 19 de los 20 casos del banco.** La sexta pasada cerró 5 de
+  los 6 huecos reales encontrados el 22-jul: Ley 1607/2012 art. 179
+  (UGPP-01/02/03 -- ojo, se cargó la versión vigente mod. Ley 1819/2016
+  art. 314, NO la original de 2012, que da un texto distinto), CST arts.
+  127/128 (UGPP-06), Ley 2466/2025 arts. 10/14 (LAB-02 -- estos artículos
+  además SUPERAN los chunks viejos de CST 160/179 ya cargados, pendiente
+  de reemplazarlos o anotarlos), Resolución 3461/2025 arts. 1/2/6
+  (LAB-08). Solo LAB-04 (jurisprudencia sin sentencia puntual citada en
+  el banco) queda sin cargar a propósito. Ver detalle completo en
   `HANDOFF_CLAUDE_CODE.md` ("Corrección de T2"). Regla del propio
   roadmap ignorada hasta la corrida de 16-jul: "<60% → freno y
   revisión" — las Fases 2-4 se construyeron igual.
