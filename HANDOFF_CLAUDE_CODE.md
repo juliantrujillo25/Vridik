@@ -643,10 +643,20 @@ empíricamente el principio de aditividad del proyecto ("código viejo
 corre seguro contra esquema nuevo"), no solo por diseño. Cuentas
 throwaway del ensayo limpiadas de la base real de staging.
 
-**Sigue pendiente, no bloqueante**: ensayar la rotación de `JWT_SECRET`
-en staging (procedimiento de 5 pasos en `SECURITY.md` -- la
-infraestructura para hacerlo ya existe, el ensayo en sí es trabajo
-aparte, no ejecutado en esta pasada).
+**Rotación de `JWT_SECRET` ensayada y verificada en staging (22-jul-2026)**
+-- ver `SECURITY.md` para el detalle completo de los 5 pasos: token
+viejo válido durante la ventana de doble clave (200 vía
+`JWT_SECRET_PREVIOUS`), refresh real funcionando a través de la
+rotación, y el hueco de `railway variable delete` (documentado desde la
+rotación real del 13-jul) reproducido en vivo por primera vez -- borrar
+`JWT_SECRET_PREVIOUS` NO disparó redeploy automático, el token viejo
+siguió validando (200) hasta forzar `railway redeploy`, recién ahí pasó
+a 401 real. Confirma que el paso 5 (verificar deployment nuevo tras el
+delete) es obligatorio, no opcional. Cuenta throwaway del ensayo
+limpiada de la base real de staging.
+
+**Con esto, los dos pendientes de T6 (rollback + rotación de
+`JWT_SECRET` ensayados en staging) quedan CERRADOS.**
 
 ### T7 — Endpoints ARCO + retención (P1, Ley 1581) -- ACCESO CERRADO, SUPRESIÓN PENDIENTE DE DISEÑO
 `GET /me/datos` (`api/datos_personales_endpoint.py` +

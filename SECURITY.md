@@ -92,16 +92,55 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
   acceso no autorizado al entorno de Railway).
 - Rotación preventiva periódica (opcional; el roadmap no fija cadencia).
 
-### Limitación honesta: "ensayado en staging"
+### "Ensayado en staging" -- CERRADO (22-jul-2026)
 
-El roadmap pide la rotación *"ensayada en staging"*. La rotación real
-del 13-jul (abajo) se hizo antes de que existiera un staging persistente
--- ya existe uno (`staging-vridik` en Railway, T6 del roadmap,
-21-jul-2026: `vridik-api`/`vridik-frontend`/`Postgres` propios, clon
-estructural de producción SIN datos reales), pero el procedimiento de
-rotación de `JWT_SECRET` todavía no se volvió a ensayar ahí -- queda
-como siguiente paso, no una limitación permanente. Lo que sí se
-verificó en su momento, sin tocar la sesión de nadie en producción:
+El roadmap pedía la rotación *"ensayada en staging"*. Ya se ensayó el
+procedimiento completo de 5 pasos contra `staging-vridik`
+(`vridik-api`, nunca producción), con un login real abierto que
+sobrevivió la rotación vía refresh, tal como pedía el pendiente de
+abajo:
+
+1. **`JWT_SECRET_PREVIOUS` = clave actual** (`railway variable set
+   JWT_SECRET_PREVIOUS --stdin --skip-deploys`, para no disparar un
+   redeploy todavía) -- valor copiado sin pasar nunca por la salida de
+   ninguna herramienta.
+2. Antes de rotar, se emitió un token real (`POST /auth/register`) --
+   este es el "token viejo" a probar durante la ventana.
+3. **`JWT_SECRET` = clave nueva** (`secrets.token_urlsafe(48)`,
+   generada y pasada por stdin, nunca impresa) -- disparó el redeploy.
+   Tras el redeploy: el token viejo emitido en el paso 2 siguió
+   validando contra `GET /me/datos` (200, vía `JWT_SECRET_PREVIOUS`);
+   un login nuevo emitió un token que también validó (200); `POST
+   /auth/refresh` con el refresh token viejo devolvió un access token
+   nuevo (200) -- confirma lo que dice arriba, que los refresh tokens
+   (opacos, hash SHA-256) no dependen en absoluto de `JWT_SECRET`.
+4. Paso de espera de ~15 min omitido a propósito en el ensayo -- lo que
+   de verdad importa para "cerrar" la rotación no es que el token
+   caduque solo, es que el servidor deje de aceptar la clave vieja
+   (ver paso 5).
+5. **Cierre, con el mismo hueco de `railway variable delete`
+   reproducido en vivo**: se borró `JWT_SECRET_PREVIOUS` y, tal como
+   advertía este documento desde la rotación real del 13-jul, NO
+   disparó un redeploy automático -- se confirmó empíricamente
+   probando el token viejo otra vez DESPUÉS del delete: siguió dando
+   **200** (el proceso corriendo todavía tenía la clave vieja en
+   memoria). Recién tras forzar `railway redeploy --service vridik-api
+   --yes` y confirmar el deployment nuevo, el mismo token viejo pasó a
+   dar **401 "Signature verification failed"** -- la rotación quedó
+   genuinamente cerrada, no solo "en el papel". `/health` y un login
+   nuevo siguieron en 200 durante todo el cierre. Cuenta throwaway del
+   ensayo (usuario, despacho, credenciales, refresh tokens, eventos de
+   auth) limpiada de la base real de staging al terminar.
+
+Con esto, el hueco de `railway variable delete` documentado abajo (de
+la rotación real del 13-jul) queda confirmado como un riesgo
+reproducible y real, no un incidente aislado de esa vez -- el paso 5
+del procedimiento (verificar que apareció un deployment nuevo después
+del delete, forzar `railway redeploy` si no) sigue siendo
+**obligatorio**, no opcional, en cualquier rotación futura.
+
+Lo que ya se había verificado antes de este ensayo, sin tocar la
+sesión de nadie en producción:
 
 - **Tests reales del soporte de doble clave** (`tests/test_jwt_rotation.py`):
   token firmado con la clave vieja valida durante la ventana
@@ -121,10 +160,8 @@ verificó en su momento, sin tocar la sesión de nadie en producción:
   pero abierta de verdad. Esta ejecución real, con ese hallazgo incluido,
   es más evidencia que cualquier ensayo en un staging que no existe.
 
-Ahora que `staging-vridik` existe, ensayar ahí el procedimiento completo
-de 5 pasos (con un login real abierto que sobreviva la rotación vía
-refresh) es el siguiente paso lógico, antes de la próxima rotación real
-contra producción.
+Con el ensayo en staging ya cerrado (arriba), no queda ningún pendiente
+de este tipo antes de la próxima rotación real contra producción.
 
 ## Otras defensas ya implementadas (resumen)
 
