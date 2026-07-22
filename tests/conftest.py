@@ -164,8 +164,8 @@ def _backfill_de_sesion(test_database_url):
     También asegura acá (no dentro de la transacción con rollback de `db`)
     las tablas/columnas que varios tests dan por sentado que ya existen sin
     pasar ellos mismos por el ensure_*() correspondiente (`actuaciones`,
-    `terminos`, `users.role`, `users.es_superadmin`) -- antes, cualquier
-    ensure_*() corrido dentro de la transacción de un test se perdía en el
+    `terminos`, `case_documents`, `users.role`, `users.es_superadmin`) --
+    antes, cualquier ensure_*() corrido dentro de la transacción de un test se perdía en el
     rollback de ese mismo test, así que el resultado dependía de qué otro
     test hubiera corrido antes en la misma sesión y alcanzado a dejarlas
     creadas (nunca ocurre, todos hacen rollback). Corriendo una sola vez acá,
@@ -180,6 +180,7 @@ def _backfill_de_sesion(test_database_url):
         from core.actuaciones import ensure_actuaciones_table
         from core.admin import ensure_role_column, ensure_superadmin_column
         from core.case import ensure_casos_despacho_backfill
+        from core.case_documents import ensure_case_documents_table
         from core.despachos import ensure_despachos_backfill
         from core.terminos import ensure_terminos_table
         from julix.ledger import ensure_julix_calls_despacho_backfill
@@ -193,6 +194,7 @@ def _backfill_de_sesion(test_database_url):
             await ensure_superadmin_column(conn)
             await ensure_actuaciones_table(conn)
             await ensure_terminos_table(conn)
+            await ensure_case_documents_table(conn)
         finally:
             await conn.close()
 

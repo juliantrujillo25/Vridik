@@ -81,7 +81,11 @@ async def test_exportar_datos_de_usuario_junta_todo_lo_propio(db, make_despacho,
     datos = await exportar_datos_de_usuario(db, user_id=cliente["id"])
 
     assert datos["perfil"]["email"] == cliente["email"]
-    assert datos["perfil"]["despacho_id"] == despacho_id
+    # despacho_id llega de asyncpg como uuid.UUID (columna UUID); el fixture
+    # make_despacho genera su propio id como str de Python -- mismo valor,
+    # tipos distintos, así que se compara como string (igual que el resto
+    # del export cuando cruza la frontera HTTP vía jsonable_encoder).
+    assert str(datos["perfil"]["despacho_id"]) == despacho_id
     assert len(datos["casos"]) == 1 and datos["casos"][0]["id"] == caso["id"]
     assert len(datos["actuaciones"]) == 1 and datos["actuaciones"][0]["texto"] == "una actuación"
     assert len(datos["terminos"]) == 1 and datos["terminos"][0]["descripcion"] == "un término"
