@@ -64,7 +64,7 @@ from core.auth import ensure_auth_migration_005, ensure_users_table
 from core.auth_events import ensure_bitacora_hash_chain
 from core.case import ensure_casos_despacho_backfill
 from core.despachos import ensure_despachos_backfill
-from core.rls import ensure_rls_policies, ensure_rls_policies_indirectas
+from core.rls import ensure_rls_policies, ensure_rls_policies_indirectas, ensure_rls_policies_soporte
 from core.terminos import ensure_terminos_table
 from julix.ledger import ensure_julix_calls_despacho_backfill
 from procesal.alertas_terminos import ejecutar_ronda_de_alertas
@@ -296,6 +296,24 @@ async def _conectar_db() -> None:
             logger.critical(
                 "Vridik: no se pudieron aplicar las políticas de RLS de las tablas indirectas al "
                 "arrancar -- actuaciones/terminos/cobro_caso/case_documents/mensajes siguen "
+                "dependiendo solo de los checks de aplicación hasta el próximo arranque.",
+                exc_info=True,
+            )
+
+        # Auditoría de seguridad 22-jul-2026 -- RLS en las tablas de soporte
+        # que quedaron fuera de las dos pasadas anteriores (refresh_tokens/
+        # auth_events/user_events/pdf_jobs/despachos). Deliberadamente
+        # DESPUÉS de ensure_rls_policies_indirectas() -- mismo motivo que
+        # esa (mantener un único orden lineal de las tres pasadas), no
+        # porque dependa de ella; sí depende de que ensure_rls_policies()
+        # ya haya corrido (users.despacho_id NOT NULL).
+        try:
+            async with app.state.db_connection.acquire() as conn:
+                await ensure_rls_policies_soporte(conn)
+        except Exception:
+            logger.critical(
+                "Vridik: no se pudieron aplicar las políticas de RLS de las tablas de soporte al "
+                "arrancar -- refresh_tokens/auth_events/user_events/pdf_jobs/despachos siguen "
                 "dependiendo solo de los checks de aplicación hasta el próximo arranque.",
                 exc_info=True,
             )
