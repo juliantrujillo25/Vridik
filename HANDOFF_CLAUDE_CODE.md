@@ -225,11 +225,20 @@ código. Este archivo es la lista de trabajo delegada, en orden.
     recargo dominical (80% desde jul-2025, 90% desde jul-2026 -- la
     tasa vigente HOY, 100% recién desde jul-2027) -- un dato con
     vigencia temporal real que JuliX necesita citar con precisión.
-    **Pendiente real, no resuelto en esta pasada**: reemplazar o marcar
-    como superados los chunks viejos de CST 160/179 (siguen en
-    `rag_chunks`, JuliX podría recuperar la versión vieja junto con la
-    nueva y confundirse) -- decisión de diseño (¿borrar el viejo?
-    ¿anotarlo?) antes de tocarlos.
+    **CERRADO en el momento (mismo 22-jul, a pedido explícito del dev
+    lead)**: los chunks viejos de CST 160 (id 39) y 179 (id 41) se
+    borraron de `rag_chunks` real y se reemplazaron por dos chunks
+    nuevos (ids 63/64) con el texto vigente (el mismo texto ya citado
+    dentro de los chunks de Ley 2466/2025, esta vez etiquetado bajo
+    `norma='Codigo Sustantivo del Trabajo'` -- así una búsqueda por
+    "CST art. 160/179" encuentra directamente el texto actual, sin
+    depender de que la búsqueda semántica prefiera el chunk de la ley
+    modificatoria). Verificado con `SELECT` real: 2 filas, embeddings de
+    384 dims, texto UTF-8 íntegro (el "?" que aparecía en la consola de
+    Windows al hacer `print()` era un artefacto de la terminal, no
+    corrupción de datos -- confirmado escribiendo a archivo UTF-8
+    aparte). `rag_chunks` queda en 61 (2 borrados + 2 insertados, conteo
+    neto sin cambio).
   - **Resolución 3461 de 2025** (LAB-08) -- arts. 1, 2 (objeto/ámbito) y
     6 (funciones del Comité de Convivencia Laboral, incluida la ruta
     procesal cuando el caso no se resuelve) descargados de la
