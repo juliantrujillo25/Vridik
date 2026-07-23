@@ -6,3 +6,7 @@ __pycache__/
 htmlcov/
 .venv*/
 *.egg-info/
+
+.env
+.env.local
+.env.*.local
