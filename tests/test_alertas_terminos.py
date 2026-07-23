@@ -31,6 +31,7 @@ import pytest
 
 from core.case import create_caso, ensure_casos_table
 from core.events import ensure_events_table
+from core.rls import ensure_rls_policies, ensure_rls_policies_indirectas
 from core.terminos import (
     crear_termino,
     ensure_terminos_table,
@@ -286,3 +287,51 @@ async def test_ejecutar_ronda_de_alertas_extremo_a_extremo_contra_postgres_real(
     # el filtro por ultimo_escalon_notificado).
     segunda_ronda = await ejecutar_ronda_de_alertas(db)
     assert segunda_ronda == 0
+
+
+@pytest.mark.asyncio
+async def test_ronda_sin_ningun_guc_seteado_no_ve_nada_bajo_rls(db, make_despacho, make_user):
+    """Regresión: `_bucle_alertas_terminos()` (app/main.py) adquiere su
+    conexión directo de `app.state.db_connection.acquire()`, sin pasar por
+    el middleware de conexión-por-request -- nunca queda con `app.
+    bypass_rls` seteado (NULL, ni 'true' ni 'false'), a diferencia de la
+    fixture `db` de conftest.py que sí lo deja en 'true' por defecto para
+    los ~300 tests que no prueban RLS en sí.
+
+    Con `terminos`/`casos` bajo FORCE ROW LEVEL SECURITY (core/rls.py::
+    ensure_rls_policies_indirectas, Track Forja TF1), una conexión sin
+    ningún GUC no matchea ninguna rama de la política (`bypass_rls='true'`
+    OR `despacho_id` coincide) -- ve CERO filas de ambas tablas. Sin el fix
+    (`await conn.execute(\"SELECT set_config('app.bypass_rls', 'true',
+    false)\")` justo después de `.acquire()` en app/main.py),
+    ejecutar_ronda_de_alertas() devolvería 0 SIEMPRE en producción, en
+    silencio, aunque hubiera términos vencidos reales -- exactamente el bug
+    que este test reproduce y que el fix corrige."""
+    await ensure_rls_policies(db)
+    await ensure_rls_policies_indirectas(db)
+    await db.execute("SELECT set_config('app.bypass_rls', 'true', false)")
+    await ensure_events_table(db)
+
+    despacho_id = await make_despacho()
+    cliente = await make_user(role="cliente", despacho_id=despacho_id)
+    caso = await create_caso(db, cliente_id=cliente["id"], despacho_id=despacho_id, titulo="Caso de prueba")
+    hoy = date.today()
+    await crear_termino(
+        db, caso_id=caso["id"], created_by=cliente["id"], descripcion="vencido",
+        fecha_inicio=hoy - timedelta(days=10), dias_habiles=1,
+    )
+
+    # Estado real de `.acquire()`: sin bypass_rls, sin despacho_id -- NADA.
+    await db.execute("RESET app.bypass_rls")
+    await db.execute("RESET app.despacho_id")
+
+    ronda_sin_contexto = await ejecutar_ronda_de_alertas(db)
+    assert ronda_sin_contexto == 0, (
+        "reproduce el bug: sin bypass, la conexión no ve el término vencido bajo RLS"
+    )
+
+    # El fix real (app/main.py::_bucle_alertas_terminos): setear bypass_rls
+    # apenas se adquiere la conexión, antes de correr la ronda.
+    await db.execute("SELECT set_config('app.bypass_rls', 'true', false)")
+    ronda_con_bypass = await ejecutar_ronda_de_alertas(db)
+    assert ronda_con_bypass == 1, "con el fix aplicado, la ronda sí ve y notifica el término vencido"
