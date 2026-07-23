@@ -614,10 +614,29 @@ commits `d200c30`/`f6f5533`):
    -- no hay todavía ningún % de una corrida v3 real. El último
    resultado persistido sigue siendo 35% (16-jul, v2).
 
-**Antes de reintentar**: confirmar con el dev lead que la cuenta de
-Anthropic tiene saldo real, y pedir autorización explícita para el
-gasto de esta corrida puntual (regla no negociable). Una vez
-autorizado y con saldo:
+**Segundo intento, 23-jul-2026, autorizado explícitamente por el dev
+lead** (`ANTHROPIC_API_KEY_PROD` + `DATABASE_PUBLIC_URL` de producción,
+`--environment production`): **mismo bloqueo, confirmado que sigue sin
+resolverse.** La primerísima llamada real a Claude devolvió
+`anthropic.BadRequestError: Error code: 400 ... "Your credit balance is
+too low to access the Anthropic API. Please go to Plans & Billing to
+upgrade or purchase credits."` -- esta vez ni siquiera llegó a procesar
+un caso completo (el intento del 21-jul había avanzado más lejos).
+Verificado que no quedó nada a medio escribir: 0 filas nuevas en
+`julix_evals`, 0 llamadas nuevas en `julix_calls` -- la llamada falló
+antes de cobrar nada, sin necesidad de limpiar. **Aparte, se confirmó
+durante este intento que T3 NO se beneficia del trabajo de corpus de
+T2**: `eval/evaluador.py::generar_respuesta_julix` pasa el string crudo
+de `norma_clave` del banco como "única fuente válida" directo al
+prompt -- nunca consulta `rag_chunks`. Para que el corpus cargado
+cuente para el score de T3 haría falta el trabajo aparte, todavía sin
+hacer, de enriquecer la columna `norma_clave` del banco con texto
+verbatim (propuesta original de T2, punto 4, nunca ejecutada).
+
+**Bloqueante real, no delegable**: alguien con acceso a la cuenta de
+Anthropic (el dev lead) tiene que cargar saldo real en Plans & Billing
+antes de que cualquier corrida de T3 pueda completar -- no es un bug de
+código, no hay nada más que arreglar acá. Una vez cargado el saldo:
 1. `python eval/evaluador.py --excel eval/banco_casos_vridik.xlsx --commit`
    contra Anthropic real + Postgres real (mismo procedimiento que las
    corridas del 15/16-jul y el intento del 21-jul; costo esperado <1 USD
