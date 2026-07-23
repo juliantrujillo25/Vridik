@@ -325,10 +325,22 @@ async def _bucle_alertas_terminos() -> None:
     """Fase 2: ver procesal/alertas_terminos.py -- corre para siempre
     mientras el proceso esté vivo (cancelada en _cerrar_db). Un ciclo que
     falla (DB momentáneamente caída, etc.) se loguea y el loop sigue en el
-    próximo intervalo -- nunca tumba el proceso ni deja de reintentar."""
+    próximo intervalo -- nunca tumba el proceso ni deja de reintentar.
+
+    A diferencia de una conexión de request (ver api/julix_endpoint.py::
+    _conexion_por_request), `.acquire()` acá no pasa por ningún middleware
+    -- sale del pool sin `app.bypass_rls` seteado (NULL, ni 'true' ni
+    'false'). Con FORCE ROW LEVEL SECURITY ya aplicado a `terminos`/`casos`
+    (core/rls.py::ensure_rls_policies_indirectas), esa conexión sin GUC no
+    ve ninguna fila de ninguna de las dos -- ejecutar_ronda_de_alertas()
+    devolvería 0 alertas SIEMPRE, en silencio, sin error. Este loop
+    legítimamente necesita ver los términos de TODOS los despachos (no hay
+    un despacho_id al que angostar, notifica cruzando tenants por diseño),
+    así que bypass es el estado correcto acá, no un despacho_id puntual."""
     while True:
         try:
             async with app.state.db_connection.acquire() as conn:
+                await conn.execute("SELECT set_config('app.bypass_rls', 'true', false)")
                 await ensure_terminos_table(conn)
                 enviadas = await ejecutar_ronda_de_alertas(conn)
                 if enviadas:
