@@ -801,6 +801,126 @@ otro participante del mismo caso). Commit `258d70b`, CI verde (run
 ### T8 — ~~RLS a las 5 tablas restantes~~ CERRADO (21-jul-2026) == TF1
 Misma tarea que TF1 de Track Forja (ver abajo) -- se cerró ahí.
 
+### T9 — RLS en tablas de soporte (auditoría de seguridad 22-jul-2026) — CÓDIGO Y TESTS CERRADOS, DESPLIEGUE A PRODUCCIÓN PENDIENTE DE AUTORIZACIÓN (23-jul-2026)
+Una auditoría de seguridad encontró 5 tablas más sin RLS pese a contener
+datos sensibles/tenant-scoped, que las dos pasadas anteriores (T8/TF1)
+no cubrieron porque ninguna tiene `despacho_id` -- ni directo ni vía
+`caso_id`: `refresh_tokens`, `auth_events`, `user_events` (todas cuelgan
+de un `user_id` que apunta a `users.id`) y `pdf_jobs` (mismo patrón, pero
+`user_id` es TEXT sin FK, no siempre un UUID válido) y `despachos` (caso
+especial: ES el tenant, no tiene columna `despacho_id` propia).
+
+`core/rls.py::ensure_rls_policies_soporte()` (nueva, tercera función del
+archivo junto a `ensure_rls_policies()`/`ensure_rls_policies_indirectas()`,
+mismo patrón fail-open-con-narrowing y mismo chequeo de "filas
+pendientes antes de FORCE"):
+- `refresh_tokens`/`auth_events`/`user_events`: política `EXISTS (SELECT
+  1 FROM users WHERE u.id = <tabla>.user_id AND u.despacho_id = ...)`
+  -- mismo patrón de join indirecto que TF1 ya usa para mensajes/
+  conversation_reads, pero contra `users` en vez de `conversaciones`.
+  `auth_events.user_id IS NULL` es un caso intencional y permanente
+  (`login_failed` contra un email que no existe, o `ON DELETE SET NULL`)
+  -- el chequeo de "pendientes" lo excluye explícitamente, no lo trata
+  como backfill faltante.
+- `pdf_jobs`: mismo join, pero `user_id` es TEXT sin FK
+  (`workers/pdf_worker.py` documenta que no siempre viene de `users.id`).
+  El cast a UUID se blinda con `CASE WHEN user_id ~ <regex> THEN
+  user_id::uuid END` -- Postgres NO garantiza evaluación izquierda-a-
+  derecha en AND/OR, así que un simple `user_id ~ regex AND user_id::uuid
+  = ...` puede reventar con `invalid input syntax for type uuid` sobre
+  una fila que no matchea. Hoy ningún endpoint real inserta en esta tabla
+  (cola sin productor conectado todavía), así que en la práctica arranca
+  vacía y FORCE aplica de inmediato.
+- `despachos`: única tabla con política distinta -- compara `id`
+  directo contra el GUC (`id::text = current_setting('app.despacho_id',
+  true)`), no una columna `despacho_id`.
+
+Se trazó a mano CADA call site real de las 5 tablas (auth_endpoint.py
+completo, bitacora_endpoint.py, actuaciones/terminos/mensajes_endpoint.py
+que notifican eventos, platform_endpoint.py, admin_endpoint.py) para
+confirmar que ninguno rompe: todos los endpoints de `auth_endpoint.py`
+(`register`/`login`/`refresh`/`logout`/`2fa/*`) corren bajo
+`bypass_rls='true'` (default del middleware de conexión-por-request,
+nunca llaman `aplicar_contexto_despacho()`), así que ven sus propias
+filas sin importar la política nueva. Los que sí angostan contexto
+(`/bitacora/mis-notificaciones`, notificaciones de actuaciones/términos/
+mensajes) siempre operan sobre usuarios del MISMO caso/despacho que
+quien narrowed, así que el join nuevo nunca los bloquea.
+
+Tests nuevos: `tests/test_rls_soporte.py` (8 casos x 2 backends, Postgres
+real -- sin contexto ve 0 filas, con despacho correcto ve solo lo suyo,
+bypass ve todo, WITH CHECK rechaza INSERT cruzado en refresh_tokens,
+auth_events con `user_id=NULL` solo visible bajo bypass, pdf_jobs con
+`user_id` no-UUID no revienta y queda invisible, despachos respeta su
+propio `id`, UPDATE cruzado en despachos afecta 0 filas).
+
+**Hallazgo real durante la verificación** (no un bug de este cambio, un
+bug preexistente que el nuevo chequeo de "filas pendientes" hizo visible
+por primera vez): `tests/test_events.py::test_notify_real_llega_al_
+listener_real` insertaba una fila real en `user_events` con una conexión
+propia (fuera del rollback de la fixture `db`) y nunca la borraba --
+quedaba COMMITEADA para siempre en la base de test, con un `user_id` que
+no resuelve a ningún usuario real. Con `ensure_rls_policies_soporte()`
+corriendo en la misma sesión, esa fila hacía que el chequeo de
+"pendientes" de `user_events` se disparara para CUALQUIER test posterior
+de la misma corrida, salteando `FORCE ROW LEVEL SECURITY` en esa tabla
+para el resto de la sesión (mismo comportamiento fail-open documentado,
+funcionando como se diseñó -- el problema era la fuga de datos del test,
+no la lógica de RLS). Corregido agregando el `DELETE` que le faltaba
+(mismo patrón que ya usa el test hermano `test_reconexion_real_replay_y_
+resync` en el mismo archivo).
+
+**Verificación real contra Postgres, no solo compilación**: sin Docker
+ni Postgres del sistema disponibles en el entorno de esta sesión, se
+levantó un Postgres embebido (`pip install pgserver`, PG16.2) y se
+replicó el pipeline exacto de CI (`schema_semana1_vridik.sql` +
+`julix/sql/ledger_schema.sql` + `migrations/003_pdf_jobs.sql` +
+`migrations/004_totp_2fa.sql` + `db/seed_railway.sql`, rol `vridik_app`
+sin superusuario/bypassrls). Único ajuste: ese build embebido no trae
+`pgcrypto`/`citext` de contrib -- se declararon como extensiones stub
+`trusted=true` únicamente en el `site-packages` local de esta sesión
+(nunca en el repo) para poder aplicar el schema real sin tocarlo; se
+removieron junto con el Postgres embebido al terminar. Suite completa:
+**560 passed, 3 skipped, 0 failed (100% del gate de 90%)**, incluidos
+`test_rls.py`/`test_rls_indirectas.py`/`test_rls_coverage.py` ya
+existentes (sin regresiones).
+
+**Pendiente real, [REQUIERE AUTORIZACIÓN] antes de tocar producción**:
+el código está en la rama (`app/main.py` ya llama
+`ensure_rls_policies_soporte()` en el boot, después de
+`ensure_rls_policies_indirectas()`), pero no se desplegó ni se verificó
+contra Postgres de producción -- confirmar antes de desplegar que
+ninguna de las 5 tablas tiene hoy filas con `user_id`/`id` que no
+resuelvan (el mismo chequeo de "pendientes" que corre en el boot lo
+haría automáticamente y solo loguearía CRITICAL sin romper nada, pero
+vale la pena revisar los logs del primer arranque post-deploy para
+confirmar que FORCE se aplicó de verdad en las 5, no que se salteó en
+silencio). Pedir el mismo tipo de autorización que T5/TF1 antes de
+desplegar y de correr la verificación empírica en vivo (conectar como
+`vridik_app`, confirmar 0 filas sin contexto / filas reales con
+bypass, mismo patrón que TF1 documentó arriba).
+
+**Hallazgo aparte, FUERA DE ALCANCE de esta pasada, sin tocar**:
+`procesal/alertas_terminos.py::ejecutar_ronda_de_alertas()` corre desde
+`app/main.py::_bucle_alertas_terminos()` (tarea de fondo, no un request
+HTTP) sobre una conexión adquirida directo del pool
+(`app.state.db_connection.acquire()`) que NUNCA pasa por el middleware
+de conexión-por-request de `julix_endpoint.py` -- esa conexión arranca
+sin `app.bypass_rls` seteado (ni `true` ni `false`, simplemente NULL) y
+sin `app.despacho_id`. Con el diseño fail-open actual eso significa que
+el loop de alertas de términos (T-5/T-3/T-1, TF3) es probablemente
+**ciego a TODAS las tablas con RLS activo** (`terminos`, `casos`, etc. --
+no solo las 5 nuevas de esta pasada) desde que TF1 aplicó FORCE en
+`terminos`, y viene notificando 0 términos en cada ronda sin que nada lo
+señale (el código no lanza error, `listar_terminos_para_alertar()`
+simplemente devuelve una lista vacía). No verificado contra producción
+real todavía -- si se confirma, el fix es que `_bucle_alertas_terminos()`
+setee `app.bypass_rls='true'` explícitamente sobre esa conexión dedicada
+(no necesita despacho_id angosteado, notifica across-despacho por
+diseño). Marcado para una tarea aparte, no se tocó en esta pasada para
+no mezclar un fix de un bug preexistente con el trabajo de RLS de las 5
+tablas nuevas.
+
 ## Track Forja — producto vendible (ref: auditoría "Cuida tus mascotas")
 
 Contexto en `vridik_forja_audit.md` + `vridik_architecture_v2.json`.

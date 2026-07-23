@@ -46,8 +46,15 @@ _ALLOWLIST: dict[tuple[str, str], str] = {
     ("auth_endpoint.py", "register"): "crea un despacho nuevo -- todavía no existe despacho_id que angostar",
     ("auth_endpoint.py", "login"): "lookup por email cross-tenant, antes de saber a qué despacho pertenece",
     ("auth_endpoint.py", "login_2fa"): "mismo motivo que login (todavía no pasó por _resolver_usuario)",
-    ("auth_endpoint.py", "refresh"): "solo toca refresh_tokens, fuera del alcance de las 4 tablas de esta pasada",
-    ("auth_endpoint.py", "logout"): "solo toca refresh_tokens, fuera del alcance de las 4 tablas de esta pasada",
+    ("auth_endpoint.py", "refresh"): (
+        "solo toca refresh_tokens -- RLS indirecto vía user_id->despacho_id (ensure_rls_policies_"
+        "soporte), este handler nunca llama aplicar_contexto_despacho() pero la conexión se queda "
+        "en bypass_rls='true' (default del middleware), así que ve su propio refresh_token igual"
+    ),
+    ("auth_endpoint.py", "logout"): (
+        "solo toca refresh_tokens -- mismo motivo que refresh (bypass_rls='true' por defecto, nunca "
+        "angosteado acá)"
+    ),
     ("auth_endpoint.py", "me"): "lee su propia fila de users por PK del JWT, mismo criterio que _resolver_usuario",
     ("auth_endpoint.py", "cambiar_password"): "misma PK propia, nunca cross-tenant",
     ("auth_endpoint.py", "setup_2fa"): "misma PK propia, nunca cross-tenant",

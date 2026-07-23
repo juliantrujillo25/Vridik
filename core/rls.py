@@ -7,7 +7,7 @@ ya existen (`WHERE despacho_id = $1` a mano en cada query). No reemplaza
 esos checks -- los respalda: si algún día un endpoint se olvida de filtrar
 por despacho, la base de datos misma rechaza la fila ajena.
 
-Dos niveles de alcance:
+Tres niveles de alcance:
   - `ensure_rls_policies()`: las 4 tablas que tienen `despacho_id` como
     columna DIRECTA -- `users`, `casos`, `julix_calls`, `matriz_riesgo`.
   - `ensure_rls_policies_indirectas()` (Track Forja TF1 / T8 del roadmap):
@@ -15,6 +15,17 @@ Dos niveles de alcance:
     `casos` -- `actuaciones`, `terminos`, `cobro_caso`, `case_documents` y
     la mensajería (`conversaciones`/`mensajes`/`conversation_reads`, ver
     docstring de esa función para el porqué de 3 tablas en vez de 1).
+  - `ensure_rls_policies_soporte()` (auditoría de seguridad 22-jul-2026):
+    las tablas de soporte que la auditoría encontró sin RLS pese a
+    contener datos sensibles/tenant-scoped -- `refresh_tokens`,
+    `auth_events`, `user_events` (join indirecto vía `user_id` ->
+    `users.despacho_id`, mismo principio que las tablas indirectas de
+    arriba pero con `users` como tabla padre en vez de `casos`),
+    `pdf_jobs` (mismo join, pero `user_id` es TEXT sin FK, no siempre un
+    UUID válido -- necesita un cast defendido) y `despachos` (caso
+    especial: ES el tenant, no tiene columna `despacho_id` propia --
+    la política compara `id` en vez de `despacho_id`). Ver docstring de
+    esa función para el detalle de cada patrón.
 
 Diseño (fail-open con narrowing explícito, decisión confirmada con el
 usuario -- la alternativa era fail-closed de punta a punta, que hubiera
@@ -55,12 +66,13 @@ from __future__ import annotations
 import logging
 
 from core.actuaciones import ensure_actuaciones_table
-from core.auth import ensure_users_table
+from core.auth import ensure_auth_migration_005, ensure_users_table
 from core.case import ensure_casos_table
 from core.cobro import ensure_cobro_table
 from core.case_documents import ensure_case_documents_table
 from core.cumplimiento import ensure_matriz_riesgo_table
 from core.despachos import ensure_despachos_table
+from core.events import ensure_events_table
 from core.mensajes import ensure_mensajes_tables
 from core.terminos import ensure_terminos_table
 from julix.ledger import ensure_julix_calls_table
@@ -272,5 +284,227 @@ async def ensure_rls_policies_indirectas(conn) -> None:
             END $$
             """
         )
+
+    await conn.execute("RESET app.bypass_rls")
+
+
+# Regex de UUID v4-agnóstico (cualquier variante con guiones en las
+# posiciones estándar) -- usado únicamente para blindar el cast de
+# pdf_jobs.user_id (TEXT, no siempre un UUID real, ver más abajo) antes de
+# compararlo contra users.id. Un CASE WHEN <regex> THEN ...::uuid END, no
+# un simple `a OR b`, porque Postgres NO garantiza evaluación de
+# izquierda a derecha ni corto-circuito en AND/OR (documentado) -- un
+# `user_id ~ regex AND user_id::uuid = ...` puede intentar el cast igual
+# sobre una fila que no matchea el regex y tirar `invalid input syntax for
+# type uuid`. CASE sí garantiza que la rama THEN solo corre si el WHEN dio
+# true.
+_REGEX_UUID = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+
+# refresh_tokens/auth_events/user_events cuelgan de un `user_id` UUID con
+# FK real a `users(id)` (o, en el caso de auth_events, sin FK ON DELETE
+# SET NULL pero mismo tipo) -- ninguna de las tres tiene `despacho_id`
+# propio, el despacho se resuelve con el mismo patrón de join indirecto
+# que ya usa ensure_rls_policies_indirectas() para mensajes/
+# conversation_reads, pero contra `users` en vez de `conversaciones`.
+_TABLAS_VIA_USUARIO = ("refresh_tokens", "auth_events", "user_events")
+
+# Chequeo de "filas pendientes" por tabla, mismo criterio que julix_calls
+# en _TABLAS_RLS: auth_events.user_id puede ser NULL A PROPÓSITO para
+# siempre (login_failed contra un email que no existe, o el usuario
+# referenciado se borró -- ON DELETE SET NULL) y eso no es un backfill
+# pendiente, es el diseño -- por eso el WHERE excluye explícitamente
+# user_id IS NULL en vez de tratarlo como "pendiente". refresh_tokens/
+# user_events sí tienen user_id NOT NULL de schema, así que ahí cualquier
+# fila que no resuelva a un usuario con despacho_id ya poblado es un
+# problema real (FK rota o backfill de despachos todavía no corrido).
+_PENDIENTES_VIA_USUARIO = {
+    "refresh_tokens": """
+        SELECT EXISTS(
+            SELECT 1 FROM refresh_tokens rt
+            WHERE NOT EXISTS (
+                SELECT 1 FROM users u WHERE u.id = rt.user_id AND u.despacho_id IS NOT NULL
+            )
+        )
+    """,
+    "auth_events": """
+        SELECT EXISTS(
+            SELECT 1 FROM auth_events ae
+            WHERE ae.user_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM users u WHERE u.id = ae.user_id AND u.despacho_id IS NOT NULL
+              )
+        )
+    """,
+    "user_events": """
+        SELECT EXISTS(
+            SELECT 1 FROM user_events ue
+            WHERE NOT EXISTS (
+                SELECT 1 FROM users u WHERE u.id = ue.user_id AND u.despacho_id IS NOT NULL
+            )
+        )
+    """,
+}
+
+
+async def ensure_rls_policies_soporte(conn) -> None:
+    """Auditoría de seguridad 22-jul-2026: RLS sobre las tablas de soporte
+    que quedaron fuera de las dos pasadas anteriores pese a contener datos
+    sensibles/tenant-scoped. Debe correr DESPUÉS de `ensure_rls_policies()`
+    (necesita `users.despacho_id` ya NOT NULL) -- en `app/main.py` va
+    después de `ensure_rls_policies_indirectas()`, simplemente para
+    mantener un único orden lineal de las tres pasadas, no porque dependa
+    de ella.
+
+    Tres patrones distintos en una sola función (igual que
+    `ensure_rls_policies_indirectas()` ya mezcla el patrón vía-`casos` y
+    el patrón vía-`conversaciones`):
+
+    1. `refresh_tokens`/`auth_events`/`user_events` -- join indirecto vía
+       `user_id` -> `users.despacho_id` (`_TABLAS_VIA_USUARIO`).
+    2. `pdf_jobs` -- mismo join, pero `user_id` es TEXT sin FK (ver
+       `workers/pdf_worker.py`: "no siempre viene de `users.id`") y hoy
+       ningún endpoint real inserta en esta tabla (cola todavía sin
+       productor conectado) -- el cast a UUID se blinda con `_REGEX_UUID`
+       vía CASE para que una fila con `user_id` no-UUID (o NULL) no
+       reviente el SELECT/INSERT entero, solo quede invisible fuera de
+       bypass (mismo espíritu fail-open-con-narrowing del resto del
+       archivo).
+    3. `despachos` -- caso especial: ES el tenant, no tiene columna
+       `despacho_id` propia. La política compara `id` directo contra el
+       GUC en vez de una columna `despacho_id`. Sin chequeo de "filas
+       pendientes" -- `id` es la PK, nunca NULL, no hay backfill posible
+       que "pendiente" describa acá.
+
+    `pdf_jobs` no tiene una `ensure_pdf_jobs_table()` en `core/` (a
+    diferencia de las demás tablas de este archivo) -- la tabla solo
+    existía hasta ahora vía `migrations/003_pdf_jobs.sql` aplicada a mano
+    (`scripts/railway_setup_rag.sh`) o por el paso de CI que la aplica
+    antes de la suite. Sin un `CREATE TABLE IF NOT EXISTS` acá, un
+    arranque contra una base que todavía no corrió ese script haría
+    fallar el `ALTER TABLE pdf_jobs ...` de abajo con "relation does not
+    exist" en cada boot -- mismo motivo por el que `ensure_rls_policies()`
+    llama a `ensure_matriz_riesgo_table()` antes de tocar esa tabla."""
+    await conn.execute("SELECT set_config('app.bypass_rls', 'true', false)")
+
+    await ensure_auth_migration_005(conn)  # crea refresh_tokens, auth_events (y roles/user_credentials)
+    await ensure_events_table(conn)  # crea user_events
+    await ensure_despachos_table(conn)
+    await conn.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pdf_jobs (
+            id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            query      TEXT NOT NULL,
+            user_id    TEXT,
+            status     TEXT DEFAULT 'pending',
+            pdf_url    TEXT,
+            created_at TIMESTAMP DEFAULT now(),
+            updated_at TIMESTAMP
+        )
+        """
+    )
+
+    for tabla in _TABLAS_VIA_USUARIO:
+        hay_pendientes = await conn.fetchval(_PENDIENTES_VIA_USUARIO[tabla])
+        if hay_pendientes:
+            logger.critical(
+                "Vridik/RLS: %s tiene filas cuyo user_id no resuelve a un usuario con despacho_id "
+                "poblado -- se salta FORCE ROW LEVEL SECURITY en esta pasada para no esconderlas "
+                "por accidente, se reintenta en el próximo arranque.",
+                tabla,
+            )
+            continue
+
+        await conn.execute(f"ALTER TABLE {tabla} ENABLE ROW LEVEL SECURITY")
+        await conn.execute(f"ALTER TABLE {tabla} FORCE ROW LEVEL SECURITY")
+        await conn.execute(
+            f"""
+            DO $$ BEGIN
+                CREATE POLICY {tabla}_tenant_isolation ON {tabla}
+                    USING (
+                        current_setting('app.bypass_rls', true) = 'true'
+                        OR EXISTS (
+                            SELECT 1 FROM users u
+                            WHERE u.id = {tabla}.user_id
+                              AND u.despacho_id::text = current_setting('app.despacho_id', true)
+                        )
+                    )
+                    WITH CHECK (
+                        current_setting('app.bypass_rls', true) = 'true'
+                        OR EXISTS (
+                            SELECT 1 FROM users u
+                            WHERE u.id = {tabla}.user_id
+                              AND u.despacho_id::text = current_setting('app.despacho_id', true)
+                        )
+                    );
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END $$
+            """
+        )
+
+    hay_pendientes_pdf_jobs = await conn.fetchval(
+        f"""
+        SELECT EXISTS(
+            SELECT 1 FROM pdf_jobs pj
+            WHERE NOT EXISTS (
+                SELECT 1 FROM users u
+                WHERE u.id = CASE WHEN pj.user_id ~ '{_REGEX_UUID}' THEN pj.user_id::uuid END
+                  AND u.despacho_id IS NOT NULL
+            )
+        )
+        """
+    )
+    if hay_pendientes_pdf_jobs:
+        logger.critical(
+            "Vridik/RLS: pdf_jobs tiene filas cuyo user_id es NULL, no es un UUID válido, o no "
+            "resuelve a un usuario con despacho_id poblado -- se salta FORCE ROW LEVEL SECURITY "
+            "en esta pasada para no esconderlas por accidente, se reintenta en el próximo arranque.",
+        )
+    else:
+        await conn.execute("ALTER TABLE pdf_jobs ENABLE ROW LEVEL SECURITY")
+        await conn.execute("ALTER TABLE pdf_jobs FORCE ROW LEVEL SECURITY")
+        await conn.execute(
+            f"""
+            DO $$ BEGIN
+                CREATE POLICY pdf_jobs_tenant_isolation ON pdf_jobs
+                    USING (
+                        current_setting('app.bypass_rls', true) = 'true'
+                        OR EXISTS (
+                            SELECT 1 FROM users u
+                            WHERE u.id = CASE WHEN pdf_jobs.user_id ~ '{_REGEX_UUID}' THEN pdf_jobs.user_id::uuid END
+                              AND u.despacho_id::text = current_setting('app.despacho_id', true)
+                        )
+                    )
+                    WITH CHECK (
+                        current_setting('app.bypass_rls', true) = 'true'
+                        OR EXISTS (
+                            SELECT 1 FROM users u
+                            WHERE u.id = CASE WHEN pdf_jobs.user_id ~ '{_REGEX_UUID}' THEN pdf_jobs.user_id::uuid END
+                              AND u.despacho_id::text = current_setting('app.despacho_id', true)
+                        )
+                    );
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END $$
+            """
+        )
+
+    await conn.execute("ALTER TABLE despachos ENABLE ROW LEVEL SECURITY")
+    await conn.execute("ALTER TABLE despachos FORCE ROW LEVEL SECURITY")
+    await conn.execute(
+        """
+        DO $$ BEGIN
+            CREATE POLICY despachos_tenant_isolation ON despachos
+                USING (
+                    id::text = current_setting('app.despacho_id', true)
+                    OR current_setting('app.bypass_rls', true) = 'true'
+                )
+                WITH CHECK (
+                    id::text = current_setting('app.despacho_id', true)
+                    OR current_setting('app.bypass_rls', true) = 'true'
+                );
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
+        """
+    )
 
     await conn.execute("RESET app.bypass_rls")

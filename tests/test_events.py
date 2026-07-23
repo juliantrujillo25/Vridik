@@ -134,6 +134,7 @@ async def test_notify_real_llega_al_listener_real():
 
     escucha = await asyncpg.connect(url)
     emisor = await asyncpg.connect(url)
+    user_id = "11111111-1111-1111-1111-111111111111"
     try:
         await emisor.execute(
             """
@@ -144,7 +145,7 @@ async def test_notify_real_llega_al_listener_real():
             """
         )
         cola: asyncio.Queue[str] = asyncio.Queue()
-        canal = canal_de_usuario("11111111-1111-1111-1111-111111111111")
+        canal = canal_de_usuario(user_id)
 
         def _callback(connection, pid, channel, payload):
             cola.put_nowait(payload)
@@ -152,7 +153,7 @@ async def test_notify_real_llega_al_listener_real():
         await escucha.add_listener(canal, _callback)
 
         evento_id = await notificar_evento(
-            emisor, user_id="11111111-1111-1111-1111-111111111111", tipo="message.new", payload={"x": 1},
+            emisor, user_id=user_id, tipo="message.new", payload={"x": 1},
         )
 
         payload = await asyncio.wait_for(cola.get(), timeout=5.0)
@@ -160,6 +161,15 @@ async def test_notify_real_llega_al_listener_real():
 
         await escucha.remove_listener(canal, _callback)
     finally:
+        # Este user_id no corresponde a ningún usuario real -- sin este
+        # cleanup, la fila queda COMMITEADA en la base de test para
+        # siempre (esta conexión nunca pasa por el rollback de la fixture
+        # `db`), y core.rls.ensure_rls_policies_soporte() la detecta como
+        # "pendiente" (user_id que no resuelve a un usuario con
+        # despacho_id) en cualquier test posterior de la misma sesión,
+        # salteando FORCE ROW LEVEL SECURITY en user_events para el resto
+        # de la corrida (ver tests/test_rls_soporte.py).
+        await emisor.execute("DELETE FROM user_events WHERE user_id = $1", user_id)
         await escucha.close()
         await emisor.close()
 
